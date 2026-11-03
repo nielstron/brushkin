@@ -102,6 +102,16 @@ open class LutFilter(override val name: String, private val v: IntArray, private
             return LutFilter("Brightness-Contrast", lut, ID, ID, ID)
         }
 
+        /** GIMP Levels on the value channel: input range + gamma, then output range. */
+        fun levels(inLow: Float, inHigh: Float, gamma: Float, outLow: Float, outHigh: Float): LutFilter {
+            val lut = IntArray(256) {
+                val v = ((it - inLow) / (inHigh - inLow).coerceAtLeast(1f)).coerceIn(0f, 1f)
+                val g = Math.pow(v.toDouble(), 1.0 / gamma.coerceAtLeast(0.01f)).toFloat()
+                (outLow + g * (outHigh - outLow)).roundToInt().coerceIn(0, 255)
+            }
+            return LutFilter("Levels", lut, ID, ID, ID)
+        }
+
         fun invert() = IntArray(256) { 255 - it }.let { LutFilter("Invert", it, ID, ID, ID) }
         fun posterize(levels: Int) = IntArray(256) { ((it / 255f * (levels - 1)).roundToInt() * 255f / (levels - 1)).roundToInt() }
             .let { LutFilter("Posterize", it, ID, ID, ID) }

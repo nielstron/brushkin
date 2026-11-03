@@ -38,10 +38,18 @@ object Ora {
                 xml.append("<layer name=\"${esc(l.name)}\" src=\"$src\" x=\"0\" y=\"0\" opacity=\"${l.opacity}\" visibility=\"${if (l.visible) "visible" else "hidden"}\" composite-op=\"${l.mode.oraName}\"")
                 if (l.id == stack.activeId) xml.append(" selected=\"true\"")
                 if (l.lockAlpha) xml.append(" alpha-preserve=\"true\"")
+                // Masks aren't part of the OpenRaster spec; other apps ignore these attributes.
+                val m = l.mask
+                if (m != null) xml.append(" brushkin-mask=\"data/layer${i}_mask.png\" brushkin-mask-enabled=\"${l.maskEnabled}\"")
                 xml.append("/>\n")
                 zip.putNextEntry(ZipEntry(src))
                 l.pixels.toBitmap().compress(Bitmap.CompressFormat.PNG, 100, zip)
                 zip.closeEntry()
+                if (m != null) {
+                    zip.putNextEntry(ZipEntry("data/layer${i}_mask.png"))
+                    m.toBitmap().compress(Bitmap.CompressFormat.PNG, 100, zip)
+                    zip.closeEntry()
+                }
             }
             xml.append("</stack>\n</image>\n")
             zip.putNextEntry(ZipEntry("stack.xml")); zip.write(xml.toString().toByteArray()); zip.closeEntry()
@@ -86,6 +94,10 @@ object Ora {
                         opacity = parser.getAttributeValue(null, "opacity")?.toFloatOrNull() ?: 1f,
                         mode = LayerMode.fromOra(parser.getAttributeValue(null, "composite-op")),
                         lockAlpha = parser.getAttributeValue(null, "alpha-preserve") == "true",
+                        mask = parser.getAttributeValue(null, "brushkin-mask")?.let { files[it] }
+                            ?.let { BitmapFactory.decodeByteArray(it, 0, it.size, opts) }
+                            ?.let { TiledBitmap.fromBitmap(it, w, h, x, y, fill = MASK_WHITE) },
+                        maskEnabled = parser.getAttributeValue(null, "brushkin-mask-enabled") != "false",
                     )
                     if (parser.getAttributeValue(null, "selected") == "true") activeId = l.id
                     layers.add(l)

@@ -6,6 +6,9 @@ import android.graphics.Matrix
 import android.graphics.Paint
 import android.graphics.RectF
 
+/** Live filter result shown in place of a layer's pixels or mask. */
+class Preview(val layerId: Long, val mask: Boolean, val tiles: TiledBitmap)
+
 /** A bitmap being placed or transformed (Insert, Paste, Transform tool). */
 class Floating(
     val bitmap: Bitmap,
@@ -30,6 +33,19 @@ class Floating(
  */
 object Compositor {
     private val tilePaint = ThreadLocal.withInitial { Paint() }
+    private val whitePaint = Paint().apply { color = android.graphics.Color.WHITE }
+    /** Mask tiles: luminance → alpha, then keep only that much of the layer. */
+    private val maskPaint = ThreadLocal.withInitial {
+        Paint().apply {
+            colorFilter = android.graphics.ColorMatrixColorFilter(floatArrayOf(
+                0f, 0f, 0f, 0f, 0f,
+                0f, 0f, 0f, 0f, 0f,
+                0f, 0f, 0f, 0f, 0f,
+                0.299f, 0.587f, 0.114f, 0f, 0f,
+            ))
+            xfermode = android.graphics.PorterDuffXfermode(android.graphics.PorterDuff.Mode.DST_IN)
+        }
+    }
     private val layerPaint = ThreadLocal.withInitial { Paint() }
 
     fun draw(
@@ -37,8 +53,10 @@ object Compositor {
         stack: Stack,
         visible: RectF? = null,
         filter: Boolean = true,
-        preview: Pair<Long, TiledBitmap>? = null,
+        preview: Preview? = null,
         floating: Floating? = null,
+        /** Doc units per screen pixel; mask tiles overlap by half of it so no edge pixel escapes the mask. */
+        pixelSize: Float = 0f,
     ) {
         val tp = tilePaint.get()!!
         tp.isFilterBitmap = filter
@@ -50,10 +68,11 @@ object Compositor {
             val pixels = when {
                 // The lifted layer shows only what was left behind; the floating part is drawn on top.
                 isFloatTarget -> floating!!.remainder
-                preview != null && preview.first == layer.id -> preview.second
+                preview != null && preview.layerId == layer.id && !preview.mask -> preview.tiles
                 else -> layer.pixels
             }
-            val needsLayer = layer.opacity < 1f || layer.mode.blend != null
+            val mask = if (!layer.masked) null else if (preview != null && preview.layerId == layer.id && preview.mask) preview.tiles else layer.mask
+            val needsLayer = layer.opacity < 1f || layer.mode.blend != null || mask != null
             if (needsLayer) {
                 lp.reset()
                 lp.alpha = (layer.opacity * 255).toInt()
@@ -62,18 +81,30 @@ object Compositor {
             }
             if (pixels != null) drawTiles(canvas, pixels, visible, tp)
             if (isFloatTarget) drawFloating(canvas, floating!!, filter)
+            if (mask != null) {
+                // Mask tiles are opaque, so overlapping them inside their own layer is harmless and
+                // closes GPU seams; the whole mask is then applied once (luminance → alpha, DST_IN).
+                canvas.saveLayer(0f, 0f, stack.width.toFloat(), stack.height.toFloat(), maskPaint.get()!!)
+                canvas.drawRect(0f, 0f, stack.width.toFloat(), stack.height.toFloat(), whitePaint)
+                drawTiles(canvas, mask, visible, tp, pixelSize * 0.5f)
+                canvas.restore()
+            }
             if (needsLayer) canvas.restore()
         }
         if (floating != null && floating.targetLayerId == null) drawFloating(canvas, floating, filter)
     }
 
-    fun drawTiles(canvas: Canvas, t: TiledBitmap, visible: RectF?, paint: Paint?) {
+    private val dst = ThreadLocal.withInitial { RectF() }
+
+    fun drawTiles(canvas: Canvas, t: TiledBitmap, visible: RectF?, paint: Paint?, pad: Float = 0f) {
         val tiles = t.tiles
+        val r = dst.get()!!
         for (i in tiles.indices) {
             val b = tiles[i] ?: continue
             val x = t.tileX(i).toFloat(); val y = t.tileY(i).toFloat()
             if (visible != null && (x > visible.right || y > visible.bottom || x + TILE < visible.left || y + TILE < visible.top)) continue
-            canvas.drawBitmap(b, x, y, paint)
+            if (pad == 0f) canvas.drawBitmap(b, x, y, paint)
+            else { r.set(x - pad, y - pad, x + TILE + pad, y + TILE + pad); canvas.drawBitmap(b, null, r, paint) }
         }
     }
 

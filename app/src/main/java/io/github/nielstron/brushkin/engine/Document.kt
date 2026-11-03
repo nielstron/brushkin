@@ -45,7 +45,26 @@ data class Layer(
     val mode: LayerMode = LayerMode.NORMAL,
     val lockAlpha: Boolean = false,
     val lockPixels: Boolean = false,
-)
+    /** Grayscale layer mask (white = visible); missing tiles are white. */
+    val mask: TiledBitmap? = null,
+    val maskEnabled: Boolean = true,
+    /** Paint tools and filters act on the mask instead of the pixels. */
+    val editMask: Boolean = false,
+) {
+    /** What paint tools and filters currently modify. */
+    val drawable: TiledBitmap get() = if (editMask && mask != null) mask else pixels
+    val masked get() = mask != null && maskEnabled
+}
+
+const val MASK_WHITE = 0xFFFFFFFF.toInt()
+const val MASK_BLACK = 0xFF000000.toInt()
+fun newMask(w: Int, h: Int) = TiledBitmap(w, h, MASK_WHITE)
+
+/** Brush colors become gray when painting on a mask. */
+fun maskGray(color: Int): Int {
+    val l = luma(color)
+    return (0xFF shl 24) or (l shl 16) or (l shl 8) or l
+}
 
 /** Immutable snapshot of the layer stack, bottom-most first. */
 data class Stack(
