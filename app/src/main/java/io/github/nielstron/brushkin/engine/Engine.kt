@@ -205,13 +205,16 @@ class Engine {
     private var strokeBefore: Stack? = null
     private var strokeTool: PaintTool = PaintTool.BRUSH
 
-    fun strokeBegin(tool: PaintTool, settings: BrushSettings, color: Int) = post {
+    fun strokeBegin(tool: PaintTool, settings: BrushSettings, color: Int, cloneOffset: android.graphics.Point? = null) = post {
         val s = stack
         val layer = s.active ?: return@post
         if (floating != null) return@post
         if (!layer.visible) { onMessage?.invoke("The active layer is hidden"); return@post }
         if (layer.lockPixels) { onMessage?.invoke("The active layer's pixels are locked"); return@post }
-        stroke = StrokeOp(layer.pixels, tool, settings, color, layer.lockAlpha, s.selection)
+        if ((tool == PaintTool.CLONE || tool == PaintTool.HEAL) && cloneOffset == null) {
+            onMessage?.invoke("Set a source first: tap “Set source”, then tap the spot to copy from"); return@post
+        }
+        stroke = StrokeOp(layer.pixels, tool, settings, color, layer.lockAlpha, s.selection, cloneOffset)
         strokeLayer = layer; strokeBefore = s; strokeTool = tool
     }
 
@@ -224,6 +227,7 @@ class Engine {
     fun strokeEnd() = post {
         val st = stroke ?: return@post
         stroke = null
+        st.catchUp()
         val changes = st.finish()
         if (changes.isNotEmpty()) record(toolName(strokeTool), strokeBefore!!, listOf(TileDiff(strokeLayer!!.pixels, changes)))
         else invalidate()
@@ -236,7 +240,9 @@ class Engine {
 
     private fun toolName(t: PaintTool) = when (t) {
         PaintTool.BRUSH -> "Paintbrush"; PaintTool.PENCIL -> "Pencil"; PaintTool.AIRBRUSH -> "Airbrush"
-        PaintTool.ERASER -> "Eraser"; PaintTool.SMUDGE -> "Smudge"
+        PaintTool.ERASER -> "Eraser"; PaintTool.SMUDGE -> "Smudge"; PaintTool.CLONE -> "Clone"
+        PaintTool.HEAL -> "Heal"; PaintTool.DODGE -> "Dodge"; PaintTool.BURN -> "Burn"
+        PaintTool.BLUR -> "Blur"; PaintTool.SHARPEN -> "Sharpen"
     }
 
     /** Fills tiles of the active layer through [draw], respecting the selection. */

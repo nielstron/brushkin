@@ -27,6 +27,10 @@ enum class Tool(val label: String, val group: ToolGroup, val paint: PaintTool? =
     AIRBRUSH("Airbrush", ToolGroup.PAINT, PaintTool.AIRBRUSH),
     ERASER("Eraser", ToolGroup.PAINT, PaintTool.ERASER),
     SMUDGE("Smudge", ToolGroup.PAINT, PaintTool.SMUDGE),
+    CLONE("Clone", ToolGroup.PAINT, PaintTool.CLONE),
+    HEAL("Heal", ToolGroup.PAINT, PaintTool.HEAL),
+    DODGE_BURN("Dodge / Burn", ToolGroup.PAINT, PaintTool.DODGE),
+    BLUR_SHARPEN("Blur / Sharpen", ToolGroup.PAINT, PaintTool.BLUR),
     BUCKET("Bucket Fill", ToolGroup.PAINT),
     GRADIENT("Gradient", ToolGroup.PAINT),
     TRANSFORM("Transform", ToolGroup.TRANSFORM),
@@ -60,11 +64,28 @@ class EditorViewModel(app: Application) : AndroidViewModel(app) {
             Tool.AIRBRUSH to BrushSettings(size = 80f, hardness = 0f, pressureSize = false),
             Tool.ERASER to BrushSettings(size = 40f, hardness = 0.6f, pressureOpacity = false),
             Tool.SMUDGE to BrushSettings(size = 40f, hardness = 0.2f, opacity = 0.8f, pressureSize = false),
+            Tool.CLONE to BrushSettings(size = 60f, hardness = 0.5f, pressureSize = false, pressureOpacity = false),
+            Tool.HEAL to BrushSettings(size = 60f, hardness = 0.3f, pressureSize = false, pressureOpacity = false),
+            Tool.DODGE_BURN to BrushSettings(size = 90f, hardness = 0f, opacity = 0.6f, rate = 0.5f, pressureSize = false),
+            Tool.BLUR_SHARPEN to BrushSettings(size = 70f, hardness = 0.2f, rate = 0.5f, pressureSize = false),
         )
     )
 
     /** Settings for the current paint tool (Erase chip maps a brush to the eraser). */
-    val strokeTool: Tool get() = if (eraseToggle && tool.paint != null && tool != Tool.SMUDGE) Tool.ERASER else tool
+    val strokeTool: Tool get() = if (eraseToggle && tool.paint != null && tool.paint?.isEffect != true && tool != Tool.SMUDGE) Tool.ERASER else tool
+
+    /** The engine tool for the current stroke, with the Burn/Sharpen chips applied. */
+    val paintTool: PaintTool? get() = when (val t = strokeTool) {
+        Tool.DODGE_BURN -> if (altEffect) PaintTool.BURN else PaintTool.DODGE
+        Tool.BLUR_SHARPEN -> if (altEffect) PaintTool.SHARPEN else PaintTool.BLUR
+        else -> t.paint
+    }
+
+    /** Burn instead of Dodge, Sharpen instead of Blur (GIMP's Ctrl toggle). */
+    var altEffect by mutableStateOf(false)
+    var settingSource by mutableStateOf(false)
+    var cloneSource by mutableStateOf<android.graphics.PointF?>(null)
+    var cloneOffset: android.graphics.Point? = null
 
     var settings: BrushSettings
         get() = brushSettings.value[if (strokeTool.paint != null) strokeTool else lastPaintTool] ?: BrushSettings()
@@ -99,10 +120,12 @@ class EditorViewModel(app: Application) : AndroidViewModel(app) {
 
     fun selectTool(t: Tool) {
         if (tool == Tool.TRANSFORM && t != Tool.TRANSFORM) engine.cancelFloating()
+        if (t != tool) altEffect = false
         tool = t
         if (t.paint != null) lastPaintTool = t
         if (t == Tool.TRANSFORM) engine.liftActive()
         if (t != Tool.CROP) cropRect = null
+        settingSource = (t == Tool.CLONE || t == Tool.HEAL) && cloneSource == null
     }
 
     fun pickColor(c: Int) {

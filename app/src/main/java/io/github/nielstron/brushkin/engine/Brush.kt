@@ -20,7 +20,12 @@ import kotlin.random.Random
 
 enum class TipShape { ROUND, CHALK, FLAT, SPLATTER }
 
-enum class PaintTool { BRUSH, PENCIL, AIRBRUSH, ERASER, SMUDGE }
+enum class PaintTool {
+    BRUSH, PENCIL, AIRBRUSH, ERASER, SMUDGE, CLONE, HEAL, DODGE, BURN, BLUR, SHARPEN;
+
+    /** Tools whose stroke reveals a precomputed effect of the original pixels instead of a color. */
+    val isEffect get() = this in setOf(CLONE, HEAL, DODGE, BURN, BLUR, SHARPEN)
+}
 
 data class BrushPreset(val name: String, val shape: TipShape, val hardness: Float, val aspect: Float = 1f, val angle: Float = 0f, val spacing: Float = 0.1f)
 
@@ -46,8 +51,8 @@ data class BrushSettings(
     val pressureOpacity: Boolean = true,
     val smoothing: Float = 0.3f,
     val mode: LayerMode = LayerMode.NORMAL,
-    /** Smudge: how much of the carried paint is kept per dab. */
-    val smudgeRate: Float = 0.6f,
+    /** Smudge: paint carried per dab. Dodge/Burn: exposure. Blur/Sharpen: strength. */
+    val rate: Float = 0.6f,
 )
 
 data class StrokePoint(val x: Float, val y: Float, val pressure: Float)
@@ -121,6 +126,8 @@ class StrokeOp(
     private val color: Int,
     private val lockAlpha: Boolean,
     private val selection: Selection?,
+    /** Clone/Heal: source position minus destination position. */
+    private val cloneOffset: android.graphics.Point? = null,
 ) {
     val session = TileEditSession(target)
     private val buf = HashMap<Int, Bitmap>()
@@ -189,7 +196,20 @@ class StrokeOp(
         return changed
     }
 
+    private var lastRaw: StrokePoint? = null
+    private var noSmooth = false
+
+    /** Smoothing lags behind the finger; finish the stroke exactly where it lifted. */
+    fun catchUp() {
+        val raw = lastRaw ?: return
+        noSmooth = true
+        add(listOf(raw))
+        noSmooth = false
+    }
+
     private fun smooth(p: StrokePoint): StrokePoint {
+        lastRaw = p
+        if (noSmooth) { smoothed = p; return p }
         val prev = smoothed
         val k = s.smoothing.coerceIn(0f, 0.95f)
         val out = if (prev == null || k == 0f) p else StrokePoint(
@@ -228,7 +248,96 @@ class StrokeOp(
         canvas.setBitmap(null)
     }
 
+    // ------------------------------------------------------------ effect tools
+
+    private val effectTiles = HashMap<Int, Bitmap>()
+    private val effectScratch by lazy { Bitmap.createBitmap(TILE, TILE, Bitmap.Config.ARGB_8888) }
+    private val effectPaint by lazy {
+        Paint().apply {
+            alpha = (s.opacity * 255).roundToInt()
+            if (lockAlpha) xfermode = PorterDuffXfermode(PorterDuff.Mode.SRC_ATOP)
+        }
+    }
+
+    /** Original (pre-stroke) pixels of an arbitrary doc region; outside the image is transparent. */
+    private fun region(x: Int, y: Int, w: Int, h: Int): IntArray {
+        val out = IntArray(w * h)
+        val r = Rect(x, y, x + w, y + h)
+        target.forTilesIn(r) { i ->
+            val t = session.original(i) ?: return@forTilesIn
+            val tx = target.tileX(i); val ty = target.tileY(i)
+            val l = max(x, tx); val tp = max(y, ty)
+            val rr = min(x + w, tx + TILE); val b = min(y + h, ty + TILE)
+            if (l >= rr || tp >= b) return@forTilesIn
+            t.getPixels(out, (tp - y) * w + (l - x), w, l - tx, tp - ty, rr - l, b - tp)
+        }
+        return out
+    }
+
+    private fun crop(px: IntArray, w: Int, pad: Int): IntArray {
+        val out = IntArray(TILE * TILE)
+        for (y in 0 until TILE) System.arraycopy(px, (y + pad) * w + pad, out, y * TILE, TILE)
+        return out
+    }
+
+    private fun effectTile(i: Int): Bitmap = effectTiles.getOrPut(i) {
+        val tx = target.tileX(i); val ty = target.tileY(i)
+        val px: IntArray = when (tool) {
+            PaintTool.CLONE -> { val o = cloneOffset!!; region(tx + o.x, ty + o.y, TILE, TILE) }
+            PaintTool.HEAL -> {
+                // Frequency-separation heal: source detail on top of destination's low frequencies.
+                val o = cloneOffset!!
+                val pad = 12; val w = TILE + 2 * pad
+                val src = region(tx + o.x - pad, ty + o.y - pad, w, w)
+                val dst = region(tx - pad, ty - pad, w, w)
+                val bs = blurArgb(src, w, w, pad); val bd = blurArgb(dst, w, w, pad)
+                val out = IntArray(w * w)
+                for (k in out.indices) {
+                    val c = src[k]
+                    fun ch(sh: Int) = (((c shr sh) and 0xFF) + ((bd[k] shr sh) and 0xFF) - ((bs[k] shr sh) and 0xFF)).coerceIn(0, 255)
+                    out[k] = (maxOf(c ushr 24, dst[k] ushr 24) shl 24) or (ch(16) shl 16) or (ch(8) shl 8) or ch(0)
+                }
+                crop(out, w, pad)
+            }
+            PaintTool.DODGE, PaintTool.BURN -> {
+                val e = 1f + s.rate.coerceIn(0f, 1f) * 1.5f
+                val g = if (tool == PaintTool.DODGE) 1f / e else e
+                val lut = IntArray(256) { (255 * Math.pow(it / 255.0, g.toDouble())).roundToInt().coerceIn(0, 255) }
+                region(tx, ty, TILE, TILE).also { a ->
+                    for (k in a.indices) { val c = a[k]; a[k] = (c and 0xFF000000.toInt()) or (lut[(c shr 16) and 0xFF] shl 16) or (lut[(c shr 8) and 0xFF] shl 8) or lut[c and 0xFF] }
+                }
+            }
+            PaintTool.BLUR -> {
+                val pad = max(1, (s.rate * 12).roundToInt()); val w = TILE + 2 * pad
+                crop(blurArgb(region(tx - pad, ty - pad, w, w), w, w, pad), w, pad)
+            }
+            PaintTool.SHARPEN -> {
+                val pad = 3; val w = TILE + 2 * pad
+                crop(UnsharpMaskFilter(2f, s.rate * 2.5f).apply(region(tx - pad, ty - pad, w, w), w, w), w, pad)
+            }
+            else -> IntArray(TILE * TILE)
+        }
+        Bitmap.createBitmap(TILE, TILE, Bitmap.Config.ARGB_8888).apply { setPixels(px, 0, TILE, 0, 0, TILE, TILE) }
+    }
+
+    private fun recompositeEffect(i: Int) {
+        val tile = session.writable(i)
+        val orig = session.original(i)
+        val sc = effectScratch
+        val c2 = Canvas(sc)
+        sc.eraseColor(0)
+        c2.drawBitmap(effectTile(i), 0f, 0f, null)
+        c2.drawBitmap(buf[i]!!, 0f, 0f, maskPaint)
+        if (selection != null) c2.drawBitmap(selection.mask, -target.tileX(i).toFloat(), -target.tileY(i).toFloat(), maskPaint)
+        canvas.setBitmap(tile)
+        tile.eraseColor(0)
+        if (orig != null) canvas.drawBitmap(orig, 0f, 0f, null)
+        canvas.drawBitmap(sc, 0f, 0f, effectPaint)
+        canvas.setBitmap(null)
+    }
+
     private fun recomposite(i: Int) {
+        if (tool.isEffect) { recompositeEffect(i); return }
         val tile = session.writable(i)
         val orig = session.original(i)
         canvas.setBitmap(tile)
@@ -269,7 +378,7 @@ class StrokeOp(
         }
         // Mix carried paint with what's under the brush.
         val mixed = sb.copy(Bitmap.Config.ARGB_8888, true)
-        Canvas(mixed).drawBitmap(tmp, 0f, 0f, Paint().apply { this.alpha = ((1f - s.smudgeRate) * 255).roundToInt() })
+        Canvas(mixed).drawBitmap(tmp, 0f, 0f, Paint().apply { this.alpha = ((1f - s.rate) * 255).roundToInt() })
         smudgeBuf = mixed
         // Shape by the tip and apply.
         val stamp = mixed.copy(Bitmap.Config.ARGB_8888, true)

@@ -149,6 +149,70 @@ class CanvasView(context: Context, private val vm: EditorViewModel) : View(conte
         canvas.restore()
 
         drawOverlays(canvas)
+        drawLoupe(canvas, s)
+    }
+
+    // ------------------------------------------------------------------ loupe
+
+    private val loupeBorder = Paint().apply { style = Paint.Style.STROKE; color = 0xFF2E2E35.toInt(); strokeWidth = 2 * density; isAntiAlias = true }
+    private val loupeBg = Paint().apply { color = 0xFF111113.toInt() }
+    private val hairWhite = Paint().apply { style = Paint.Style.STROKE; color = Color.WHITE; strokeWidth = 0f }
+    private val hairBlack = Paint().apply { style = Paint.Style.STROKE; color = Color.BLACK; strokeWidth = 0f }
+    private val loupeVisible = RectF()
+
+    /** Magnified view of the area under the finger, shown in the top corner away from it. */
+    private fun drawLoupe(canvas: Canvas, s: io.github.nielstron.brushkin.engine.Stack) {
+        val active = mode == Mode.STROKE || mode == Mode.SHAPE || mode == Mode.PICK || mode == Mode.CROP ||
+            mode == Mode.FLOAT_MOVE || mode == Mode.FLOAT_SCALE || mode == Mode.FLOAT_ROTATE
+        val touch = lastTouch ?: return
+        if (!active) return
+        val size = 132 * density
+        val margin = 12 * density
+        val top = (rootWindowInsets?.getInsets(android.view.WindowInsets.Type.statusBars())?.top ?: 0) + 76 * density
+        val left = if (touch.x < width / 2f) width - size - margin else margin
+        val box = RectF(left, top, left + size, top + size)
+        // Move out of the way if the finger is right under the loupe.
+        if (box.contains(touch.x, touch.y)) box.offset(0f, size + margin)
+        val k = (3f).coerceAtMost(48f / scale.coerceAtLeast(1e-3f)).coerceAtLeast(1f)
+        val clip = Path().apply { addRoundRect(box, 16 * density, 16 * density, Path.Direction.CW) }
+
+        canvas.save()
+        canvas.clipPath(clip)
+        canvas.drawRect(box, loupeBg)
+        canvas.translate(box.centerX(), box.centerY())
+        canvas.scale(k, k)
+        canvas.translate(-touch.x, -touch.y)
+        canvas.concat(viewMatrix)
+        val total = scale * k
+        // Doc-space region visible in the loupe.
+        val half = size / 2f / total * 1.5f
+        val d = toDoc(touch.x, touch.y)
+        loupeVisible.set(d.x - half, d.y - half, d.x + half, d.y + half)
+        checker.shader.setLocalMatrix(Matrix().apply { setScale(1 / total, 1 / total) })
+        canvas.drawRect(docRect, checker)
+        canvas.save()
+        canvas.clipRect(docRect)
+        Compositor.draw(canvas, s, loupeVisible, filter = total < 2f, preview = engine.preview, floating = engine.floating)
+        canvas.restore()
+        s.selection?.let { canvas.drawPath(it.outline, hairBlack); canvas.drawPath(it.outline, antsWhite) }
+        preview?.let { canvas.drawPath(it, hairBlack) }
+        vm.cropRect?.let { canvas.drawRect(it, hairWhite) }
+        canvas.restore()
+        checker.shader.setLocalMatrix(Matrix().apply { setScale(1 / scale, 1 / scale) })
+
+        // Crosshair and brush outline at the center.
+        val cx = box.centerX(); val cy = box.centerY()
+        canvas.save(); canvas.clipPath(clip)
+        val r = if (vm.strokeTool.paint != null && mode == Mode.STROKE) vm.settings.size / 2f * total else 0f
+        if (r > 2) { canvas.drawCircle(cx, cy, r, guideDark); canvas.drawCircle(cx, cy, r, guide) }
+        val cl = 8 * density
+        for (p in listOf(guideDark, guide)) { canvas.drawLine(cx - cl, cy, cx + cl, cy, p); canvas.drawLine(cx, cy - cl, cx, cy + cl, p) }
+        if (mode == Mode.PICK) {
+            val sw = Paint().apply { color = vm.fg }
+            canvas.drawRect(box.left, box.bottom - 22 * density, box.right, box.bottom, sw)
+        }
+        canvas.restore()
+        canvas.drawPath(clip, loupeBorder)
     }
 
     private fun drawOverlays(canvas: Canvas) {
@@ -164,6 +228,20 @@ class CanvasView(context: Context, private val vm: EditorViewModel) : View(conte
             canvas.drawPath(vr, accent)
         }
         engine.floating?.let { drawFloatingHandles(canvas, it) }
+        if (vm.tool == Tool.CLONE || vm.tool == Tool.HEAL) {
+            val src = vm.cloneSource
+            val o = vm.cloneOffset
+            val c = cursor
+            // While painting, the crosshair follows the sampled spot.
+            val p = if (o != null && c != null && mode == Mode.STROKE) { val d = toDoc(c.x, c.y); toView(d.x + o.x, d.y + o.y) } else src?.let { toView(it.x, it.y) }
+            if (p != null) {
+                val r = 10 * density
+                for (paint in listOf(guideDark, guide)) {
+                    canvas.drawLine(p.x - r, p.y, p.x + r, p.y, paint); canvas.drawLine(p.x, p.y - r, p.x, p.y + r, paint)
+                    canvas.drawCircle(p.x, p.y, r * 0.6f, paint)
+                }
+            }
+        }
         val c = cursor
         if (c != null && vm.strokeTool.paint != null && !vm.lineMode) {
             val r = vm.settings.size / 2f * scale
@@ -239,8 +317,11 @@ class CanvasView(context: Context, private val vm: EditorViewModel) : View(conte
         return super.onHoverEvent(e)
     }
 
+    private var lastTouch: PointF? = null
+
     @SuppressLint("ClickableViewAccessibility")
     override fun onTouchEvent(e: MotionEvent): Boolean {
+        lastTouch = if (e.actionMasked == MotionEvent.ACTION_UP || e.actionMasked == MotionEvent.ACTION_CANCEL) null else PointF(e.getX(0), e.getY(0))
         when (e.actionMasked) {
             MotionEvent.ACTION_DOWN -> {
                 maxPointers = 1; moved = false
@@ -328,7 +409,14 @@ class CanvasView(context: Context, private val vm: EditorViewModel) : View(conte
         if (tool == Tool.CROP) { mode = Mode.CROP; vm.cropRect = RectF(downDoc.x, downDoc.y, downDoc.x, downDoc.y); return }
         if (vm.pickMode || tool == Tool.PICKER) { mode = Mode.PICK; pick(e.x, e.y); return }
         val st = vm.strokeTool
-        if (st.paint != null) {
+        val cloneLike = tool == Tool.CLONE || tool == Tool.HEAL
+        if (cloneLike && vm.settingSource) {
+            mode = Mode.IGNORE
+            vm.cloneSource = PointF(downDoc.x, downDoc.y); vm.cloneOffset = null; vm.settingSource = false
+            invalidate(); return
+        }
+        val pt = vm.paintTool
+        if (st.paint != null && pt != null) {
             if (vm.lineMode) {
                 mode = Mode.SHAPE
                 val from = lastLineEnd ?: downDoc
@@ -337,7 +425,7 @@ class CanvasView(context: Context, private val vm: EditorViewModel) : View(conte
             }
             mode = Mode.STROKE
             strokePoints = 1
-            engine.strokeBegin(st.paint, vm.settings, vm.fg)
+            engine.strokeBegin(pt, vm.settings, vm.fg, cloneOffsetFor(downDoc))
             engine.strokeAdd(listOf(StrokePoint(downDoc.x, downDoc.y, pressure(e))))
             cursor = PointF(e.x, e.y)
             if (e.getToolType(0) != MotionEvent.TOOL_TYPE_STYLUS) postDelayed(longPress, 450)
@@ -409,7 +497,7 @@ class CanvasView(context: Context, private val vm: EditorViewModel) : View(conte
                 when {
                     st.paint != null && vm.lineMode -> {
                         val from = lastLineEnd ?: downDoc
-                        engine.strokeBegin(st.paint, vm.settings.copy(smoothing = 0f), vm.fg)
+                        engine.strokeBegin(vm.paintTool ?: st.paint, vm.settings.copy(smoothing = 0f), vm.fg, cloneOffsetFor(from))
                         engine.strokeAdd(listOf(StrokePoint(from.x, from.y, 1f), StrokePoint(d.x, d.y, 1f)))
                         engine.strokeEnd()
                         lastLineEnd = d
@@ -440,9 +528,24 @@ class CanvasView(context: Context, private val vm: EditorViewModel) : View(conte
         }
     }
 
+    /** Aligned clone: the offset is fixed by the first stroke after choosing a source. */
+    private fun cloneOffsetFor(start: PointF): android.graphics.Point? {
+        if (vm.tool != Tool.CLONE && vm.tool != Tool.HEAL) return null
+        val src = vm.cloneSource ?: return null
+        val o = vm.cloneOffset ?: android.graphics.Point((src.x - start.x).toInt(), (src.y - start.y).toInt()).also { vm.cloneOffset = it }
+        return o
+    }
+
     private fun onLongPress() {
         if (mode != Mode.STROKE || moved) return
         engine.strokeCancel()
+        if (vm.tool == Tool.CLONE || vm.tool == Tool.HEAL) {
+            // Long-press = GIMP's Ctrl-click: set the clone source.
+            mode = Mode.IGNORE
+            vm.cloneSource = PointF(downDoc.x, downDoc.y); vm.cloneOffset = null
+            performHapticFeedback(android.view.HapticFeedbackConstants.LONG_PRESS)
+            invalidate(); return
+        }
         mode = Mode.PICK
         pick(down.x, down.y)
         performHapticFeedback(android.view.HapticFeedbackConstants.LONG_PRESS)

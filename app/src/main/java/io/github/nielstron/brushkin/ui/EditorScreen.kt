@@ -154,6 +154,19 @@ private fun ContextChips(vm: EditorViewModel, hasSelection: Boolean) {
     Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
         val t = vm.tool
         when {
+            t == Tool.CLONE || t == Tool.HEAL -> {
+                Chip(if (vm.cloneSource == null) "Set source" else "New source", vm.settingSource, ToolIcons.target) { vm.settingSource = !vm.settingSource }
+                Chip("Line", vm.lineMode, ToolIcons.line) { vm.lineMode = !vm.lineMode }
+                if (vm.settingSource) Text("Tap the spot to copy from (or long-press anytime)", color = Ui.muted, fontSize = 12.sp, modifier = Modifier.align(Alignment.CenterVertically))
+            }
+            t == Tool.DODGE_BURN -> {
+                Chip("Dodge", !vm.altEffect) { vm.altEffect = false }
+                Chip("Burn", vm.altEffect) { vm.altEffect = true }
+            }
+            t == Tool.BLUR_SHARPEN -> {
+                Chip("Blur", !vm.altEffect) { vm.altEffect = false }
+                Chip("Sharpen", vm.altEffect) { vm.altEffect = true }
+            }
             t.paint != null -> {
                 Chip("Line", vm.lineMode, ToolIcons.line) { vm.lineMode = !vm.lineMode }
                 Chip("Pick", vm.pickMode, ToolIcons.picker) { vm.pickMode = !vm.pickMode }
