@@ -33,6 +33,7 @@ data class LayerInfo(
     val lockAlpha: Boolean, val thumb: Bitmap?,
     val hasMask: Boolean = false, val maskEnabled: Boolean = true, val editMask: Boolean = false, val maskThumb: Bitmap? = null,
     val depth: Int = 0, val isGroup: Boolean = false, val expanded: Boolean = true, val isText: Boolean = false,
+    val lockPosition: Boolean = false, val linked: Boolean = false, val bounds: Rect? = null,
 )
 
 data class DocInfo(
@@ -149,6 +150,7 @@ class Engine {
                             l.id, l.name, l.visible, l.opacity, l.mode, l.lockAlpha, thumbs[l.id]?.second,
                             hasMask = l.mask != null, maskEnabled = l.maskEnabled, editMask = l.editMask && l.mask != null, maskThumb = maskThumbs[l.id]?.second,
                             depth = depth, isGroup = l.isGroup, expanded = l.expanded, isText = l.text != null,
+                            lockPosition = l.lockPosition, linked = l.linked, bounds = l.bounds,
                         ))
                         if (l.isGroup && l.expanded) add(l.children!!, depth + 1)
                     }
@@ -279,7 +281,7 @@ class Engine {
         // On a mask, colors become gray and the eraser paints black (hides).
         val t = if (onMask && tool == PaintTool.ERASER) PaintTool.BRUSH else tool
         val c = if (onMask) (if (tool == PaintTool.ERASER) MASK_BLACK else maskGray(color)) else color
-        stroke = StrokeOp(target, t, settings, c, layer.lockAlpha && !onMask, s.selection, cloneOffset, symmetry, perspective)
+        stroke = StrokeOp(target, t, settings, c, layer.lockAlpha && !onMask, clipSelection(s, layer), cloneOffset, symmetry, perspective)
         strokeTarget = target; strokeBefore = s; strokeTool = tool
         if (layer.text != null && !onMask) stack = dropText(s)
     }
@@ -318,7 +320,7 @@ class Engine {
         val qm = s.quickMask
         if (qm == null && layer.isGroup) { onMessage?.invoke("Layer groups can't be painted on. Pick a layer."); return }
         if (qm == null && layer.lockPixels) { onMessage?.invoke("The active layer's pixels are locked"); return }
-        val sel = s.selection
+        val sel = if (qm == null) clipSelection(s, layer) else s.selection
         val r = Rect(0, 0, s.width, s.height)
         if (region != null && !r.intersect(region)) return
         if (sel != null && !r.intersect(sel.bounds)) return
@@ -480,6 +482,58 @@ class Engine {
             stack = s.copy(selection = Selection.combineMask(s.selection, mb, mode))
             record("Foreground Select", s)
         }
+    }
+
+    private fun transformMask(mk: TiledBitmap, m: Matrix, w: Int, h: Int): TiledBitmap {
+        val dst = Bitmap.createBitmap(w, h, Bitmap.Config.ARGB_8888)
+        if (mk.fill != 0) dst.eraseColor(mk.fill)
+        Canvas(dst).drawBitmap(mk.toBitmap(), m, Paint().apply { isFilterBitmap = true })
+        return TiledBitmap.fromBitmap(dst, fill = mk.fill)
+    }
+
+    // ---------------------------------------------------------------- layer boundary
+
+    /** The selection, intersected with the layer's boundary when it's smaller than the canvas. */
+    private fun clipSelection(s: Stack, l: Layer): Selection? {
+        val b = l.bounds ?: return s.selection
+        val p = Path().apply { addRect(RectF(b), Path.Direction.CW) }
+        return Selection.combine(s.selection, p, s.width, s.height, if (s.selection == null) SelectMode.REPLACE else SelectMode.INTERSECT, false, 0f)
+    }
+
+    /** Layer ▸ Layer Boundary Size: clip the layer to [r] (image coordinates). */
+    fun setLayerBoundary(r: Rect) = post {
+        val s = stack
+        val l = s.active ?: return@post
+        if (l.isGroup) return@post
+        val canvas = Rect(0, 0, s.width, s.height)
+        val b = Rect(r).takeIf { !it.isEmpty } ?: return@post
+        val full = b.contains(canvas)
+        val outside = l.outside.filter { (k, _) -> Rect.intersects(b, Rect(LayerExtent.cx(k) * TILE, LayerExtent.cy(k) * TILE, LayerExtent.cx(k) * TILE + TILE, LayerExtent.cy(k) * TILE + TILE)) }
+        stack = s.replace(l.copy(bounds = if (full) null else b, outside = outside))
+        if (full) record("Layer Boundary Size", s) else replaceLayerPixels(s, l, LayerExtent.clipTo(l.pixels, b), "Layer Boundary Size")
+    }
+
+    /** Layer ▸ Layer to Image Size: the layer becomes exactly canvas-sized (off-canvas content is dropped). */
+    fun layerToImageSize() = post {
+        val s = stack
+        val l = s.active ?: return@post
+        if (l.bounds == null && l.outside.isEmpty()) return@post
+        stack = s.replace(l.copy(bounds = null, outside = emptyMap()))
+        record("Layer to Image Size", s)
+    }
+
+    /** Layer ▸ Crop to Content: the boundary hugs the layer's pixels. */
+    fun cropLayerToContent() {
+        val l = stack.active ?: return
+        val b = LayerExtent.bounds(l) ?: return
+        setLayerBoundary(b)
+    }
+
+    fun setLayerFlags(id: Long, lockPosition: Boolean? = null, linked: Boolean? = null) = post {
+        val s = stack
+        val l = s.find(id) ?: return@post
+        stack = s.replace(l.copy(lockPosition = lockPosition ?: l.lockPosition, linked = linked ?: l.linked))
+        publish()
     }
 
     // ---------------------------------------------------------------- guides
@@ -658,7 +712,15 @@ class Engine {
             Canvas(dst).drawBitmap(t.toBitmap(), m, p)
             return TiledBitmap.fromBitmap(dst, fill = t.fill)
         }
-        val layers = Stack.mapTree(s.layers) { l -> if (l.isGroup) l.copy(pixels = TiledBitmap(newW, newH), mask = l.mask?.let { xf(it) }) else l.copy(pixels = xf(l.pixels), mask = l.mask?.let { xf(it) }) }
+        val layers = Stack.mapTree(s.layers) { l ->
+            if (l.isGroup) l.copy(pixels = TiledBitmap(newW, newH), mask = l.mask?.let { xf(it) })
+            else {
+                // Content off the canvas comes along (a canvas resize can bring it back into view).
+                val (px, outside) = LayerExtent.transform(l, m, newW, newH)
+                val bounds = l.bounds?.let { b -> val r = RectF(b); m.mapRect(r); Rect().also { r.round(it) } }?.takeIf { !it.contains(Rect(0, 0, newW, newH)) }
+                l.copy(pixels = bounds?.let { LayerExtent.clipTo(px, it) } ?: px, outside = outside, bounds = bounds, mask = l.mask?.let { xf(it) })
+            }
+        }
         val sel = if (!cropSelection) null else s.selection?.let { sel ->
             val dst = Bitmap.createBitmap(newW, newH, Bitmap.Config.ALPHA_8)
             Canvas(dst).drawBitmap(sel.mask, m, p)
@@ -926,7 +988,7 @@ class Engine {
         busy(f.name) {
             // Process in horizontal bands (overlapping by the filter's reach) so even very large
             // images never need more than a few band-sized arrays on the Java heap.
-            val out = withContext(Dispatchers.Default) { applyFilterBanded(target, f, s.selection?.mask) }
+            val out = withContext(Dispatchers.Default) { applyFilterBanded(target, f, clipSelection(s, l)?.mask) }
             preview = null
             if (!filterOnMask && l.text != null) stack = dropText(stack)
             replaceTiles(s, target, out, f.name)
@@ -995,13 +1057,15 @@ class Engine {
         val s = stack
         val l = s.active ?: return
         if (l.isGroup) { onMessage?.invoke("Transform a layer, not a group"); return }
+        if (l.lockPosition) { onMessage?.invoke("“${l.name}” has its position locked"); return }
         val sel = s.selection
         if (sel == null) {
             // Lift just the layer's content, so the handles hug what's actually on it.
-            val b = l.pixels.contentBounds() ?: run { onMessage?.invoke("“${l.name}” is empty"); return }
+            if (l.lockPosition) { onMessage?.invoke("“${l.name}” has its position locked"); return }
+            val b = LayerExtent.bounds(l) ?: run { onMessage?.invoke("“${l.name}” is empty"); return }
             val lifted = Bitmap.createBitmap(b.width(), b.height(), Bitmap.Config.ARGB_8888)
             val c = Canvas(lifted); c.translate(-b.left.toFloat(), -b.top.toFloat())
-            Compositor.drawTiles(c, l.pixels, null, null)
+            LayerExtent.draw(c, l)
             floating = Floating(lifted, Matrix().apply { setTranslate(b.left.toFloat(), b.top.toFloat()) }, l.id, l.name, remainder = null)
         } else {
             val full = l.pixels.toBitmap()
@@ -1173,11 +1237,29 @@ class Engine {
                 return@busy
             }
             if (target != null) {
+                val fp = Paint().apply { isFilterBitmap = true }
                 f.remainder?.let { Compositor.drawTiles(c, it, null, null) }
-                c.drawBitmap(f.bitmap, f.matrix, Paint().apply { isFilterBitmap = true })
+                c.drawBitmap(f.bitmap, f.matrix, fp)
                 floating = null
                 val moved = f.selectionMoved(s)
-                stack = s.copy(selection = moved)
+                // What lands beyond the canvas is kept (layers can be larger than the image).
+                val keepOld = f.remainder != null
+                val area = RectF(0f, 0f, f.bitmap.width.toFloat(), f.bitmap.height.toFloat()).also { f.matrix.mapRect(it) }.let { val r = Rect(); it.roundOut(r); r }
+                val fresh = LayerExtent.outsideTiles(area, s.width, s.height) { cc ->
+                    if (keepOld) for ((k, t) in target.outside) cc.drawBitmap(t, LayerExtent.cx(k) * TILE.toFloat(), LayerExtent.cy(k) * TILE.toFloat(), null)
+                    cc.drawBitmap(f.bitmap, f.matrix, fp)
+                }
+                val outside = (if (keepOld) target.outside else emptyMap()) + fresh
+                // A layer boundary moves with the layer.
+                val delta = Matrix().also { f.initial.invert(it); it.postConcat(f.matrix) }
+                val bounds = target.bounds?.takeIf { !keepOld }?.let { b -> RectF(b).also { delta.mapRect(it) }.let { r -> Rect().also { r.round(it) } } } ?: target.bounds
+                var next = s.copy(selection = moved).replace(target.copy(outside = outside, bounds = bounds))
+                // Linked layers follow a whole-layer move or transform.
+                if (target.linked && !keepOld) for (o in next.all) if (o.linked && o.id != target.id && !o.isGroup && !o.lockPosition) {
+                    val (px, out2) = LayerExtent.transform(o, delta, s.width, s.height)
+                    next = next.replace(o.copy(pixels = px, outside = out2, mask = o.mask?.let { transformMask(it, delta, s.width, s.height) }))
+                }
+                stack = next
                 replaceLayerPixels(s, target, TiledBitmap.fromBitmap(out), name)
             } else {
                 c.drawBitmap(f.bitmap, f.matrix, Paint().apply { isFilterBitmap = true; isAntiAlias = true })

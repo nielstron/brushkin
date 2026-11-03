@@ -129,6 +129,11 @@ fun Dialogs(vm: EditorViewModel, info: DocInfo, files: FileActions) {
         d == "text" -> { close(); vm.selectTool(Tool.TEXT); vm.messages.tryEmit("Tap where the text should go") }
         d.startsWith("text-edit:") -> { close(); vm.selectTool(Tool.TEXT); vm.editTextLayer(d.removePrefix("text-edit:").toLong()) }
         d == "scale" -> SizeDialog("Scale image", info.width, info.height, true, close) { w, h -> e.scaleImage(w, h) }
+        d == "layer-bounds" -> {
+            val al = info.layers.firstOrNull { it.id == info.activeId }
+            val cur = al?.bounds ?: android.graphics.Rect(0, 0, info.width, info.height)
+            SizeDialog("Layer boundary size", cur.width(), cur.height(), false, close) { w, h -> e.setLayerBoundary(android.graphics.Rect(cur.left, cur.top, cur.left + w, cur.top + h)) }
+        }
         d == "canvas" -> SizeDialog("Canvas size", info.width, info.height, false, close) { w, h -> e.canvasSize(w, h, (w - info.width) / 2, (h - info.height) / 2) }
         d == "feather" || d == "grow" || d == "shrink" -> TextPrompt("${d.replaceFirstChar { it.uppercase() }} selection by (px)", "10", KeyboardType.Number, close) { v ->
             close()
