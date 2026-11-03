@@ -7,7 +7,7 @@ import android.graphics.Paint
 import android.graphics.RectF
 
 /** Live filter result shown in place of a layer's pixels or mask. */
-class Preview(val layerId: Long, val mask: Boolean, val tiles: TiledBitmap)
+class Preview(val layerId: Long, val mask: Boolean, val tiles: TiledBitmap, /** Doc pixels per preview pixel. */ val scale: Float = 1f)
 
 /** A bitmap being placed or transformed (Insert, Paste, Transform tool). */
 class Floating(
@@ -79,14 +79,19 @@ object Compositor {
                 layer.mode.blend?.let { lp.blendMode = it }
                 canvas.saveLayer(0f, 0f, stack.width.toFloat(), stack.height.toFloat(), lp)
             }
-            if (pixels != null) drawTiles(canvas, pixels, visible, tp)
+            val pv = preview?.takeIf { it.layerId == layer.id }
+            if (pixels != null) {
+                if (pv != null && !pv.mask && pv.scale != 1f) drawScaled(canvas, pv, tp, pixelSize)
+                else drawTiles(canvas, pixels, visible, tp)
+            }
             if (isFloatTarget) drawFloating(canvas, floating!!, filter)
             if (mask != null) {
                 // Mask tiles are opaque, so overlapping them inside their own layer is harmless and
                 // closes GPU seams; the whole mask is then applied once (luminance → alpha, DST_IN).
                 canvas.saveLayer(0f, 0f, stack.width.toFloat(), stack.height.toFloat(), maskPaint.get()!!)
                 canvas.drawRect(0f, 0f, stack.width.toFloat(), stack.height.toFloat(), whitePaint)
-                drawTiles(canvas, mask, visible, tp, pixelSize * 0.5f)
+                if (pv != null && pv.mask && pv.scale != 1f) drawScaled(canvas, pv, tp, pixelSize)
+                else drawTiles(canvas, mask, visible, tp, pixelSize * 0.5f)
                 canvas.restore()
             }
             if (needsLayer) canvas.restore()
@@ -95,6 +100,17 @@ object Compositor {
     }
 
     private val dst = ThreadLocal.withInitial { RectF() }
+
+    /** Low-resolution previews are drawn scaled up, slightly overlapped to avoid seams. */
+    private fun drawScaled(canvas: Canvas, pv: Preview, paint: Paint, pixelSize: Float) {
+        canvas.save()
+        canvas.scale(pv.scale, pv.scale)
+        val prev = paint.isFilterBitmap
+        paint.isFilterBitmap = true
+        drawTiles(canvas, pv.tiles, null, paint, (pixelSize / pv.scale).coerceAtLeast(0.5f / pv.scale))
+        paint.isFilterBitmap = prev
+        canvas.restore()
+    }
 
     fun drawTiles(canvas: Canvas, t: TiledBitmap, visible: RectF?, paint: Paint?, pad: Float = 0f) {
         val tiles = t.tiles

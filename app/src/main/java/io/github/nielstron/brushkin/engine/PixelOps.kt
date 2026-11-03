@@ -64,6 +64,8 @@ fun curveLut(points: Curve): IntArray {
 sealed interface Filter {
     val name: String
     fun apply(src: IntArray, w: Int, h: Int): IntArray
+    /** The same filter for an image scaled by [k] (previews run on a downscaled proxy). */
+    fun scaled(k: Float): Filter = this
 }
 
 /** Per-channel LUT filter used by Curves, Brightness-Contrast, Invert, Threshold, Posterize. */
@@ -174,10 +176,12 @@ class ColorBalanceFilter(private val cyanRed: Float, private val magentaGreen: F
 class GaussianBlurFilter(private val radius: Float) : Filter {
     override val name = "Gaussian Blur"
     override fun apply(src: IntArray, w: Int, h: Int) = blurArgb(src, w, h, radius.roundToInt())
+    override fun scaled(k: Float) = GaussianBlurFilter(radius * k)
 }
 
 class UnsharpMaskFilter(private val radius: Float, private val amount: Float) : Filter {
     override val name = "Unsharp Mask"
+    override fun scaled(k: Float) = UnsharpMaskFilter((radius * k).coerceAtLeast(1f), amount)
     override fun apply(src: IntArray, w: Int, h: Int): IntArray {
         val blur = blurArgb(src, w, h, radius.roundToInt())
         val out = IntArray(src.size)
@@ -197,6 +201,7 @@ class UnsharpMaskFilter(private val radius: Float, private val amount: Float) : 
 
 class PixelizeFilter(private val block: Int) : Filter {
     override val name = "Pixelize"
+    override fun scaled(k: Float) = PixelizeFilter((block * k).roundToInt().coerceAtLeast(1))
     override fun apply(src: IntArray, w: Int, h: Int): IntArray {
         val out = IntArray(src.size)
         val bs = block.coerceAtLeast(1)
@@ -237,31 +242,64 @@ class NoiseFilter(private val amount: Float, private val seed: Long = 42) : Filt
 
 fun luma(c: Int) = ((((c shr 16) and 0xFF) * 77 + ((c shr 8) and 0xFF) * 150 + (c and 0xFF) * 29) shr 8)
 
-/** Premultiplied 3-pass box blur on ARGB pixels, one channel per core. */
+/**
+ * Premultiplied 3-pass box blur on ARGB pixels. Channels are processed one after another with
+ * reused buffers (each pass parallel over rows/columns) to keep peak memory at ~4 image-sized
+ * arrays — large images would otherwise run out of heap.
+ */
 fun blurArgb(src: IntArray, w: Int, h: Int, radius: Int): IntArray {
     if (radius < 1) return src.copyOf()
     val r = max(1, radius / 2)
     val n = w * h
-    val ch = Array(4) { IntArray(n) }
-    for (i in 0 until n) {
-        val c = src[i]; val a = c ushr 24
-        ch[0][i] = a
-        ch[1][i] = ((c shr 16) and 0xFF) * a / 255
-        ch[2][i] = ((c shr 8) and 0xFF) * a / 255
-        ch[3][i] = (c and 0xFF) * a / 255
-    }
-    IntStream.range(0, 4).parallel().forEach { k ->
-        val a = ch[k]; val tmp = IntArray(n)
-        repeat(3) { Selection.boxH(a, tmp, w, h, r); Selection.boxV(tmp, a, w, h, r) }
-    }
+    val alpha = IntArray(n)
+    val buf = IntArray(n)
+    val tmp = IntArray(n)
+    parallelRows(h) { y0, y1 -> for (i in y0 * w until y1 * w) alpha[i] = src[i] ushr 24 }
+    repeat(3) { boxHPar(alpha, tmp, w, h, r); boxVPar(tmp, alpha, w, h, r) }
     val out = IntArray(n)
-    parallelRows(h) { y0, y1 ->
-        for (i in y0 * w until y1 * w) {
-            val a = ch[0][i]
-            out[i] = if (a == 0) 0 else Color.argb(a, min(255, ch[1][i] * 255 / a), min(255, ch[2][i] * 255 / a), min(255, ch[3][i] * 255 / a))
+    parallelRows(h) { y0, y1 -> for (i in y0 * w until y1 * w) out[i] = alpha[i] shl 24 }
+    for (sh in intArrayOf(16, 8, 0)) {
+        parallelRows(h) { y0, y1 ->
+            for (i in y0 * w until y1 * w) { val c = src[i]; buf[i] = ((c shr sh) and 0xFF) * (c ushr 24) / 255 }
+        }
+        repeat(3) { boxHPar(buf, tmp, w, h, r); boxVPar(tmp, buf, w, h, r) }
+        parallelRows(h) { y0, y1 ->
+            for (i in y0 * w until y1 * w) {
+                val a = alpha[i]
+                if (a != 0) out[i] = out[i] or (min(255, buf[i] * 255 / a) shl sh)
+            }
         }
     }
     return out
+}
+
+private fun boxHPar(src: IntArray, dst: IntArray, w: Int, h: Int, r: Int) {
+    val div = 2 * r + 1
+    parallelRows(h) { y0, y1 ->
+        for (y in y0 until y1) {
+            val row = y * w
+            var sum = 0
+            for (i in -r..r) sum += src[row + i.coerceIn(0, w - 1)]
+            for (x in 0 until w) {
+                dst[row + x] = sum / div
+                sum += src[row + (x + r + 1).coerceAtMost(w - 1)] - src[row + (x - r).coerceAtLeast(0)]
+            }
+        }
+    }
+}
+
+private fun boxVPar(src: IntArray, dst: IntArray, w: Int, h: Int, r: Int) {
+    val div = 2 * r + 1
+    parallelRows(w) { x0, x1 ->
+        for (x in x0 until x1) {
+            var sum = 0
+            for (i in -r..r) sum += src[i.coerceIn(0, h - 1) * w + x]
+            for (y in 0 until h) {
+                dst[y * w + x] = sum / div
+                sum += src[(y + r + 1).coerceAtMost(h - 1) * w + x] - src[(y - r).coerceAtLeast(0) * w + x]
+            }
+        }
+    }
 }
 
 /** Blend [filtered] over [orig] by the selection mask (255 = fully filtered). */

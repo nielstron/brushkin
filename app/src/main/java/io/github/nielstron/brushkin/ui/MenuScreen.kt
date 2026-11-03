@@ -159,7 +159,20 @@ fun MenuScreen(vm: EditorViewModel, info: DocInfo, files: FileActions, holder: C
         LazyColumn(Modifier.fillMaxSize()) {
             if (query.isNotBlank()) {
                 val q = query.trim().lowercase()
-                val hits = all.filter { q in it.label.lowercase() || q in it.section.lowercase() || q in it.hint.lowercase() }
+                // Rank label matches above section and hint matches; every query word must match somewhere.
+                val words = q.split(' ').filter { it.isNotBlank() }
+                fun score(c: Cmd): Int? {
+                    val label = c.label.lowercase(); val full = "${c.section} ${c.label}".lowercase(); val hint = c.hint.lowercase()
+                    if (words.any { it !in full && it !in hint }) return null
+                    return when {
+                        label.startsWith(q) -> 0
+                        q in label -> 1
+                        q in full -> 2
+                        words.all { it in full } -> 3
+                        else -> 4
+                    }
+                }
+                val hits = all.mapNotNull { c -> score(c)?.let { c to it } }.sortedBy { it.second }.map { it.first }
                 items(hits) { c -> CmdRow(c, showSection = true) { run(c) } }
                 if (hits.isEmpty()) item { Text("No command matches “$query”", color = Ui.muted, modifier = Modifier.padding(24.dp)) }
             } else {

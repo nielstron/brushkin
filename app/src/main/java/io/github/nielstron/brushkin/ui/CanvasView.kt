@@ -138,15 +138,10 @@ class CanvasView(context: Context, private val vm: EditorViewModel) : View(conte
         Compositor.draw(canvas, s, visible, filter = sc < 2f, preview = engine.preview, floating = engine.floating, pixelSize = 1f / sc)
         canvas.restore()
 
-        // Selection marching ants.
-        s.selection?.let { sel ->
-            val dash = 4f / sc
-            antsWhite.pathEffect = DashPathEffect(floatArrayOf(dash, dash), 0f)
-            antsBlack.strokeWidth = 0f; antsWhite.strokeWidth = 0f
-            canvas.drawPath(sel.outline, antsBlack)
-            canvas.drawPath(sel.outline, antsWhite)
-        }
         canvas.restore()
+
+        // Selection outline in screen space so it stays equally visible at any zoom.
+        s.selection?.let { sel -> drawAnts(canvas, sel) }
 
         drawOverlays(canvas)
         drawLoupe(canvas, s)
@@ -194,7 +189,7 @@ class CanvasView(context: Context, private val vm: EditorViewModel) : View(conte
         canvas.clipRect(docRect)
         Compositor.draw(canvas, s, loupeVisible, filter = total < 2f, preview = engine.preview, floating = engine.floating, pixelSize = 1f / total)
         canvas.restore()
-        s.selection?.let { canvas.drawPath(it.outline, hairBlack); canvas.drawPath(it.outline, antsWhite) }
+        s.selection?.let { canvas.drawPath(it.outline, hairBlack); canvas.drawPath(it.outline, hairWhite) }
         preview?.let { canvas.drawPath(it, hairBlack) }
         vm.cropRect?.let { canvas.drawRect(it, hairWhite) }
         canvas.restore()
@@ -213,6 +208,33 @@ class CanvasView(context: Context, private val vm: EditorViewModel) : View(conte
         }
         canvas.restore()
         canvas.drawPath(clip, loupeBorder)
+    }
+
+    // Marching ants: a black/white diagonal stripe shader in screen space, scrolled over time.
+    // Unlike a dash effect it works on outlines made of many tiny segments.
+    private val antsStripe: BitmapShader = run {
+        val n = (5 * density).toInt().coerceAtLeast(3)
+        val b = Bitmap.createBitmap(n * 2, n * 2, Bitmap.Config.ARGB_8888)
+        for (y in 0 until n * 2) for (x in 0 until n * 2) b.setPixel(x, y, if ((x / n + y / n) % 2 == 0) Color.WHITE else Color.BLACK)
+        BitmapShader(b, Shader.TileMode.REPEAT, Shader.TileMode.REPEAT)
+    }
+    private val antsPaint = Paint().apply { style = Paint.Style.STROKE; strokeWidth = 2.5f * density; shader = antsStripe; strokeCap = Paint.Cap.SQUARE }
+    private val antsShift = Matrix()
+    private var antsPath = Path()
+    private var antsFor: Any? = null
+    private val antsMatrix = Matrix()
+
+    private fun drawAnts(canvas: Canvas, sel: io.github.nielstron.brushkin.engine.Selection) {
+        // Re-map the outline only when the selection or the view changed.
+        if (antsFor !== sel || antsMatrix != viewMatrix) {
+            antsPath = Path(sel.outline).apply { transform(viewMatrix) }
+            antsFor = sel; antsMatrix.set(viewMatrix)
+        }
+        val shift = (android.os.SystemClock.uptimeMillis() / 40 % 1000) * density / 2f
+        antsShift.setTranslate(shift, shift)
+        antsStripe.setLocalMatrix(antsShift)
+        canvas.drawPath(antsPath, antsPaint)
+        postInvalidateDelayed(80)
     }
 
     private fun drawOverlays(canvas: Canvas) {
