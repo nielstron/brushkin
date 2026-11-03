@@ -35,6 +35,7 @@ import androidx.compose.material.icons.rounded.ContentCut
 import androidx.compose.material.icons.rounded.ContentPaste
 import androidx.compose.material.icons.rounded.IosShare
 import androidx.compose.material.icons.rounded.Menu
+import androidx.compose.material.icons.rounded.ExpandMore
 import androidx.compose.material.icons.rounded.Remove
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.LinearProgressIndicator
@@ -141,23 +142,34 @@ fun EditorScreen(vm: EditorViewModel, files: FileActions) {
             IconButton(onClick = { vm.dialog = "export" }) { Icon(Icons.Rounded.IosShare, "Export", tint = Ui.text) }
         }
 
-        // Clipboard actions, shown when there's something to act on, and × to deselect (any tool).
+        // Selection and clipboard: × to deselect (any tool) and a chevron with the rest.
         // Deleting pixels stays on the Del key and Edit → Clear.
         if ((info.hasSelection || vm.clipHasImage) && !info.floating) {
+            var menu by remember { mutableStateOf(false) }
             Row(
                 Modifier.align(Alignment.TopEnd).statusBarsPadding().padding(top = if (vm.showRulers) 94.dp else 72.dp, end = 12.dp)
                     .clip(RoundedCornerShape(14.dp)).background(Ui.panel.copy(alpha = 0.94f))
                     .border(1.dp, Ui.border, RoundedCornerShape(14.dp)),
             ) {
-                if (info.hasSelection) {
-                    IconButton(onClick = { vm.copy(cut = true) }) { Icon(Icons.Rounded.ContentCut, "Cut", tint = Ui.text) }
-                    IconButton(onClick = { vm.copy() }) { Icon(Icons.Rounded.ContentCopy, "Copy", tint = Ui.text) }
+                Box {
+                    IconButton(onClick = { menu = true }) { Icon(Icons.Rounded.ExpandMore, if (info.hasSelection) "Selection actions" else "Paste", tint = Ui.text) }
+                    androidx.compose.material3.DropdownMenu(menu, { menu = false }, containerColor = Ui.panel) {
+                        @Composable
+                        fun Item(label: String, icon: ImageVector, run: () -> Unit) = androidx.compose.material3.DropdownMenuItem(
+                            text = { Text(label, color = Ui.text) }, leadingIcon = { Icon(icon, null, tint = Ui.text) }, onClick = { menu = false; run() },
+                        )
+                        if (info.hasSelection) {
+                            Item("Cut", Icons.Rounded.ContentCut) { vm.copy(cut = true) }
+                            Item("Copy", Icons.Rounded.ContentCopy) { vm.copy() }
+                        }
+                        if (vm.clipHasImage) Item("Paste as new layer", Icons.Rounded.ContentPaste) { vm.paste() }
+                        if (info.hasSelection) {
+                            Item("Invert selection", ToolIcons.fuzzy) { vm.engine.selectInvert() }
+                            Item("Crop to selection", ToolIcons.crop) { vm.engine.cropToSelection() }
+                        }
+                    }
                 }
-                if (vm.clipHasImage) IconButton(onClick = { vm.paste() }) { Icon(Icons.Rounded.ContentPaste, "Paste as new layer", tint = Ui.text) }
-                if (info.hasSelection) {
-                    Box(Modifier.align(Alignment.CenterVertically).size(1.dp, 24.dp).background(Ui.border))
-                    IconButton(onClick = { vm.engine.selectNone(); vm.objectNew(); holder.view?.invalidate() }) { Icon(Icons.Rounded.Close, "Deselect", tint = Ui.text) }
-                }
+                if (info.hasSelection) IconButton(onClick = { vm.engine.selectNone(); vm.objectNew(); holder.view?.invalidate() }) { Icon(Icons.Rounded.Close, "Deselect", tint = Ui.text) }
             }
         }
 
@@ -296,11 +308,6 @@ private fun ContextChips(vm: EditorViewModel, hasSelection: Boolean, holder: Can
                 if (t != Tool.ERASER && t != Tool.SMUDGE) Chip("Erase", vm.eraseToggle, ToolIcons.eraser) { vm.eraseToggle = !vm.eraseToggle }
             }
             t.isSelect -> {
-                // Actions on an existing selection come first so they're never scrolled off.
-                if (hasSelection) {
-                    Chip("Invert", false) { vm.engine.selectInvert() }
-                    Chip("Crop", false, ToolIcons.crop) { vm.engine.cropToSelection() }
-                }
                 if (t == Tool.OBJECT_SELECT) ObjectChips(vm, holder, removeChip = hasSelection)
                 if (t != Tool.OBJECT_SELECT || vm.objPoints.isEmpty())
                     for (m in SelectMode.entries) Chip(m.name.lowercase().replaceFirstChar { it.uppercase() }, vm.selectMode == m) { vm.selectMode = m }
