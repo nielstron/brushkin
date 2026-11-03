@@ -151,7 +151,7 @@ class EditorViewModel(app: Application) : AndroidViewModel(app) {
                 val small = withContext(Dispatchers.Default) {
                     // ≤1280 px, and dimensions rounded to multiples of 16: ML Kit's GPU path reads
                     // past the end of rows with odd sizes on some drivers.
-                    val k = minOf(1f, 1280f / maxOf(full.width, full.height))
+                    val k = minOf(1f, 1024f / maxOf(full.width, full.height))
                     fun r16(v: Float) = ((v / 16f).roundToInt() * 16).coerceAtLeast(16)
                     android.graphics.Bitmap.createScaledBitmap(full, r16(full.width * k), r16(full.height * k), true)
                 }

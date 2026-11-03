@@ -18,9 +18,25 @@ class ObjectSelect {
         SubjectSegmentation.getClient(
             SubjectSegmenterOptions.Builder()
                 .enableForegroundConfidenceMask()
-                .enableMultipleSubjects(SubjectSegmenterOptions.SubjectResultOptions.Builder().enableConfidenceMask().build())
                 .build()
         )
+    }
+
+    /**
+     * Make sure Play services has the segmentation module, requesting the download if needed
+     * (installs from adb or sideloads skip the install-time download).
+     */
+    suspend fun ensureModule(context: android.content.Context) {
+        val client = com.google.android.gms.common.moduleinstall.ModuleInstall.getClient(context)
+        if (client.areModulesAvailable(segmenter).await().areModulesAvailable()) return
+        client.installModules(
+            com.google.android.gms.common.moduleinstall.ModuleInstallRequest.newBuilder().addApi(segmenter).build()
+        ).await()
+        repeat(240) {
+            if (client.areModulesAvailable(segmenter).await().areModulesAvailable()) return
+            kotlinx.coroutines.delay(500)
+        }
+        throw IllegalStateException("The object selection model is still downloading")
     }
 
     /** Result mask at the size of the input image, 0–255 per pixel. */
@@ -34,34 +50,41 @@ class ObjectSelect {
         val result = segmenter.process(InputImage.fromBitmap(image, 0)).await()
         return withContext(Dispatchers.Default) {
             val w = image.width; val h = image.height
+            val fg = result.foregroundConfidenceMask ?: return@withContext null
+            fg.rewind()
+            val conf = FloatArray(w * h).also { fg.get(it) }
+            // Sharpen ML confidence into a crisp but antialiased edge.
+            fun soft(c: Float) = (((c - 0.35f) / 0.3f).coerceIn(0f, 1f) * 255).roundToInt()
             val out = ByteArray(w * h)
-            fun put(buf: java.nio.FloatBuffer, ox: Int, oy: Int, bw: Int, bh: Int) {
-                buf.rewind()
-                for (yy in 0 until bh) for (xx in 0 until bw) {
-                    val c = buf.get()
-                    // Sharpen ML confidence into a crisp but antialiased edge.
-                    val v = ((c - 0.35f) / 0.3f).coerceIn(0f, 1f)
-                    val i = (oy + yy) * w + ox + xx
-                    val b = (v * 255).roundToInt()
-                    if (b > (out[i].toInt() and 0xFF)) out[i] = b.toByte()
-                }
-            }
             if (x < 0) {
-                val fg = result.foregroundConfidenceMask ?: return@withContext null
-                put(fg, 0, 0, w, h)
-            } else {
-                // Pick the subject with the highest confidence at the tapped pixel.
-                var best: com.google.mlkit.vision.segmentation.subject.Subject? = null
-                var bestConf = 0.3f
-                for (s in result.subjects) {
-                    val m = s.confidenceMask ?: continue
-                    val lx = x - s.startX; val ly = y - s.startY
-                    if (lx !in 0 until s.width || ly !in 0 until s.height) continue
-                    val c = m.get(ly * s.width + lx)
-                    if (c > bestConf) { bestConf = c; best = s }
-                }
-                val s = best ?: return@withContext null
-                put(s.confidenceMask!!, s.startX, s.startY, s.width, s.height)
+                for (i in out.indices) out[i] = soft(conf[i]).toByte()
+                return@withContext Mask(out, w, h)
+            }
+            // ML Kit's per-subject masks crash its GPU runner (16.0.0-beta1), so the tapped object
+            // is isolated from the foreground mask as the connected region under the finger.
+            val inside = BooleanArray(w * h) { conf[it] > 0.15f }
+            var seed = -1
+            val cx = x.coerceIn(0, w - 1); val cy = y.coerceIn(0, h - 1)
+            val reach = maxOf(w, h) / 20
+            var best = Int.MAX_VALUE
+            for (dy in -reach..reach) for (dx in -reach..reach) {
+                val px = cx + dx; val py = cy + dy
+                if (px !in 0 until w || py !in 0 until h || !inside[py * w + px]) continue
+                val d = dx * dx + dy * dy
+                if (d < best) { best = d; seed = py * w + px }
+            }
+            if (seed < 0) return@withContext null
+            val stack = IntArray(w * h); var sp = 0
+            val seen = BooleanArray(w * h)
+            stack[sp++] = seed; seen[seed] = true
+            while (sp > 0) {
+                val i = stack[--sp]
+                out[i] = soft(conf[i]).toByte()
+                val px = i % w; val py = i / w
+                if (px > 0 && inside[i - 1] && !seen[i - 1]) { seen[i - 1] = true; stack[sp++] = i - 1 }
+                if (px < w - 1 && inside[i + 1] && !seen[i + 1]) { seen[i + 1] = true; stack[sp++] = i + 1 }
+                if (py > 0 && inside[i - w] && !seen[i - w]) { seen[i - w] = true; stack[sp++] = i - w }
+                if (py < h - 1 && inside[i + w] && !seen[i + w]) { seen[i + w] = true; stack[sp++] = i + w }
             }
             Mask(out, w, h)
         }
