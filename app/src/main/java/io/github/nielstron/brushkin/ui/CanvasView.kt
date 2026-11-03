@@ -180,7 +180,7 @@ class CanvasView(context: Context, private val vm: EditorViewModel) : View(conte
         if (!active) return
         val size = 132 * density
         val margin = 12 * density
-        val top = (rootWindowInsets?.getInsets(android.view.WindowInsets.Type.statusBars())?.top ?: 0) + 76 * density
+        val top = (rootWindowInsets?.getInsets(android.view.WindowInsets.Type.statusBars())?.top ?: 0) + 128 * density
         val left = if (touch.x < width / 2f) width - size - margin else margin
         val box = RectF(left, top, left + size, top + size)
         // Move out of the way if the finger is right under the loupe.

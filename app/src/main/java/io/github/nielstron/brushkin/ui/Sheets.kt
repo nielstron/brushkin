@@ -532,7 +532,7 @@ private fun InsertSheet(vm: EditorViewModel, files: FileActions) {
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             InsertTile(Icons.Rounded.Image, "Gallery", Modifier.weight(1f)) { vm.sheet = Sheet.NONE; files.pickImageLayer() }
             InsertTile(Icons.Rounded.FolderOpen, "Files", Modifier.weight(1f)) { vm.sheet = Sheet.NONE; files.pickImageLayerFile() }
-            InsertTile(Icons.Rounded.ContentPaste, "Paste", Modifier.weight(1f)) { vm.sheet = Sheet.NONE; vm.engine.paste() }
+            InsertTile(Icons.Rounded.ContentPaste, "Paste", Modifier.weight(1f)) { vm.sheet = Sheet.NONE; vm.paste() }
             InsertTile(Icons.Rounded.CreateNewFolder, "Empty layer", Modifier.weight(1f)) { vm.sheet = Sheet.NONE; vm.engine.addLayer() }
         }
         Spacer(Modifier.height(18.dp))

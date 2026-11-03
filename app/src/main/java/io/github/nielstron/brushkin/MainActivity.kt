@@ -54,6 +54,36 @@ class MainActivity : ComponentActivity(), FileActions {
         }
     }
 
+    override fun onWindowFocusChanged(hasFocus: Boolean) {
+        super.onWindowFocusChanged(hasFocus)
+        // Clipboard contents can only be inspected while focused.
+        if (hasFocus) vm.refreshClipboard()
+    }
+
+    /** GIMP's keyboard shortcuts for hardware keyboards (text fields get keys first). */
+    override fun onKeyDown(keyCode: Int, event: android.view.KeyEvent): Boolean {
+        val e = vm.engine
+        val sel = e.info.value.hasSelection
+        if (event.isCtrlPressed) {
+            when (keyCode) {
+                android.view.KeyEvent.KEYCODE_Z -> if (event.isShiftPressed) e.redo() else e.undo()
+                android.view.KeyEvent.KEYCODE_Y -> e.redo()
+                android.view.KeyEvent.KEYCODE_C -> vm.copy(merged = event.isShiftPressed)
+                android.view.KeyEvent.KEYCODE_X -> vm.copy(cut = true)
+                android.view.KeyEvent.KEYCODE_V -> vm.paste()
+                android.view.KeyEvent.KEYCODE_A -> if (event.isShiftPressed) e.selectNone() else e.selectAll()
+                android.view.KeyEvent.KEYCODE_I -> e.selectInvert()
+                android.view.KeyEvent.KEYCODE_S -> saveProject()
+                else -> return super.onKeyDown(keyCode, event)
+            }
+            return true
+        }
+        if ((keyCode == android.view.KeyEvent.KEYCODE_DEL || keyCode == android.view.KeyEvent.KEYCODE_FORWARD_DEL) && sel) {
+            e.clearSelection(); return true
+        }
+        return super.onKeyDown(keyCode, event)
+    }
+
     override fun onNewIntent(intent: Intent) {
         super.onNewIntent(intent)
         incomingUri(intent)?.let { open(it) }

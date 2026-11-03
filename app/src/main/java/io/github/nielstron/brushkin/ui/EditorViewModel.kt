@@ -156,6 +156,8 @@ class EditorViewModel(app: Application) : AndroidViewModel(app) {
 
     init {
         engine.onMessage = { messages.tryEmit(it) }
+        // Posted, not immediate: the clipboard property is declared further down.
+        viewModelScope.launch(Dispatchers.Main) { clipboardManager.addPrimaryClipChangedListener { refreshClipboard() } }
         engine.newDocument(1600, 2400, Color.WHITE)
         // Autosave a few seconds after edits settle, so a crash or a killed process loses little.
         viewModelScope.launch {
@@ -197,6 +199,64 @@ class EditorViewModel(app: Application) : AndroidViewModel(app) {
                     }
                 )
             } finally { mlBusy = null }
+        }
+    }
+
+    // ------------------------------------------------------------ clipboard (shared with other apps)
+
+    private val clipboardManager by lazy { getApplication<Application>().getSystemService(android.content.ClipboardManager::class.java) }
+    /** Whether the system clipboard holds an image we can paste. */
+    var clipHasImage by mutableStateOf(false)
+    private var lastCopy: Pair<android.net.Uri, android.graphics.Rect>? = null
+
+    fun refreshClipboard() {
+        clipHasImage = runCatching {
+            val d = clipboardManager.primaryClipDescription ?: return@runCatching false
+            (0 until d.mimeTypeCount).any { d.getMimeType(it).startsWith("image/") }
+        }.getOrDefault(false)
+    }
+
+    /** Copy (or cut) the selection to the system clipboard as a PNG, so other apps can paste it too. */
+    fun copy(cut: Boolean = false, merged: Boolean = false) {
+        viewModelScope.launch {
+            val (bmp, rect) = engine.copyRegion(merged) ?: run { messages.tryEmit("Nothing to copy"); return@launch }
+            if (cut) engine.clearSelection("Cut")
+            runCatching {
+                val app = getApplication<Application>()
+                val uri = withContext(Dispatchers.IO) {
+                    val dir = File(app.cacheDir, "share").apply { mkdirs() }
+                    dir.listFiles { f -> f.name.startsWith("clip-") }?.forEach { it.delete() }
+                    val f = File(dir, "clip-${System.currentTimeMillis()}.png")
+                    f.outputStream().use { bmp.compress(android.graphics.Bitmap.CompressFormat.PNG, 100, it) }
+                    androidx.core.content.FileProvider.getUriForFile(app, "${app.packageName}.files", f)
+                }
+                clipboardManager.setPrimaryClip(android.content.ClipData.newUri(app.contentResolver, "Brushkin image", uri))
+                lastCopy = uri to rect
+                clipHasImage = true
+            }.onFailure { messages.tryEmit("Couldn't copy: ${it.message}") }
+            // Android 13+ confirms clipboard copies itself.
+            if (android.os.Build.VERSION.SDK_INT < 33) messages.tryEmit(if (cut) "Cut" else "Copied")
+        }
+    }
+
+    /** Paste an image from the system clipboard as a new layer (ours go back where they came from). */
+    fun paste() {
+        viewModelScope.launch {
+            val app = getApplication<Application>()
+            val clip = runCatching { clipboardManager.primaryClip }.getOrNull()
+            val uri = clip?.let { c -> (0 until c.itemCount).firstNotNullOfOrNull { c.getItemAt(it).uri } }
+            if (uri == null) { messages.tryEmit("The clipboard has no image"); return@launch }
+            runCatching {
+                val bmp = withContext(Dispatchers.IO) {
+                    android.graphics.ImageDecoder.decodeBitmap(android.graphics.ImageDecoder.createSource(app.contentResolver, uri)) { d, info, _ ->
+                        d.allocator = android.graphics.ImageDecoder.ALLOCATOR_SOFTWARE; d.isMutableRequired = true
+                        val k = maxOf(info.size.width, info.size.height) / 8192f
+                        if (k > 1f) d.setTargetSize((info.size.width / k).toInt(), (info.size.height / k).toInt())
+                    }.let { if (it.config != android.graphics.Bitmap.Config.ARGB_8888) it.copy(android.graphics.Bitmap.Config.ARGB_8888, true) else it }
+                }
+                val own = lastCopy?.takeIf { it.first == uri }?.second
+                engine.placeFloating(bmp, "Pasted Layer", own?.let { android.graphics.Point(it.left, it.top) })
+            }.onFailure { messages.tryEmit("Couldn't paste: ${it.message}") }
         }
     }
 
