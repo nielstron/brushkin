@@ -121,4 +121,63 @@ Name: Sunset
         val jump = { b: Bitmap -> (0 until 64).maxOf { y -> abs(Color.red(b.getPixel(0, y)) - Color.red(b.getPixel(63, y))) } }
         assertTrue("before ${jump(ramp)} after ${jump(sm)}", jump(sm) < 20 && jump(ramp) > 200)
     }
+
+    private fun freshStore(): Pair<io.github.nielstron.brushkin.engine.ResourceStore, java.io.File> {
+        val dir = java.io.File(androidx.test.platform.app.InstrumentationRegistry.getInstrumentation().targetContext.cacheDir, "res-test-${System.nanoTime()}")
+        return io.github.nielstron.brushkin.engine.ResourceStore(dir).also { it.load() } to dir
+    }
+
+    @Test fun paletteEditorPersists() {
+        val (store, dir) = freshStore()
+        // What the palette editor does: New → + (add FG) → long-press (remove).
+        var p = store.savePalette(PaletteRes("Mine", listOf(Color.RED)))
+        p = store.savePalette(PaletteRes(p.name, p.colors + Color.BLUE), p)
+        p = store.savePalette(PaletteRes(p.name, p.colors + Color.GREEN), p)
+        p = store.savePalette(PaletteRes(p.name, p.colors.filterIndexed { i, _ -> i != 1 }), p)
+        assertEquals(listOf(Color.RED, Color.GREEN), p.colors)
+        assertEquals(1, store.palettes.value.size)
+        // Reloaded from disk (the app restarting) it's the same palette, as a GIMP .gpl file.
+        val again = io.github.nielstron.brushkin.engine.ResourceStore(dir).also { it.load() }
+        assertEquals(listOf("Mine"), again.palettes.value.map { it.name })
+        assertEquals(listOf(Color.RED, Color.GREEN), again.palettes.value.single().colors)
+        assertTrue(java.io.File(dir, p.file!!).readText().startsWith("GIMP Palette"))
+    }
+
+    @Test fun gradientEditorPersists() {
+        val (store, dir) = freshStore()
+        // Stops red@0, white@0.3, blue@1 → two linear segments (what the editor's Save does).
+        val stops = listOf(0f to Color.RED, 0.3f to Color.WHITE, 1f to Color.BLUE)
+        val segs = stops.zipWithNext { a, b -> GradientRes.Segment(a.first, (a.first + b.first) / 2, b.first, a.second, b.second) }
+        val g = store.saveGradient(GradientRes("Flag", segs))
+        val (cols, pos) = g.stops(0, 0)
+        assertEquals(Color.WHITE, io.github.nielstron.brushkin.ui.sampleStops(cols, pos, 0.3f))
+        // Editing it again replaces the same file instead of adding a copy.
+        val g2 = store.saveGradient(GradientRes("Flag", segs.dropLast(1)), g)
+        assertEquals(g.file, g2.file)
+        val again = io.github.nielstron.brushkin.engine.ResourceStore(dir).also { it.load() }
+        val loaded = again.gradients.value.single { it.name == "Flag" }
+        assertEquals(1, loaded.segments.size)
+        assertEquals(Color.WHITE, loaded.segments.single().c1)
+    }
+
+    @Test fun brushAndPatternSavesPersist() {
+        val (store, dir) = freshStore()
+        // "Save as brush" from the brush editor: a 5-point star tip.
+        val tip = io.github.nielstron.brushkin.engine.TipCache.get(48f, BrushSettings(hardness = 1f, spikes = 5, aspect = 0.4f), false)
+        val buf = ByteBuffer.allocate(tip.rowBytes * tip.height); tip.copyPixelsToBuffer(buf)
+        val mask = ByteArray(48 * 48).also { for (y in 0 until 48) System.arraycopy(buf.array(), y * tip.rowBytes, it, y * 48, 48) }
+        val b = store.saveBrush("Star", mask, 48, 48)
+        assertEquals(b, store.brushByName["Star"])
+        val p = store.savePattern("Dots", io.github.nielstron.brushkin.engine.PatternOps.generate(2, 10, Color.BLACK, Color.WHITE))
+        val renamed = store.updatePattern(p, "Polka", io.github.nielstron.brushkin.engine.PatternOps.seamless(p.bitmap))
+        val again = io.github.nielstron.brushkin.engine.ResourceStore(dir).also { it.load() }
+        assertEquals(listOf("Star"), again.brushes.value.map { it.name })
+        assertEquals(listOf("Polka"), again.patterns.value.map { it.name })
+        assertEquals(renamed.bitmap.getPixel(5, 5), again.patterns.value.single().bitmap.getPixel(5, 5))
+        // A brush made in the editor paints with its shape: the star covers less than a disc.
+        val px = again.brushByName["Star"]!!.frames.single()
+        val ab = ByteBuffer.allocate(px.rowBytes * px.height); px.copyPixelsToBuffer(ab)
+        val covered = ab.array().count { (it.toInt() and 0xFF) > 128 }
+        assertTrue("$covered", covered in 300..1500)
+    }
 }
