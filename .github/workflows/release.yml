@@ -13,6 +13,8 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
+      # Keep JDK 21: F-Droid rebuilds the -foss APK with JDK 21 and only publishes our signed
+      # APK if its build is byte-identical (reproducible builds); another JDK changes classes.dex.
       - uses: actions/setup-java@v6
         with:
           distribution: temurin
