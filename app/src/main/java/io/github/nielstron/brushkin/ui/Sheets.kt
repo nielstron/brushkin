@@ -1,5 +1,7 @@
 package io.github.nielstron.brushkin.ui
 
+import androidx.compose.material.icons.rounded.Star
+import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.material.icons.rounded.Colorize
 import androidx.compose.foundation.combinedClickable
 import androidx.compose.ui.draw.drawBehind
@@ -120,30 +122,66 @@ fun Sheets(vm: EditorViewModel, info: DocInfo, files: FileActions) {
 
 // ---------------------------------------------------------------------------- tools
 
+/** Tools per section shown before "Show all": two rows. */
+private const val TOOLS_SHOWN = 8
+
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
 private fun ToolsSheet(vm: EditorViewModel) {
+    val expanded = remember { mutableStateListOf<ToolGroup>() }
     Column(Modifier.verticalScroll(rememberScrollState()).padding(horizontal = 12.dp).padding(bottom = 16.dp)) {
         Text("Tools", color = Ui.text, fontSize = 20.sp, fontWeight = FontWeight.Bold, modifier = Modifier.padding(4.dp, 0.dp, 4.dp, 4.dp))
+        Text(
+            if (vm.favorites.isEmpty()) "Long-press a tool to add it to the toolbar" else "Long-press a tool to add it to or remove it from the toolbar",
+            color = Ui.muted, fontSize = 12.sp, modifier = Modifier.padding(horizontal = 4.dp),
+        )
+        if (vm.favorites.isNotEmpty()) {
+            SectionLabel("Favorites", Modifier.padding(start = 4.dp, top = 14.dp, bottom = 8.dp))
+            ToolGrid(vm, vm.favorites.toList())
+        }
         for (g in ToolGroup.entries) {
-            SectionLabel(g.label, Modifier.padding(start = 4.dp, top = 14.dp, bottom = 8.dp))
-            val tools = Tool.entries.filter { it.group == g }
-            FlowRow(maxItemsInEachRow = 4, horizontalArrangement = Arrangement.spacedBy(6.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                for (t in tools) {
-                    val active = vm.tool == t
-                    Column(
-                        Modifier.weight(1f).height(72.dp).clip(RoundedCornerShape(14.dp)).background(if (active) Ui.accent else Ui.panel2)
-                            .clickable { vm.sheet = Sheet.NONE; vm.pickTool(t) },
-                        horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.Center,
-                    ) {
-                        Icon(ToolIcons.of(t), null, tint = if (active) Ui.onAccent else Ui.text, modifier = Modifier.size(22.dp))
-                        Spacer(Modifier.height(6.dp))
-                        Text(t.label, color = if (active) Ui.onAccent else Ui.text, fontSize = 11.sp, maxLines = 1)
-                    }
+            val all = Tool.entries.filter { it.group == g }
+            val open = g in expanded || all.size <= TOOLS_SHOWN
+            // The most used tools (and the current one), kept in their usual order.
+            val shown = if (open) all else {
+                val top = all.sortedByDescending { vm.toolUses(it) }.take(TOOLS_SHOWN).toMutableSet()
+                if (vm.tool in all && vm.tool !in top) { top.remove(top.minBy { vm.toolUses(it) }); top.add(vm.tool) }
+                all.filter { it in top }
+            }
+            Row(Modifier.fillMaxWidth().padding(start = 4.dp, top = 14.dp, bottom = 8.dp), verticalAlignment = Alignment.CenterVertically) {
+                SectionLabel(g.label, Modifier.weight(1f))
+                if (all.size > TOOLS_SHOWN) Text(
+                    if (g in expanded) "Show fewer" else "Show all ${all.size}", color = Ui.accent, fontSize = 12.sp,
+                    modifier = Modifier.clip(RoundedCornerShape(8.dp)).clickable { if (!expanded.remove(g)) expanded.add(g) }.padding(horizontal = 8.dp, vertical = 4.dp),
+                )
+            }
+            ToolGrid(vm, shown)
+        }
+    }
+}
+
+@OptIn(ExperimentalLayoutApi::class, androidx.compose.foundation.ExperimentalFoundationApi::class)
+@Composable
+private fun ToolGrid(vm: EditorViewModel, tools: List<Tool>) {
+    FlowRow(maxItemsInEachRow = 4, horizontalArrangement = Arrangement.spacedBy(6.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+        for (t in tools) {
+            val active = vm.tool == t
+            Box(
+                Modifier.weight(1f).height(72.dp).clip(RoundedCornerShape(14.dp)).background(if (active) Ui.accent else Ui.panel2)
+                    .combinedClickable(onClick = { vm.sheet = Sheet.NONE; vm.pickTool(t) }, onLongClick = { vm.toggleFavorite(t) }),
+            ) {
+                Column(Modifier.align(Alignment.Center), horizontalAlignment = Alignment.CenterHorizontally) {
+                    Icon(ToolIcons.of(t), null, tint = if (active) Ui.onAccent else Ui.text, modifier = Modifier.size(22.dp))
+                    Spacer(Modifier.height(6.dp))
+                    Text(t.label, color = if (active) Ui.onAccent else Ui.text, fontSize = 11.sp, maxLines = 1)
                 }
-                repeat((4 - tools.size % 4) % 4) { Spacer(Modifier.weight(1f)) }
+                if (t in vm.favorites) Icon(
+                    androidx.compose.material.icons.Icons.Rounded.Star, "In the toolbar",
+                    tint = if (active) Ui.onAccent else Ui.accent, modifier = Modifier.align(Alignment.TopEnd).padding(6.dp).size(14.dp),
+                )
             }
         }
+        repeat((4 - tools.size % 4) % 4) { Spacer(Modifier.weight(1f)) }
     }
 }
 

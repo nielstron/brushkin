@@ -756,7 +756,7 @@ class CanvasView(context: Context, private val vm: EditorViewModel) : View(conte
         val f = engine.floating
         val tool = vm.tool
         if (f != null) { startFloating(e, f); return }
-        if (tool == Tool.MOVE) { engine.liftActive(); mode = Mode.FLOAT_MOVE; moving = true; return }
+        if (tool == Tool.MOVE) { engine.liftActive(vm.transformWhole); mode = Mode.FLOAT_MOVE; moving = true; return }
         if (tool == Tool.PATHS) { startPath(); return }
         if (tool == Tool.CROP) { mode = Mode.CROP; vm.cropRect = RectF(downDoc.x, downDoc.y, downDoc.x, downDoc.y); return }
         if (vm.pickMode || tool == Tool.PICKER) { mode = Mode.PICK; pick(e.x, e.y); return }

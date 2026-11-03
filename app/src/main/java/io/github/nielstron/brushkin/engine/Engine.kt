@@ -1177,7 +1177,15 @@ class Engine {
     }
 
     /** Transform tool: lift the selection (or the whole active layer) into a floating bitmap. */
-    fun liftActive() = post { liftNow() }
+    /** Lifts the active layer (or the selected part of it) for transforming; [wholeImage]: the whole image instead. */
+    fun liftActive(wholeImage: Boolean = false) = post { if (wholeImage) liftImage() else liftNow() }
+
+    private fun liftImage() {
+        if (floating != null) return
+        val s = stack
+        floating = Floating(Compositor.flatten(s), Matrix(), null, "Image", wholeImage = true)
+        publish(); invalidate()
+    }
 
     private fun liftNow() {
         if (floating != null) return
@@ -1349,6 +1357,23 @@ class Engine {
         val f = floating ?: return
         mesh = null; cageRest = emptyList(); cageNow = emptyList()
         val s = stack
+        if (f.wholeImage) {
+            // Every layer, mask, channel and the selection get the same transform. A pure move keeps
+            // the canvas; other transforms resize it to fit the result (like GIMP's "Image" mode).
+            val m = Matrix(f.matrix)
+            busy("Applying") {
+                floating = null
+                if (name == "Move Layer") transformAll("Move Image", s.width, s.height, m)
+                else {
+                    val r = RectF(0f, 0f, s.width.toFloat(), s.height.toFloat()); m.mapRect(r)
+                    val b = Rect(); r.roundOut(b)
+                    if (b.width() < 1 || b.height() < 1 || b.width().toLong() * b.height() > 100_000_000L) { onMessage?.invoke("The result would be too large"); publish(); invalidate(); return@busy }
+                    m.postTranslate(-b.left.toFloat(), -b.top.toFloat())
+                    transformAll("$name Image", b.width(), b.height(), m)
+                }
+            }
+            return
+        }
         busy("Applying") {
             val out = Bitmap.createBitmap(s.width, s.height, Bitmap.Config.ARGB_8888)
             val c = Canvas(out)
