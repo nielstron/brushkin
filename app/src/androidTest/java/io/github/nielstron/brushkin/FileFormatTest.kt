@@ -65,4 +65,5 @@ class FileFormatTest {
 
     @Test fun gimp8bit() = check("test8")
     @Test fun gimp16bitLinear() = check("test16")
+    @Test fun gimp64bitDouble() = check("test64")
 }
