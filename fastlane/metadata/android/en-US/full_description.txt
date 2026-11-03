@@ -1,0 +1,17 @@
+<p>A layered image editor for phones and tablets that aims at GIMP's feature set, with controls designed for fingers and styluses instead of mouse and keyboard.</p>
+
+<p><b>Painting:</b> paintbrush, pencil, airbrush, ink, MyPaint-style brushes, eraser, smudge, clone, heal, perspective clone, dodge/burn, blur/sharpen, bucket fill and gradients. Brush editor, paint dynamics (pressure, speed, tilt, randomness) and symmetry painting (mirror and mandala).</p>
+
+<p><b>Selections:</b> rectangle, ellipse, free, fuzzy, by color, Intelligent Scissors and foreground select; quick mask, feather, grow, shrink, border and saved channels.</p>
+
+<p><b>Layers:</b> groups (including pass-through), 17 blend modes, masks, editable text layers (also along a path), layers smaller or larger than the image, lock and link, and non-destructive filters.</p>
+
+<p><b>Transform:</b> move, scale, rotate, flip, shear, perspective, 3D, handle transform, warp, cage and align, with guides, grid, rulers and snapping.</p>
+
+<p><b>Filters:</b> curves, levels, hue-saturation, colorize, channel mixer, exposure, shadows-highlights, white balance, blurs, noise reduction, drop shadow, vignette, distortions and more, all with live preview.</p>
+
+<p><b>Files:</b> opens and saves GIMP .xcf (layers, groups, masks, guides, channels) and OpenRaster .ora, exports PNG/JPEG/WebP. Imports GIMP brushes, gradients, palettes and patterns and MyPaint brushes.</p>
+
+<p>Compositing happens in linear light on the GPU, like GIMP 2.10+, and all heavy work runs off the UI thread so the interface stays responsive even with large images.</p>
+
+<p>This build contains only free software. The version on GitHub additionally offers on-device object selection through Google Play services.</p>

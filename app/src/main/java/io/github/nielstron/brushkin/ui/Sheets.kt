@@ -127,7 +127,7 @@ private fun ToolsSheet(vm: EditorViewModel) {
         Text("Tools", color = Ui.text, fontSize = 20.sp, fontWeight = FontWeight.Bold, modifier = Modifier.padding(4.dp, 0.dp, 4.dp, 4.dp))
         for (g in ToolGroup.entries) {
             SectionLabel(g.label, Modifier.padding(start = 4.dp, top = 14.dp, bottom = 8.dp))
-            val tools = Tool.entries.filter { it.group == g }
+            val tools = Tool.entries.filter { it.group == g && (it != Tool.OBJECT_SELECT || io.github.nielstron.brushkin.ml.ObjectSelectClient.AVAILABLE) }
             FlowRow(maxItemsInEachRow = 4, horizontalArrangement = Arrangement.spacedBy(6.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
                 for (t in tools) {
                     val active = vm.tool == t
@@ -511,7 +511,7 @@ private fun LayerRow(vm: EditorViewModel, l: LayerInfo, active: Boolean, info: D
             LabeledSlider("Opacity", opacity, 0f..1f, "${(opacity * 100).roundToInt()}", {
                 opacity = it; e.setLayer(l.id, "Layer Opacity", commit = false) { x -> x.copy(opacity = it) }
             }, onDone = { e.setLayer(l.id, "Layer Opacity", commit = true) { x -> x.copy(opacity = opacity) } })
-            Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+            Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(6.dp), verticalAlignment = Alignment.CenterVertically) {
                 Chip("Lock alpha", l.lockAlpha, if (l.lockAlpha) Icons.Rounded.Lock else Icons.Rounded.LockOpen) { e.setLayer(l.id, "Lock Alpha") { it.copy(lockAlpha = !it.lockAlpha) } }
                 Chip("Lock position", l.lockPosition) { e.setLayer(l.id, "Lock Position") { it.copy(lockPosition = !it.lockPosition) } }
                 Chip("Link", l.linked) { e.setLayer(l.id, "Link Layer") { it.copy(linked = !it.linked) } }

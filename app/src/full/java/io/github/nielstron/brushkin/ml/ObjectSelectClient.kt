@@ -18,10 +18,13 @@ import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeout
 import java.io.File
 
-class ObjectSelectUnavailable(msg: String) : Exception(msg)
-
 /** Talks to [ObjectSelectService]; survives the service process crashing. */
 class ObjectSelectClient(private val context: Context) {
+    companion object {
+        /** This build includes ML Kit object selection (the "full" flavor). */
+        const val AVAILABLE = true
+    }
+
     private val lock = Mutex()
     private var service: Messenger? = null
     private var connected: CompletableDeferred<Messenger>? = null
