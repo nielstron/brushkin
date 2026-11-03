@@ -1,0 +1,565 @@
+package io.github.nielstron.brushkin.ui
+
+import android.graphics.Bitmap
+import android.graphics.Paint
+import android.graphics.Path
+import android.graphics.Typeface
+import androidx.compose.foundation.Canvas
+import androidx.compose.foundation.Image
+import androidx.compose.foundation.background
+import androidx.compose.foundation.border
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.gestures.detectDragGestures
+import androidx.compose.foundation.gestures.detectTapGestures
+import androidx.compose.foundation.horizontalScroll
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
+import androidx.compose.foundation.layout.FlowRow
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.aspectRatio
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.layout.navigationBarsPadding
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.text.BasicTextField
+import androidx.compose.foundation.verticalScroll
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.rounded.ArrowDownward
+import androidx.compose.material.icons.rounded.ArrowUpward
+import androidx.compose.material.icons.rounded.ContentCopy
+import androidx.compose.material.icons.rounded.CreateNewFolder
+import androidx.compose.material.icons.rounded.Delete
+import androidx.compose.material.icons.rounded.Edit
+import androidx.compose.material.icons.rounded.FolderOpen
+import androidx.compose.material.icons.rounded.ContentPaste
+import androidx.compose.material.icons.rounded.Image
+import androidx.compose.material.icons.rounded.Lock
+import androidx.compose.material.icons.rounded.LockOpen
+import androidx.compose.material.icons.rounded.SwapHoriz
+import androidx.compose.material.icons.rounded.VerticalAlignBottom
+import androidx.compose.material.icons.rounded.Visibility
+import androidx.compose.material.icons.rounded.VisibilityOff
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
+import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
+import androidx.compose.material3.ModalBottomSheet
+import androidx.compose.material3.Switch
+import androidx.compose.material3.SwitchDefaults
+import androidx.compose.material3.Text
+import androidx.compose.material3.rememberModalBottomSheetState
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.graphics.Brush
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.text.TextStyle
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
+import io.github.nielstron.brushkin.engine.BRUSH_PRESETS
+import io.github.nielstron.brushkin.engine.DocInfo
+import io.github.nielstron.brushkin.engine.GradientShape
+import io.github.nielstron.brushkin.engine.LayerInfo
+import io.github.nielstron.brushkin.engine.LayerMode
+import io.github.nielstron.brushkin.engine.TipShape
+import kotlin.math.roundToInt
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+fun Sheets(vm: EditorViewModel, info: DocInfo, files: FileActions) {
+    if (vm.sheet == Sheet.NONE) return
+    val state = rememberModalBottomSheetState(skipPartiallyExpanded = vm.sheet != Sheet.OPTIONS)
+    ModalBottomSheet(
+        onDismissRequest = { vm.sheet = Sheet.NONE },
+        sheetState = state,
+        containerColor = Ui.panel,
+        dragHandle = { SheetHandle() },
+        scrimColor = Color.Black.copy(alpha = 0.35f),
+    ) {
+        Column(Modifier.navigationBarsPadding()) {
+            when (vm.sheet) {
+                Sheet.TOOLS -> ToolsSheet(vm)
+                Sheet.OPTIONS -> OptionsSheet(vm)
+                Sheet.COLOR -> ColorSheet(vm)
+                Sheet.LAYERS -> LayersSheet(vm, info)
+                Sheet.INSERT -> InsertSheet(vm, files)
+                Sheet.HISTORY -> HistorySheet(vm, info)
+                Sheet.NONE -> {}
+            }
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------- tools
+
+@OptIn(ExperimentalLayoutApi::class)
+@Composable
+private fun ToolsSheet(vm: EditorViewModel) {
+    Column(Modifier.verticalScroll(rememberScrollState()).padding(horizontal = 12.dp).padding(bottom = 16.dp)) {
+        Text("Tools", color = Ui.text, fontSize = 20.sp, fontWeight = FontWeight.Bold, modifier = Modifier.padding(4.dp, 0.dp, 4.dp, 4.dp))
+        for (g in ToolGroup.entries) {
+            SectionLabel(g.label, Modifier.padding(start = 4.dp, top = 14.dp, bottom = 8.dp))
+            val tools = Tool.entries.filter { it.group == g }
+            FlowRow(maxItemsInEachRow = 4, horizontalArrangement = Arrangement.spacedBy(6.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                for (t in tools) {
+                    val active = vm.tool == t
+                    Column(
+                        Modifier.weight(1f).height(72.dp).clip(RoundedCornerShape(14.dp)).background(if (active) Ui.accent else Ui.panel2)
+                            .clickable { vm.selectTool(t); vm.sheet = Sheet.NONE },
+                        horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.Center,
+                    ) {
+                        Icon(ToolIcons.of(t), null, tint = if (active) Ui.onAccent else Ui.text, modifier = Modifier.size(22.dp))
+                        Spacer(Modifier.height(6.dp))
+                        Text(t.label, color = if (active) Ui.onAccent else Ui.text, fontSize = 11.sp, maxLines = 1)
+                    }
+                }
+                repeat((4 - tools.size % 4) % 4) { Spacer(Modifier.weight(1f)) }
+            }
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------- options
+
+@Composable
+private fun OptionsSheet(vm: EditorViewModel) {
+    val t = vm.tool
+    Column(Modifier.verticalScroll(rememberScrollState()).padding(horizontal = 16.dp).padding(bottom = 16.dp)) {
+        Text(if (t.paint != null) vm.strokeTool.label else t.label, color = Ui.text, fontSize = 18.sp, fontWeight = FontWeight.Bold)
+        Spacer(Modifier.height(8.dp))
+        val paintLike = t.paint != null || t == Tool.BUCKET || t == Tool.GRADIENT
+        if (t.paint != null) {
+            BrushPreview(vm)
+            Spacer(Modifier.height(12.dp))
+            Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                for (p in BRUSH_PRESETS) {
+                    val s = vm.settings
+                    val sel = s.shape == p.shape && s.hardness == p.hardness && s.aspect == p.aspect
+                    Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                        Box(
+                            Modifier.size(56.dp).clip(RoundedCornerShape(12.dp)).background(Ui.panel2)
+                                .border(2.dp, if (sel) Ui.accent else Color.Transparent, RoundedCornerShape(12.dp))
+                                .clickable { vm.settings = vm.settings.copy(shape = p.shape, hardness = p.hardness, aspect = p.aspect, angle = p.angle, spacing = p.spacing) },
+                            contentAlignment = Alignment.Center,
+                        ) { TipGlyph(p.shape, p.hardness, p.aspect, p.angle) }
+                        Text(p.name, color = Ui.muted, fontSize = 10.sp, modifier = Modifier.padding(top = 4.dp))
+                    }
+                }
+            }
+            Spacer(Modifier.height(8.dp))
+            val s = vm.settings
+            LabeledSlider("Size", sizeToPos(s.size), 0f..1f, "${s.size.roundToInt()} px", { vm.settings = vm.settings.copy(size = posToSize(it)) })
+            LabeledSlider("Opacity", s.opacity, 0.01f..1f, "${(s.opacity * 100).roundToInt()}%", { vm.settings = vm.settings.copy(opacity = it) })
+            if (t != Tool.PENCIL) LabeledSlider("Hardness", s.hardness, 0f..1f, "%.2f".format(s.hardness), { vm.settings = vm.settings.copy(hardness = it) })
+            LabeledSlider("Flow", s.flow, 0.01f..1f, "${(s.flow * 100).roundToInt()}%", { vm.settings = vm.settings.copy(flow = it) })
+            LabeledSlider("Spacing", s.spacing, 0.01f..1f, "${(s.spacing * 100).roundToInt()}", { vm.settings = vm.settings.copy(spacing = it) })
+            if (s.shape == TipShape.FLAT) {
+                LabeledSlider("Angle", s.angle, -90f..90f, "${s.angle.roundToInt()}°", { vm.settings = vm.settings.copy(angle = it) })
+                LabeledSlider("Aspect", s.aspect, 0.05f..1f, "%.2f".format(s.aspect), { vm.settings = vm.settings.copy(aspect = it) })
+            }
+            LabeledSlider("Smoothing", s.smoothing, 0f..0.95f, "${(s.smoothing * 100).roundToInt()}", { vm.settings = vm.settings.copy(smoothing = it) })
+            if (t == Tool.SMUDGE) LabeledSlider("Rate", s.smudgeRate, 0f..1f, "${(s.smudgeRate * 100).roundToInt()}", { vm.settings = vm.settings.copy(smudgeRate = it) })
+            Toggle("Pressure → size", s.pressureSize) { vm.settings = vm.settings.copy(pressureSize = it) }
+            Toggle("Pressure → opacity", s.pressureOpacity) { vm.settings = vm.settings.copy(pressureOpacity = it) }
+        }
+        if (paintLike && t != Tool.ERASER && t != Tool.SMUDGE && !vm.eraseToggle) {
+            if (t.paint == null) LabeledSlider("Opacity", vm.settings.opacity, 0.01f..1f, "${(vm.settings.opacity * 100).roundToInt()}%", { vm.settings = vm.settings.copy(opacity = it) })
+            ModePicker(vm.settings.mode) { vm.settings = vm.settings.copy(mode = it) }
+        }
+        if (t.isSelect) {
+            LabeledSlider("Feather", vm.feather, 0f..100f, "${vm.feather.roundToInt()} px", { vm.feather = it })
+            Toggle("Antialiasing", vm.antialias) { vm.antialias = it }
+        }
+        if (t == Tool.FUZZY_SELECT || t == Tool.COLOR_SELECT || t == Tool.BUCKET) {
+            LabeledSlider("Threshold", vm.threshold, 0f..255f, "${vm.threshold.roundToInt()}", { vm.threshold = it })
+            Toggle("Sample merged", vm.sampleMerged) { vm.sampleMerged = it }
+        }
+        if (t == Tool.BUCKET) Toggle("Fill whole selection", vm.fillWholeSelection) { vm.fillWholeSelection = it }
+        if (t == Tool.GRADIENT) {
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.padding(vertical = 8.dp)) {
+                Chip("Linear", vm.gradientShape == GradientShape.LINEAR) { vm.gradientShape = GradientShape.LINEAR }
+                Chip("Radial", vm.gradientShape == GradientShape.RADIAL) { vm.gradientShape = GradientShape.RADIAL }
+            }
+            Toggle("FG to transparent", vm.fgToTransparent) { vm.fgToTransparent = it }
+        }
+        if (t == Tool.TRANSFORM) Toggle("Snap rotation to 15°", vm.fixedRatio) { vm.fixedRatio = it }
+    }
+}
+
+@Composable
+fun Toggle(label: String, value: Boolean, onChange: (Boolean) -> Unit) {
+    Row(Modifier.fillMaxWidth().height(48.dp).clickable { onChange(!value) }, verticalAlignment = Alignment.CenterVertically) {
+        Text(label, color = Ui.text.copy(alpha = 0.85f), modifier = Modifier.weight(1f), fontSize = 14.sp)
+        Switch(value, onChange, colors = SwitchDefaults.colors(checkedTrackColor = Ui.accent, checkedThumbColor = Ui.onAccent))
+    }
+}
+
+@Composable
+fun ModePicker(mode: LayerMode, onPick: (LayerMode) -> Unit) {
+    var open by remember { mutableStateOf(false) }
+    Box {
+        Row(Modifier.fillMaxWidth().height(48.dp).clickable { open = true }, verticalAlignment = Alignment.CenterVertically) {
+            Text("Mode", color = Ui.text.copy(alpha = 0.85f), modifier = Modifier.weight(1f), fontSize = 14.sp)
+            Text(mode.label, color = Ui.text, fontSize = 14.sp)
+        }
+        DropdownMenu(open, { open = false }, Modifier.heightIn(max = 400.dp)) {
+            for (m in LayerMode.entries) DropdownMenuItem(text = { Text(m.label) }, onClick = { onPick(m); open = false })
+        }
+    }
+}
+
+@Composable
+private fun TipGlyph(shape: TipShape, hardness: Float, aspect: Float, angle: Float) {
+    Canvas(Modifier.size(32.dp)) {
+        val r = size.minDimension / 2
+        when (shape) {
+            TipShape.SPLATTER -> listOf(0.3f to 0.3f, 0.7f to 0.4f, 0.45f to 0.75f, 0.2f to 0.6f).forEach { (x, y) -> drawCircle(Ui.text, r * 0.14f, Offset(size.width * x, size.height * y)) }
+            TipShape.CHALK -> for (i in 0 until 40) { val a = i * 2.4f; val d = r * (i % 7) / 7f; drawCircle(Ui.text, 1.2f, center + Offset(kotlin.math.cos(a) * d, kotlin.math.sin(a) * d)) }
+            else -> {
+                val inner = hardness.coerceIn(0.01f, 0.99f)
+                val brush = Brush.radialGradient(0f to Ui.text, inner to Ui.text, 1f to Ui.text.copy(alpha = 0f), center = center, radius = r)
+                rotateAndScale(angle, aspect) { drawCircle(brush, r) }
+            }
+        }
+    }
+}
+
+private fun androidx.compose.ui.graphics.drawscope.DrawScope.rotateAndScale(angle: Float, aspect: Float, block: androidx.compose.ui.graphics.drawscope.DrawScope.() -> Unit) {
+    drawContext.canvas.save()
+    drawContext.transform.rotate(angle, center)
+    drawContext.transform.scale(1f, aspect, center)
+    block()
+    drawContext.canvas.restore()
+}
+
+@Composable
+private fun BrushPreview(vm: EditorViewModel) {
+    val s = vm.settings
+    val color = if (vm.strokeTool == Tool.ERASER) Color(0xFF888888) else Color(vm.fg)
+    Canvas(Modifier.fillMaxWidth().height(56.dp).clip(RoundedCornerShape(12.dp)).background(Color(0xFFF4EFE6))) {
+        val p = androidx.compose.ui.graphics.Path().apply {
+            moveTo(16f, size.height * 0.68f)
+            cubicTo(size.width * 0.25f, size.height * 0.1f, size.width * 0.45f, size.height * 0.95f, size.width * 0.6f, size.height * 0.4f)
+            cubicTo(size.width * 0.75f, 0f, size.width * 0.85f, size.height * 0.6f, size.width - 16f, size.height * 0.5f)
+        }
+        val w = (s.size * 0.5f).coerceIn(2f, size.height * 0.8f)
+        drawPath(p, color.copy(alpha = s.opacity), style = Stroke(width = w, cap = androidx.compose.ui.graphics.StrokeCap.Round))
+    }
+}
+
+// ---------------------------------------------------------------------------- color
+
+private val PALETTE = listOf(
+    0xFF000000, 0xFFFFFFFF, 0xFF2B3A67, 0xFF3D3550, 0xFFC46A5A, 0xFFF2B66D, 0xFFFBD38D, 0xFF9FD3D6,
+    0xFF2E5E6E, 0xFF1A1A24, 0xFFE9E1D3, 0xFF1E5F74, 0xFFE5484D, 0xFF46A758, 0xFF3E63DD, 0xFF8E4EC6,
+).map { it.toInt() }
+
+@OptIn(ExperimentalLayoutApi::class)
+@Composable
+private fun ColorSheet(vm: EditorViewModel) {
+    val hsv = remember(vm.fg) { FloatArray(3).also { android.graphics.Color.colorToHSV(vm.fg, it) } }
+    var hue by remember(vm.fg) { mutableStateOf(hsv[0]) }
+    var sat by remember(vm.fg) { mutableStateOf(hsv[1]) }
+    var value by remember(vm.fg) { mutableStateOf(hsv[2]) }
+    fun commit(h: Float = hue, s: Float = sat, v: Float = value) { vm.fg = android.graphics.Color.HSVToColor(floatArrayOf(h, s, v)) }
+
+    Column(Modifier.padding(horizontal = 16.dp).padding(bottom = 16.dp).verticalScroll(rememberScrollState())) {
+        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+            Box(Modifier.size(64.dp, 52.dp)) {
+                Box(Modifier.align(Alignment.BottomEnd).size(36.dp).clip(RoundedCornerShape(10.dp)).background(Color(vm.bg)).border(3.dp, Ui.panel, RoundedCornerShape(10.dp)))
+                Box(Modifier.align(Alignment.TopStart).size(40.dp).clip(RoundedCornerShape(10.dp)).background(Color(vm.fg)).border(2.dp, Ui.accent, RoundedCornerShape(10.dp)))
+            }
+            var hex by remember(vm.fg) { mutableStateOf("%06X".format(vm.fg and 0xFFFFFF)) }
+            Row(
+                Modifier.weight(1f).height(44.dp).clip(RoundedCornerShape(12.dp)).background(Ui.panel2).border(1.dp, Ui.border, RoundedCornerShape(12.dp)).padding(horizontal = 12.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Text("#", color = Ui.muted)
+                BasicTextField(
+                    hex, { v ->
+                        hex = v.filter { it.isLetterOrDigit() }.take(6).uppercase()
+                        if (hex.length == 6) hex.toLongOrNull(16)?.let { vm.fg = (0xFF000000 or it).toInt() }
+                    },
+                    textStyle = TextStyle(color = Ui.text, fontFamily = Ui.mono, fontSize = 15.sp), singleLine = true,
+                    cursorBrush = androidx.compose.ui.graphics.SolidColor(Ui.accent), modifier = Modifier.padding(start = 6.dp),
+                )
+            }
+            IconButton(onClick = { vm.swapColors() }) { Icon(Icons.Rounded.SwapHoriz, "Swap foreground and background", tint = Ui.text) }
+        }
+        Spacer(Modifier.height(14.dp))
+        // Saturation/value square.
+        Canvas(
+            Modifier.fillMaxWidth().height(200.dp).clip(RoundedCornerShape(14.dp))
+                .pointerInput(hue) {
+                    fun set(o: Offset) { sat = (o.x / size.width).coerceIn(0f, 1f); value = 1f - (o.y / size.height).coerceIn(0f, 1f); commit() }
+                    detectDragGestures(onDragStart = { set(it) }) { c, _ -> set(c.position) }
+                }
+                .pointerInput(hue) { detectTapGestures { o -> sat = (o.x / size.width).coerceIn(0f, 1f); value = 1f - (o.y / size.height).coerceIn(0f, 1f); commit() } },
+        ) {
+            drawRect(Brush.horizontalGradient(listOf(Color.White, Color(android.graphics.Color.HSVToColor(floatArrayOf(hue, 1f, 1f))))))
+            drawRect(Brush.verticalGradient(listOf(Color.Transparent, Color.Black)))
+            val p = Offset(sat * size.width, (1 - value) * size.height)
+            drawCircle(Color.White, 11.dp.toPx(), p, style = Stroke(3.dp.toPx()))
+            drawCircle(Color.Black.copy(alpha = 0.5f), 12.5.dp.toPx(), p, style = Stroke(1.dp.toPx()))
+        }
+        Spacer(Modifier.height(14.dp))
+        Canvas(
+            Modifier.fillMaxWidth().height(28.dp).clip(RoundedCornerShape(14.dp))
+                .pointerInput(Unit) {
+                    fun set(o: Offset) { hue = (o.x / size.width).coerceIn(0f, 1f) * 360f; commit(h = hue) }
+                    detectDragGestures(onDragStart = { set(it) }) { c, _ -> set(c.position) }
+                },
+        ) {
+            drawRect(Brush.horizontalGradient((0..6).map { Color(android.graphics.Color.HSVToColor(floatArrayOf(it * 60f, 1f, 1f))) }))
+            drawCircle(Color.White, size.height / 2, Offset(hue / 360f * size.width, size.height / 2), style = Stroke(3.dp.toPx()))
+        }
+        Spacer(Modifier.height(18.dp))
+        SectionLabel("Palette")
+        Spacer(Modifier.height(8.dp))
+        Swatches(PALETTE) { vm.pickColor(it) }
+        Spacer(Modifier.height(16.dp))
+        SectionLabel("Recent")
+        Spacer(Modifier.height(8.dp))
+        Swatches(vm.recentColors.toList()) { vm.fg = it }
+    }
+}
+
+@OptIn(ExperimentalLayoutApi::class)
+@Composable
+private fun Swatches(colors: List<Int>, onPick: (Int) -> Unit) {
+    FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        for (c in colors) Box(
+            Modifier.size(36.dp).clip(RoundedCornerShape(10.dp)).background(Color(c)).border(1.dp, Color.White.copy(alpha = 0.1f), RoundedCornerShape(10.dp)).clickable { onPick(c) }
+        )
+    }
+}
+
+// ---------------------------------------------------------------------------- layers
+
+@Composable
+private fun LayersSheet(vm: EditorViewModel, info: DocInfo) {
+    val e = vm.engine
+    Column(Modifier.padding(horizontal = 12.dp)) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Text("Layers", color = Ui.text, fontSize = 20.sp, fontWeight = FontWeight.Bold, modifier = Modifier.weight(1f).padding(start = 4.dp))
+            Text("${info.width} × ${info.height}", color = Ui.muted, fontFamily = Ui.mono, fontSize = 12.sp)
+        }
+        Spacer(Modifier.height(8.dp))
+        LazyColumn(Modifier.heightIn(max = 460.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+            items(info.layers, key = { it.id }) { l -> LayerRow(vm, l, l.id == info.activeId, info) }
+        }
+        Row(Modifier.fillMaxWidth().padding(vertical = 12.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            Row(
+                Modifier.weight(1f).height(52.dp).clip(RoundedCornerShape(14.dp)).background(Ui.accent).clickable { e.addLayer() },
+                horizontalArrangement = Arrangement.Center, verticalAlignment = Alignment.CenterVertically,
+            ) { Text("+  New layer", color = Ui.onAccent, fontWeight = FontWeight.SemiBold) }
+            SquareAction(Icons.Rounded.ContentCopy, "Duplicate layer") { e.duplicateLayer() }
+            SquareAction(Icons.Rounded.VerticalAlignBottom, "Merge down") { e.mergeDown(info.activeId) }
+            SquareAction(Icons.Rounded.Delete, "Delete layer") { e.deleteLayer(info.activeId) }
+        }
+    }
+}
+
+@Composable
+private fun SquareAction(icon: androidx.compose.ui.graphics.vector.ImageVector, label: String, onClick: () -> Unit) {
+    Box(Modifier.size(52.dp).clip(RoundedCornerShape(14.dp)).background(Ui.panel2).clickable(onClick = onClick), contentAlignment = Alignment.Center) {
+        Icon(icon, label, tint = Ui.text)
+    }
+}
+
+@Composable
+private fun LayerRow(vm: EditorViewModel, l: LayerInfo, active: Boolean, info: DocInfo) {
+    val e = vm.engine
+    var opacity by remember(l.id, l.opacity) { mutableStateOf(l.opacity) }
+    var renaming by remember { mutableStateOf(false) }
+    Column(
+        Modifier.fillMaxWidth().clip(RoundedCornerShape(14.dp))
+            .background(if (active) Color(0xFF2A2822) else Color.Transparent)
+            .border(1.dp, if (active) Color(0xFF4A4232) else Color.Transparent, RoundedCornerShape(14.dp))
+    ) {
+        Row(Modifier.fillMaxWidth().height(60.dp).clickable { e.setActive(l.id) }, verticalAlignment = Alignment.CenterVertically) {
+            IconButton(onClick = { e.setLayer(l.id, if (l.visible) "Hide Layer" else "Show Layer") { it.copy(visible = !it.visible) } }) {
+                Icon(if (l.visible) Icons.Rounded.Visibility else Icons.Rounded.VisibilityOff, if (l.visible) "Hide ${l.name}" else "Show ${l.name}", tint = if (l.visible) Ui.text else Ui.muted)
+            }
+            Box(Modifier.size(56.dp, 42.dp).clip(RoundedCornerShape(6.dp)).background(Color(0xFF3A3A40)), contentAlignment = Alignment.Center) {
+                l.thumb?.let { Image(it.asImageBitmap(), null, Modifier.fillMaxWidth().aspectRatio(it.width.toFloat() / it.height)) }
+            }
+            Column(Modifier.weight(1f).padding(start = 10.dp)) {
+                Text(l.name, color = if (l.visible) Ui.text else Ui.muted, fontSize = 14.sp, fontWeight = if (active) FontWeight.SemiBold else FontWeight.Normal, maxLines = 1)
+                val sub = buildList {
+                    add(l.mode.label); if (l.opacity < 1f) add("${(l.opacity * 100).roundToInt()}%"); if (l.lockAlpha) add("alpha locked")
+                }.joinToString(" · ")
+                Text(sub, color = Ui.muted, fontSize = 12.sp, maxLines = 1)
+            }
+            if (l.lockAlpha) Icon(Icons.Rounded.Lock, null, tint = Ui.muted, modifier = Modifier.size(16.dp).padding(end = 4.dp))
+        }
+        if (active) Column(Modifier.padding(horizontal = 12.dp).padding(bottom = 10.dp)) {
+            ModePicker(l.mode) { m -> e.setLayer(l.id, "Layer Mode") { it.copy(mode = m) } }
+            LabeledSlider("Opacity", opacity, 0f..1f, "${(opacity * 100).roundToInt()}", {
+                opacity = it; e.setLayer(l.id, "Layer Opacity", commit = false) { x -> x.copy(opacity = it) }
+            }, onDone = { e.setLayer(l.id, "Layer Opacity", commit = true) { x -> x.copy(opacity = opacity) } })
+            Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                Chip("Lock alpha", l.lockAlpha, if (l.lockAlpha) Icons.Rounded.Lock else Icons.Rounded.LockOpen) { e.setLayer(l.id, "Lock Alpha") { it.copy(lockAlpha = !it.lockAlpha) } }
+                IconButton(onClick = { e.moveLayer(l.id, +1) }) { Icon(Icons.Rounded.ArrowUpward, "Raise layer", tint = Ui.text) }
+                IconButton(onClick = { e.moveLayer(l.id, -1) }) { Icon(Icons.Rounded.ArrowDownward, "Lower layer", tint = Ui.text) }
+                IconButton(onClick = { renaming = true }) { Icon(Icons.Rounded.Edit, "Rename layer", tint = Ui.text) }
+            }
+        }
+    }
+    if (renaming) TextPrompt("Rename layer", l.name, onDismiss = { renaming = false }) { n -> renaming = false; e.setLayer(l.id, "Rename Layer") { it.copy(name = n) } }
+}
+
+// ---------------------------------------------------------------------------- history
+
+@Composable
+private fun HistorySheet(vm: EditorViewModel, info: DocInfo) {
+    Column(Modifier.padding(horizontal = 16.dp).padding(bottom = 16.dp)) {
+        Text("History", color = Ui.text, fontSize = 20.sp, fontWeight = FontWeight.Bold)
+        Spacer(Modifier.height(8.dp))
+        val rows = listOf("Original") + info.undoNames + info.redoNames
+        LazyColumn(Modifier.heightIn(max = 480.dp)) {
+            items(rows.size) { i ->
+                val current = i == info.undoNames.size
+                val future = i > info.undoNames.size
+                Text(
+                    rows[i], color = if (future) Ui.muted else Ui.text, fontWeight = if (current) FontWeight.Bold else FontWeight.Normal,
+                    modifier = Modifier.fillMaxWidth().clip(RoundedCornerShape(10.dp)).background(if (current) Ui.accentSoft else Color.Transparent)
+                        .clickable { vm.engine.jumpHistory(i) }.padding(horizontal = 12.dp, vertical = 12.dp),
+                )
+            }
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------- insert
+
+private val EMOJI = listOf(
+    "😀", "😂", "😍", "😎", "🥳", "😭", "🤔", "👍", "🔥", "✨", "🌅", "⛵", "🐟", "🌊", "🎨", "❤️",
+    "⭐", "🌸", "🍀", "🐱", "🐶", "🦊", "🌙", "☀️", "⚡", "💧", "🎉", "💬", "👀", "🙌", "🍕", "☕",
+)
+
+enum class Sticker(val label: String) { STAR("Star"), HEART("Heart"), BUBBLE("Speech bubble"), SPARKLE("Sparkle"), ARROW("Arrow") }
+
+@OptIn(ExperimentalLayoutApi::class)
+@Composable
+private fun InsertSheet(vm: EditorViewModel, files: FileActions) {
+    Column(Modifier.padding(horizontal = 16.dp).padding(bottom = 16.dp).verticalScroll(rememberScrollState())) {
+        Text("Insert", color = Ui.text, fontSize = 20.sp, fontWeight = FontWeight.Bold)
+        Spacer(Modifier.height(12.dp))
+        SectionLabel("Image as layer")
+        Spacer(Modifier.height(8.dp))
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            InsertTile(Icons.Rounded.Image, "Gallery", Modifier.weight(1f)) { vm.sheet = Sheet.NONE; files.pickImageLayer() }
+            InsertTile(Icons.Rounded.FolderOpen, "Files", Modifier.weight(1f)) { vm.sheet = Sheet.NONE; files.pickImageLayerFile() }
+            InsertTile(Icons.Rounded.ContentPaste, "Paste", Modifier.weight(1f)) { vm.sheet = Sheet.NONE; vm.engine.paste() }
+            InsertTile(Icons.Rounded.CreateNewFolder, "Empty layer", Modifier.weight(1f)) { vm.sheet = Sheet.NONE; vm.engine.addLayer() }
+        }
+        Spacer(Modifier.height(18.dp))
+        SectionLabel("Text layer")
+        Spacer(Modifier.height(8.dp))
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            for ((label, style) in TEXT_STYLES) {
+                Box(
+                    Modifier.weight(1f).height(64.dp).clip(RoundedCornerShape(14.dp)).background(Ui.panel2)
+                        .clickable { vm.sheet = Sheet.NONE; vm.textStyle = style; vm.dialog = "text" },
+                    contentAlignment = Alignment.Center,
+                ) { Text(label, color = Ui.text, style = style.preview) }
+            }
+        }
+        Spacer(Modifier.height(18.dp))
+        SectionLabel("Stickers")
+        Spacer(Modifier.height(8.dp))
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            for (s in Sticker.entries) {
+                val bmp = remember(s) { renderSticker(s, 96, vm.fg) }
+                Box(
+                    Modifier.weight(1f).height(60.dp).clip(RoundedCornerShape(14.dp)).background(Ui.panel2)
+                        .clickable { vm.sheet = Sheet.NONE; vm.engine.placeFloating(renderSticker(s, 600, vm.fg), s.label) },
+                    contentAlignment = Alignment.Center,
+                ) { Image(bmp.asImageBitmap(), s.label, Modifier.size(36.dp)) }
+            }
+        }
+        Spacer(Modifier.height(18.dp))
+        SectionLabel("Emoji")
+        Spacer(Modifier.height(8.dp))
+        FlowRow(maxItemsInEachRow = 8, horizontalArrangement = Arrangement.SpaceBetween) {
+            for (em in EMOJI) Box(
+                Modifier.size(44.dp).clip(RoundedCornerShape(10.dp)).clickable { vm.sheet = Sheet.NONE; vm.engine.placeFloating(renderText(em, 400f, Typeface.DEFAULT, android.graphics.Color.BLACK), "Emoji $em") },
+                contentAlignment = Alignment.Center,
+            ) { Text(em, fontSize = 24.sp) }
+        }
+    }
+}
+
+@Composable
+private fun InsertTile(icon: androidx.compose.ui.graphics.vector.ImageVector, label: String, modifier: Modifier, onClick: () -> Unit) {
+    Column(
+        modifier.height(76.dp).clip(RoundedCornerShape(14.dp)).background(Ui.panel2).clickable(onClick = onClick),
+        horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.Center,
+    ) {
+        Icon(icon, null, tint = Ui.text)
+        Spacer(Modifier.height(6.dp))
+        Text(label, color = Ui.text, fontSize = 11.sp)
+    }
+}
+
+/** Renders text (including color emoji) into a tightly cropped bitmap. */
+fun renderText(text: String, sizePx: Float, typeface: Typeface, color: Int, outline: Boolean = false): Bitmap {
+    val p = Paint(Paint.ANTI_ALIAS_FLAG).apply { this.typeface = typeface; textSize = sizePx; this.color = color }
+    val lines = text.split('\n')
+    val fm = p.fontMetrics
+    val lineH = fm.descent - fm.ascent
+    val pad = sizePx * 0.15f
+    val w = (lines.maxOf { p.measureText(it) } + pad * 2).toInt().coerceAtLeast(1)
+    val h = (lineH * lines.size + pad * 2).toInt().coerceAtLeast(1)
+    val bmp = Bitmap.createBitmap(w, h, Bitmap.Config.ARGB_8888)
+    val c = android.graphics.Canvas(bmp)
+    lines.forEachIndexed { i, line ->
+        val y = pad - fm.ascent + i * lineH
+        if (outline) {
+            val o = Paint(p).apply { style = Paint.Style.STROKE; strokeWidth = sizePx * 0.08f; this.color = android.graphics.Color.WHITE; strokeJoin = Paint.Join.ROUND }
+            c.drawText(line, pad, y, o)
+        }
+        c.drawText(line, pad, y, p)
+    }
+    return bmp
+}
+
+fun renderSticker(s: Sticker, size: Int, accent: Int): Bitmap {
+    val bmp = Bitmap.createBitmap(size, size, Bitmap.Config.ARGB_8888)
+    val c = android.graphics.Canvas(bmp)
+    c.scale(size / 24f, size / 24f)
+    val (d, fill, stroke) = when (s) {
+        Sticker.STAR -> Triple("M12 2l3 6.5 7 .8-5.2 4.8 1.5 7L12 17.6 5.7 21.1l1.5-7L2 9.3l7-.8z", 0xFFFBD38D.toInt(), android.graphics.Color.WHITE)
+        Sticker.HEART -> Triple("M12 21s-8-5-8-11a4.5 4.5 0 0 1 8-3 4.5 4.5 0 0 1 8 3c0 6-8 11-8 11z", 0xFFF07AA8.toInt(), android.graphics.Color.WHITE)
+        Sticker.BUBBLE -> Triple("M4 5h16a1 1 0 0 1 1 1v9a1 1 0 0 1-1 1h-9l-5 4v-4H4a1 1 0 0 1-1-1V6a1 1 0 0 1 1-1z", 0xFFF4EFE6.toInt(), 0xFF1A1A24.toInt())
+        Sticker.SPARKLE -> Triple("M12 2c1 6 4 9 10 10-6 1-9 4-10 10-1-6-4-9-10-10 6-1 9-4 10-10z", 0xFF9FD3D6.toInt(), android.graphics.Color.WHITE)
+        Sticker.ARROW -> Triple("M3 10h11V5l7 7-7 7v-5H3z", accent, android.graphics.Color.WHITE)
+    }
+    val path: Path = androidx.core.graphics.PathParser.createPathFromPathData(d)
+    c.drawPath(path, Paint(Paint.ANTI_ALIAS_FLAG).apply { color = fill })
+    c.drawPath(path, Paint(Paint.ANTI_ALIAS_FLAG).apply { color = stroke; style = Paint.Style.STROKE; strokeWidth = 1.2f; strokeJoin = Paint.Join.ROUND })
+    return bmp
+}
