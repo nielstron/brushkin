@@ -150,6 +150,7 @@ fun commands(vm: EditorViewModel, info: DocInfo, files: FileActions, view: () ->
         Cmd("Select", "Grow…", run = dlg("grow")),
         Cmd("Select", "Shrink…", run = dlg("shrink")),
         Cmd("Select", "Alpha to selection", run = { e.alphaToSelection() }),
+        Cmd("Select", "Crop to selection", run = { e.cropToSelection() }),
         Cmd("Select", "Select foreground (AI)", "on-device", run = { vm.objectSelect(-1f, -1f) }),
 
         Cmd("View", "Fit image in window", run = { view()?.fit() }),
