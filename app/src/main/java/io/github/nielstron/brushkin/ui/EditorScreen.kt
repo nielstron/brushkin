@@ -29,6 +29,10 @@ import androidx.compose.material.icons.automirrored.rounded.Undo
 import androidx.compose.material.icons.rounded.Add
 import androidx.compose.material.icons.rounded.Check
 import androidx.compose.material.icons.rounded.Close
+import androidx.compose.material.icons.rounded.ContentCopy
+import androidx.compose.material.icons.rounded.ContentCut
+import androidx.compose.material.icons.rounded.ContentPaste
+import androidx.compose.material.icons.rounded.Delete
 import androidx.compose.material.icons.rounded.IosShare
 import androidx.compose.material.icons.rounded.Menu
 import androidx.compose.material3.CircularProgressIndicator
@@ -132,6 +136,22 @@ fun EditorScreen(vm: EditorViewModel, files: FileActions) {
                 Icon(Icons.AutoMirrored.Rounded.Redo, "Redo", tint = if (info.canRedo) Ui.text else Ui.muted.copy(alpha = 0.5f))
             }
             IconButton(onClick = { vm.dialog = "export" }) { Icon(Icons.Rounded.IosShare, "Export", tint = Ui.text) }
+        }
+
+        // Clipboard actions, shown when there's something to act on (GIMP's Edit menu, on top).
+        if ((info.hasSelection || vm.clipHasImage) && !info.floating) {
+            Row(
+                Modifier.align(Alignment.TopEnd).statusBarsPadding().padding(top = 72.dp, end = 12.dp)
+                    .clip(RoundedCornerShape(14.dp)).background(Ui.panel.copy(alpha = 0.94f))
+                    .border(1.dp, Ui.border, RoundedCornerShape(14.dp)),
+            ) {
+                if (info.hasSelection) {
+                    IconButton(onClick = { vm.copy(cut = true) }) { Icon(Icons.Rounded.ContentCut, "Cut", tint = Ui.text) }
+                    IconButton(onClick = { vm.copy() }) { Icon(Icons.Rounded.ContentCopy, "Copy", tint = Ui.text) }
+                }
+                if (vm.clipHasImage) IconButton(onClick = { vm.paste() }) { Icon(Icons.Rounded.ContentPaste, "Paste as new layer", tint = Ui.text) }
+                if (info.hasSelection) IconButton(onClick = { vm.engine.clearSelection() }) { Icon(Icons.Rounded.Delete, "Delete selected pixels", tint = Ui.text) }
+            }
         }
 
         // Side sliders for size and opacity, within reach of the holding thumb.

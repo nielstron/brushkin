@@ -342,8 +342,22 @@ class Engine {
         paintRegion(name, null, 1f, LayerMode.NORMAL) { it.drawColor(color) }
     }
 
-    fun clearSelection() = post {
-        paintRegion("Clear", null, 1f, LayerMode.NORMAL, eraser = true) { it.drawColor(Color.BLACK) }
+    fun clearSelection(name: String = "Clear") = post {
+        paintRegion(name, null, 1f, LayerMode.NORMAL, eraser = true) { it.drawColor(Color.BLACK) }
+    }
+
+    /** The selected pixels of the active layer (or the visible image) and where they came from. */
+    suspend fun copyRegion(merged: Boolean = false): Pair<Bitmap, Rect>? = withContext(dispatcher) {
+        val s = stack
+        val l = s.active ?: return@withContext null
+        val b = s.selection?.bounds ?: (if (merged) Rect(0, 0, s.width, s.height) else l.pixels.contentBounds() ?: return@withContext null)
+        val bmp = Bitmap.createBitmap(b.width(), b.height(), Bitmap.Config.ARGB_8888)
+        val c = Canvas(bmp)
+        c.translate(-b.left.toFloat(), -b.top.toFloat())
+        if (merged) c.drawBitmap(Compositor.flatten(s, region = b), b.left.toFloat(), b.top.toFloat(), null) else Compositor.drawTiles(c, l.pixels, null, null)
+        s.selection?.let { MaskOps.apply(c, it.mask, 0f, 0f) }
+        clipboard = bmp; clipOffset = Rect(b)
+        bmp to Rect(b)
     }
 
     fun gradient(x0: Float, y0: Float, x1: Float, y1: Float, c0: Int, c1: Int, shape: GradientShape, opacity: Float, mode: LayerMode) = post {
@@ -826,14 +840,17 @@ class Engine {
 
     // ---------------------------------------------------------------- floating (insert / paste / transform)
 
-    fun placeFloating(bmp: Bitmap, name: String) = post {
+    /** Place [bmp] for positioning: at [at] (doc px) unscaled, or fitted and centered. */
+    fun placeFloating(bmp: Bitmap, name: String, at: android.graphics.Point? = null) = post {
         val s = stack
         commitFloatingNow()
         val m = Matrix()
-        // Fit into 70% of the canvas, centered.
-        val scale = minOf(1f, s.width * 0.7f / bmp.width, s.height * 0.7f / bmp.height)
-        m.setScale(scale, scale)
-        m.postTranslate((s.width - bmp.width * scale) / 2f, (s.height - bmp.height * scale) / 2f)
+        if (at != null) m.setTranslate(at.x.toFloat(), at.y.toFloat()) else {
+            // Fit into 70% of the canvas, centered.
+            val scale = minOf(1f, s.width * 0.7f / bmp.width, s.height * 0.7f / bmp.height)
+            m.setScale(scale, scale)
+            m.postTranslate((s.width - bmp.width * scale) / 2f, (s.height - bmp.height * scale) / 2f)
+        }
         floating = Floating(bmp, m, null, name)
         publish(); invalidate()
     }
