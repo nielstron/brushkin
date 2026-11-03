@@ -262,6 +262,7 @@ class StrokeOp(
     /** Original (pre-stroke) pixels of an arbitrary doc region; outside the image is transparent. */
     private fun region(x: Int, y: Int, w: Int, h: Int): IntArray {
         val out = IntArray(w * h)
+        if (target.fill != 0) out.fill(target.fill)
         val r = Rect(x, y, x + w, y + h)
         target.forTilesIn(r) { i ->
             val t = session.original(i) ?: return@forTilesIn
@@ -330,7 +331,7 @@ class StrokeOp(
         c2.drawBitmap(buf[i]!!, 0f, 0f, maskPaint)
         if (selection != null) c2.drawBitmap(selection.mask, -target.tileX(i).toFloat(), -target.tileY(i).toFloat(), maskPaint)
         canvas.setBitmap(tile)
-        tile.eraseColor(0)
+        tile.eraseColor(target.fill)
         if (orig != null) canvas.drawBitmap(orig, 0f, 0f, null)
         canvas.drawBitmap(sc, 0f, 0f, effectPaint)
         canvas.setBitmap(null)
@@ -341,7 +342,7 @@ class StrokeOp(
         val tile = session.writable(i)
         val orig = session.original(i)
         canvas.setBitmap(tile)
-        tile.eraseColor(0)
+        tile.eraseColor(target.fill)
         if (orig != null) canvas.drawBitmap(orig, 0f, 0f, null)
         var src = buf[i]!!
         if (selection != null) {

@@ -111,7 +111,15 @@ fun EditorScreen(vm: EditorViewModel, files: FileActions) {
                 vm.cropRect?.let { r -> vm.engine.crop(android.graphics.Rect(r.left.roundToInt(), r.top.roundToInt(), r.right.roundToInt(), r.bottom.roundToInt())) }
                 vm.cropRect = null
             }
-            else ContextChips(vm, info.hasSelection)
+            else {
+                val editingMask = info.layers.firstOrNull { it.id == info.activeId }?.editMask == true
+                if (editingMask) Row(Modifier.padding(bottom = 8.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Chip("Editing mask", true) { vm.engine.setEditMask(info.activeId, false) }
+                    Chip("Hide (black)", vm.fg == android.graphics.Color.BLACK) { vm.fg = android.graphics.Color.BLACK }
+                    Chip("Reveal (white)", vm.fg == android.graphics.Color.WHITE) { vm.fg = android.graphics.Color.WHITE }
+                }
+                ContextChips(vm, info.hasSelection)
+            }
             Spacer(Modifier.height(10.dp))
             Dock(vm, info.layers.size)
         }

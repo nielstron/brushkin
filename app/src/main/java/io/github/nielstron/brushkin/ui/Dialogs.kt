@@ -234,6 +234,12 @@ private class FilterSpec(val params: List<Param>, val build: (List<Float>) -> Fi
 
 private val SPECS: Map<String, FilterSpec> = mapOf(
     "Brightness-Contrast" to FilterSpec(listOf(Param("Brightness", -1f..1f, 0f), Param("Contrast", -1f..1f, 0f))) { LutFilter.brightnessContrast(it[0], it[1]) },
+    "Levels" to FilterSpec(
+        listOf(
+            Param("Input black", 0f..254f, 0f) { "${it.roundToInt()}" }, Param("Input white", 1f..255f, 255f) { "${it.roundToInt()}" },
+            Param("Gamma", 0.1f..3f, 1f), Param("Output black", 0f..255f, 0f) { "${it.roundToInt()}" }, Param("Output white", 0f..255f, 255f) { "${it.roundToInt()}" },
+        )
+    ) { LutFilter.levels(it[0], it[1], it[2], it[3], it[4]) },
     "Hue-Saturation" to FilterSpec(
         listOf(Param("Hue", -180f..180f, 0f) { "${it.roundToInt()}°" }, Param("Saturation", -1f..1f, 0f), Param("Lightness", -1f..1f, 0f))
     ) { HueSaturationFilter(it[0], it[1], it[2]) },

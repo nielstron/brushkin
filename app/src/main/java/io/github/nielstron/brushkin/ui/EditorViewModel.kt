@@ -12,7 +12,19 @@ import io.github.nielstron.brushkin.engine.Engine
 import io.github.nielstron.brushkin.engine.GradientShape
 import io.github.nielstron.brushkin.engine.PaintTool
 import io.github.nielstron.brushkin.engine.SelectMode
+import androidx.lifecycle.viewModelScope
+import io.github.nielstron.brushkin.engine.Ora
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableSharedFlow
+import kotlinx.coroutines.flow.debounce
+import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.drop
+import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
+import kotlinx.coroutines.withContext
+import java.io.File
 
 enum class ToolGroup(val label: String) { SELECT("Select"), PAINT("Paint"), TRANSFORM("Transform"), OTHER("Other") }
 
@@ -116,6 +128,31 @@ class EditorViewModel(app: Application) : AndroidViewModel(app) {
     init {
         engine.onMessage = { messages.tryEmit(it) }
         engine.newDocument(1600, 2400, Color.WHITE)
+        // Autosave a few seconds after edits settle, so a crash or a killed process loses little.
+        viewModelScope.launch {
+            @OptIn(kotlinx.coroutines.FlowPreview::class)
+            engine.info.map { it.version }.distinctUntilChanged().drop(1).debounce(4000).collect { autosave() }
+        }
+    }
+
+    private val saveLock = Mutex()
+    private var savedVersion = -1L
+    val autosaveFile get() = File(getApplication<Application>().filesDir, "autosave.ora")
+
+    suspend fun autosave() = saveLock.withLock {
+        val v = engine.info.value.version
+        if (v == savedVersion) return@withLock
+        runCatching {
+            val snap = engine.snapshot()
+            withContext(Dispatchers.IO) {
+                val dir = getApplication<Application>().filesDir
+                val tmp = File(dir, "autosave.tmp")
+                tmp.outputStream().use { Ora.write(snap, it) }
+                tmp.renameTo(autosaveFile)
+                getApplication<Application>().getSharedPreferences("brushkin", 0).edit().putString("name", engine.docName).apply()
+            }
+            savedVersion = v
+        }.onFailure { android.util.Log.w("Brushkin", "autosave failed", it) }
     }
 
     fun selectTool(t: Tool) {

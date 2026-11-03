@@ -69,18 +69,7 @@ class MainActivity : ComponentActivity(), FileActions {
     override fun onStop() {
         super.onStop()
         // Autosave off the main thread so leaving the app never stalls.
-        val engine = vm.engine
-        lifecycleScope.launch {
-            runCatching {
-                val snap = engine.snapshot()
-                withContext(Dispatchers.IO) {
-                    val tmp = File(filesDir, "autosave.tmp")
-                    tmp.outputStream().use { Ora.write(snap, it) }
-                    tmp.renameTo(autosave)
-                }
-                prefs().edit().putString("name", engine.docName).apply()
-            }
-        }
+        lifecycleScope.launch { vm.autosave() }
     }
 
     // ------------------------------------------------------------------ FileActions

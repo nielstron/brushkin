@@ -19,7 +19,7 @@ const val TILE = 256
  * means the UI thread only ever draws bitmaps that are either finished or owned by the edit in
  * progress.
  */
-class TiledBitmap(val width: Int, val height: Int) {
+class TiledBitmap(val width: Int, val height: Int, /** Color of a missing tile: transparent for layers, white for masks. */ val fill: Int = 0) {
     val cols = (width + TILE - 1) / TILE
     val rows = (height + TILE - 1) / TILE
     val tiles: Array<Bitmap?> = arrayOfNulls(cols * rows)
@@ -39,7 +39,7 @@ class TiledBitmap(val width: Int, val height: Int) {
     }
 
     fun copy(): TiledBitmap {
-        val t = TiledBitmap(width, height)
+        val t = TiledBitmap(width, height, fill)
         // Sharing references is safe because of copy-on-write.
         System.arraycopy(tiles, 0, t.tiles, 0, tiles.size)
         return t
@@ -48,6 +48,7 @@ class TiledBitmap(val width: Int, val height: Int) {
     /** Render all tiles into a single bitmap. */
     fun toBitmap(): Bitmap {
         val out = Bitmap.createBitmap(width, height, Bitmap.Config.ARGB_8888)
+        if (fill != 0) out.eraseColor(fill)
         val c = Canvas(out)
         for (i in tiles.indices) {
             val t = tiles[i] ?: continue
@@ -58,6 +59,7 @@ class TiledBitmap(val width: Int, val height: Int) {
 
     fun toPixels(): IntArray {
         val px = IntArray(width * height)
+        if (fill != 0) px.fill(fill)
         for (i in tiles.indices) {
             val t = tiles[i] ?: continue
             val x = tileX(i); val y = tileY(i)
@@ -72,10 +74,10 @@ class TiledBitmap(val width: Int, val height: Int) {
     companion object {
         fun newTile(): Bitmap = Bitmap.createBitmap(TILE, TILE, Bitmap.Config.ARGB_8888)
 
-        fun copyTile(src: Bitmap?): Bitmap = src?.copy(Bitmap.Config.ARGB_8888, true) ?: newTile()
+        fun copyTile(src: Bitmap?, fill: Int = 0): Bitmap = src?.copy(Bitmap.Config.ARGB_8888, true) ?: newTile().also { if (fill != 0) it.eraseColor(fill) }
 
-        fun fromBitmap(src: Bitmap, width: Int = src.width, height: Int = src.height, dx: Int = 0, dy: Int = 0): TiledBitmap {
-            val t = TiledBitmap(width, height)
+        fun fromBitmap(src: Bitmap, width: Int = src.width, height: Int = src.height, dx: Int = 0, dy: Int = 0, fill: Int = 0): TiledBitmap {
+            val t = TiledBitmap(width, height, fill)
             val tmp = IntArray(TILE * TILE)
             for (cy in 0 until t.rows) for (cx in 0 until t.cols) {
                 val x = cx * TILE; val y = cy * TILE
@@ -84,27 +86,34 @@ class TiledBitmap(val width: Int, val height: Int) {
                 val r = minOf(src.width, sx + TILE); val b = minOf(src.height, sy + TILE)
                 if (l >= r || tp >= b) continue
                 val tile = newTile()
+                if (fill != 0) tile.eraseColor(fill)
                 val c = Canvas(tile)
                 c.drawBitmap(src, Rect(l, tp, r, b), Rect(l - sx, tp - sy, r - sx, b - sy), null)
-                // Drop tiles that are entirely transparent.
+                // Drop tiles that equal the fill (fully transparent layer tiles, all-white mask tiles).
                 tile.getPixels(tmp, 0, TILE, 0, 0, TILE, TILE)
-                if (tmp.any { (it ushr 24) != 0 }) t.tiles[t.index(cx, cy)] = tile
+                if (!isFill(tmp, fill)) t.tiles[t.index(cx, cy)] = tile
             }
             return t
         }
 
-        fun fromPixels(px: IntArray, width: Int, height: Int): TiledBitmap {
-            val t = TiledBitmap(width, height)
+        fun isFill(px: IntArray, fill: Int) = if (fill == 0) px.all { (it ushr 24) == 0 } else px.all { it == fill }
+
+        fun fromPixels(px: IntArray, width: Int, height: Int, fill: Int = 0): TiledBitmap {
+            val t = TiledBitmap(width, height, fill)
             for (cy in 0 until t.rows) for (cx in 0 until t.cols) {
                 val x = cx * TILE; val y = cy * TILE
                 val w = minOf(TILE, width - x); val h = minOf(TILE, height - y)
                 var any = false
                 loop@ for (yy in y until y + h) {
                     val row = yy * width
-                    for (xx in x until x + w) if ((px[row + xx] ushr 24) != 0) { any = true; break@loop }
+                    for (xx in x until x + w) {
+                        val c = px[row + xx]
+                        if (if (fill == 0) (c ushr 24) != 0 else c != fill) { any = true; break@loop }
+                    }
                 }
                 if (!any) continue
                 val tile = newTile()
+                if (fill != 0) tile.eraseColor(fill)
                 tile.setPixels(px, y * width + x, width, 0, 0, w, h)
                 t.tiles[t.index(cx, cy)] = tile
             }
@@ -126,7 +135,7 @@ class TileEditSession(val target: TiledBitmap) {
         if (!before.containsKey(i)) {
             val orig = target.tiles[i]
             before[i] = orig
-            target.tiles[i] = TiledBitmap.copyTile(orig)
+            target.tiles[i] = TiledBitmap.copyTile(orig, target.fill)
         }
         return target.tiles[i]!!
     }
@@ -148,7 +157,7 @@ class TileEditSession(val target: TiledBitmap) {
             var after = target.tiles[i]
             if (after != null) {
                 after.getPixels(tmp, 0, TILE, 0, 0, TILE, TILE)
-                if (tmp.all { (it ushr 24) == 0 }) { after = null; target.tiles[i] = null }
+                if (TiledBitmap.isFill(tmp, target.fill)) { after = null; target.tiles[i] = null }
             }
             if (after !== b) out[i] = b to after
         }

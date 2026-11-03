@@ -404,13 +404,32 @@ private fun LayerRow(vm: EditorViewModel, l: LayerInfo, active: Boolean, info: D
             IconButton(onClick = { e.setLayer(l.id, if (l.visible) "Hide Layer" else "Show Layer") { it.copy(visible = !it.visible) } }) {
                 Icon(if (l.visible) Icons.Rounded.Visibility else Icons.Rounded.VisibilityOff, if (l.visible) "Hide ${l.name}" else "Show ${l.name}", tint = if (l.visible) Ui.text else Ui.muted)
             }
-            Box(Modifier.size(56.dp, 42.dp).clip(RoundedCornerShape(6.dp)).background(Color(0xFF3A3A40)), contentAlignment = Alignment.Center) {
+            // Tap the layer or mask thumbnail to choose what tools edit (like GIMP).
+            val editingPixels = active && !l.editMask
+            Box(
+                Modifier.size(52.dp, 42.dp).clip(RoundedCornerShape(6.dp)).background(Color(0xFF3A3A40))
+                    .border(2.dp, if (l.hasMask && editingPixels) Ui.accent else Color.Transparent, RoundedCornerShape(6.dp))
+                    .clickable(onClickLabel = "Edit layer pixels") { e.setEditMask(l.id, false) },
+                contentAlignment = Alignment.Center,
+            ) {
                 l.thumb?.let { Image(it.asImageBitmap(), null, Modifier.fillMaxWidth().aspectRatio(it.width.toFloat() / it.height)) }
+            }
+            if (l.hasMask) {
+                Spacer(Modifier.width(4.dp))
+                Box(
+                    Modifier.size(34.dp, 42.dp).clip(RoundedCornerShape(6.dp)).background(Color.White)
+                        .border(2.dp, if (active && l.editMask) Ui.accent else Color.Transparent, RoundedCornerShape(6.dp))
+                        .clickable(onClickLabel = "Edit layer mask") { e.setEditMask(l.id, true) },
+                    contentAlignment = Alignment.Center,
+                ) {
+                    l.maskThumb?.let { Image(it.asImageBitmap(), "Layer mask", Modifier.fillMaxWidth().aspectRatio(it.width.toFloat() / it.height), alpha = if (l.maskEnabled) 1f else 0.35f) }
+                }
             }
             Column(Modifier.weight(1f).padding(start = 10.dp)) {
                 Text(l.name, color = if (l.visible) Ui.text else Ui.muted, fontSize = 14.sp, fontWeight = if (active) FontWeight.SemiBold else FontWeight.Normal, maxLines = 1)
                 val sub = buildList {
                     add(l.mode.label); if (l.opacity < 1f) add("${(l.opacity * 100).roundToInt()}%"); if (l.lockAlpha) add("alpha locked")
+                    if (active && l.editMask) add("editing mask") else if (l.hasMask && !l.maskEnabled) add("mask off")
                 }.joinToString(" · ")
                 Text(sub, color = Ui.muted, fontSize = 12.sp, maxLines = 1)
             }
@@ -426,6 +445,26 @@ private fun LayerRow(vm: EditorViewModel, l: LayerInfo, active: Boolean, info: D
                 IconButton(onClick = { e.moveLayer(l.id, +1) }) { Icon(Icons.Rounded.ArrowUpward, "Raise layer", tint = Ui.text) }
                 IconButton(onClick = { e.moveLayer(l.id, -1) }) { Icon(Icons.Rounded.ArrowDownward, "Lower layer", tint = Ui.text) }
                 IconButton(onClick = { renaming = true }) { Icon(Icons.Rounded.Edit, "Rename layer", tint = Ui.text) }
+            }
+            Spacer(Modifier.height(6.dp))
+            Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                if (!l.hasMask) {
+                    var open by remember { mutableStateOf(false) }
+                    Box {
+                        Chip("Add mask", false) { open = true }
+                        DropdownMenu(open, { open = false }) {
+                            for (m in io.github.nielstron.brushkin.engine.Engine.MaskInit.entries) {
+                                if (m == io.github.nielstron.brushkin.engine.Engine.MaskInit.SELECTION && !info.hasSelection) continue
+                                DropdownMenuItem(text = { Text(m.label) }, onClick = { open = false; e.addMask(m) })
+                            }
+                        }
+                    }
+                } else {
+                    Chip(if (l.maskEnabled) "Disable mask" else "Enable mask", !l.maskEnabled) { e.setLayer(l.id, "Toggle Mask") { it.copy(maskEnabled = !it.maskEnabled) } }
+                    Chip("Apply mask", false) { e.applyMask() }
+                    Chip("Delete mask", false) { e.deleteMask() }
+                    Chip("Mask to selection", false) { e.maskToSelection() }
+                }
             }
         }
     }

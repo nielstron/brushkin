@@ -135,7 +135,7 @@ class CanvasView(context: Context, private val vm: EditorViewModel) : View(conte
         canvas.drawRect(docRect, checker)
         canvas.save()
         canvas.clipRect(docRect)
-        Compositor.draw(canvas, s, visible, filter = sc < 2f, preview = engine.preview, floating = engine.floating)
+        Compositor.draw(canvas, s, visible, filter = sc < 2f, preview = engine.preview, floating = engine.floating, pixelSize = 1f / sc)
         canvas.restore()
 
         // Selection marching ants.
@@ -192,7 +192,7 @@ class CanvasView(context: Context, private val vm: EditorViewModel) : View(conte
         canvas.drawRect(docRect, checker)
         canvas.save()
         canvas.clipRect(docRect)
-        Compositor.draw(canvas, s, loupeVisible, filter = total < 2f, preview = engine.preview, floating = engine.floating)
+        Compositor.draw(canvas, s, loupeVisible, filter = total < 2f, preview = engine.preview, floating = engine.floating, pixelSize = 1f / total)
         canvas.restore()
         s.selection?.let { canvas.drawPath(it.outline, hairBlack); canvas.drawPath(it.outline, antsWhite) }
         preview?.let { canvas.drawPath(it, hairBlack) }

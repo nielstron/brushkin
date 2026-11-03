@@ -31,6 +31,7 @@ import kotlin.math.roundToInt
 data class LayerInfo(
     val id: Long, val name: String, val visible: Boolean, val opacity: Float, val mode: LayerMode,
     val lockAlpha: Boolean, val thumb: Bitmap?,
+    val hasMask: Boolean = false, val maskEnabled: Boolean = true, val editMask: Boolean = false, val maskThumb: Bitmap? = null,
 )
 
 data class DocInfo(
@@ -45,6 +46,8 @@ data class DocInfo(
     val hasSelection: Boolean = false,
     val floating: Boolean = false,
     val name: String = "Untitled",
+    /** Bumped on every document change; used to decide when to autosave. */
+    val version: Long = 0,
 )
 
 enum class GradientShape { LINEAR, RADIAL }
@@ -60,11 +63,12 @@ class Engine {
     val scope = CoroutineScope(SupervisorJob() + dispatcher)
 
     @Volatile var stack = Stack(1, 1, emptyList(), -1); private set
-    @Volatile var preview: Pair<Long, TiledBitmap>? = null; private set
+    @Volatile var preview: Preview? = null; private set
     @Volatile var floating: Floating? = null; private set
     var docName = "Untitled"; private set
 
     private val history = History()
+    @Volatile private var version = 0L
     private val _info = MutableStateFlow(DocInfo())
     val info: StateFlow<DocInfo> = _info
     private val _busy = MutableStateFlow<String?>(null)
@@ -122,6 +126,7 @@ class Engine {
     // ---------------------------------------------------------------- state publishing
 
     private val thumbs = HashMap<Long, Pair<Int, Bitmap>>()
+    private val maskThumbs = HashMap<Long, Pair<Int, Bitmap>>()
     private var thumbJob: Job? = null
 
     private fun publish(thumbsNow: Boolean = false) {
@@ -129,7 +134,10 @@ class Engine {
         _info.value = DocInfo(
             width = s.width, height = s.height,
             layers = s.layers.asReversed().map { l ->
-                LayerInfo(l.id, l.name, l.visible, l.opacity, l.mode, l.lockAlpha, thumbs[l.id]?.second)
+                LayerInfo(
+                    l.id, l.name, l.visible, l.opacity, l.mode, l.lockAlpha, thumbs[l.id]?.second,
+                    hasMask = l.mask != null, maskEnabled = l.maskEnabled, editMask = l.editMask && l.mask != null, maskThumb = maskThumbs[l.id]?.second,
+                )
             },
             activeId = s.active?.id ?: -1,
             canUndo = history.canUndo, canRedo = history.canRedo,
@@ -137,6 +145,7 @@ class Engine {
             hasSelection = s.selection != null,
             floating = floating != null,
             name = docName,
+            version = version,
         )
         // Thumbnails are cheap but not free; batch them after edits settle.
         thumbJob?.cancel()
@@ -157,21 +166,36 @@ class Engine {
         var changed = false
         val maxDim = 96f
         val scale = minOf(maxDim / s.width, maxDim / s.height)
+        fun render(t: TiledBitmap): Bitmap {
+            val bmp = Bitmap.createBitmap((s.width * scale).roundToInt().coerceAtLeast(1), (s.height * scale).roundToInt().coerceAtLeast(1), Bitmap.Config.ARGB_8888)
+            if (t.fill != 0) bmp.eraseColor(t.fill)
+            val c = Canvas(bmp)
+            // Overlap tiles by one thumbnail pixel so downscaled tile edges don't leave seams.
+            val pad = 1f / scale
+            val p = Paint().apply { isFilterBitmap = true }
+            c.scale(scale, scale)
+            for (i in t.tiles.indices) {
+                val b = t.tiles[i] ?: continue
+                val x = t.tileX(i).toFloat(); val y = t.tileY(i).toFloat()
+                c.drawBitmap(b, null, RectF(x, y, x + TILE + pad, y + TILE + pad), p)
+            }
+            return bmp
+        }
         for (l in s.layers) {
             val sig = signature(l.pixels)
-            if (thumbs[l.id]?.first == sig) continue
-            val bmp = Bitmap.createBitmap((s.width * scale).roundToInt().coerceAtLeast(1), (s.height * scale).roundToInt().coerceAtLeast(1), Bitmap.Config.ARGB_8888)
-            val c = Canvas(bmp)
-            c.scale(scale, scale)
-            Compositor.drawTiles(c, l.pixels, null, Paint().apply { isFilterBitmap = true })
-            thumbs[l.id] = sig to bmp
-            changed = true
+            if (thumbs[l.id]?.first != sig) { thumbs[l.id] = sig to render(l.pixels); changed = true }
+            val m = l.mask
+            if (m == null) { if (maskThumbs.remove(l.id) != null) changed = true; continue }
+            val ms = signature(m)
+            if (maskThumbs[l.id]?.first != ms) { maskThumbs[l.id] = ms to render(m); changed = true }
         }
-        thumbs.keys.retainAll(s.layers.map { it.id }.toSet())
+        val ids = s.layers.map { it.id }.toSet()
+        thumbs.keys.retainAll(ids); maskThumbs.keys.retainAll(ids)
         return changed
     }
 
     private fun record(name: String, before: Stack, diffs: List<TileDiff> = emptyList(), extraBytes: Long = 0) {
+        version++
         history.push(HistoryEntry(name, before, stack, diffs, extraBytes))
         publish()
         invalidate()
@@ -180,6 +204,7 @@ class Engine {
     fun undo() = post {
         if (floating != null) return@post
         val e = history.undo() ?: return@post
+        version++
         stack = e.before
         publish(); invalidate()
     }
@@ -187,12 +212,14 @@ class Engine {
     fun redo() = post {
         if (floating != null) return@post
         val e = history.redo() ?: return@post
+        version++
         stack = e.after
         publish(); invalidate()
     }
 
     /** Undo/redo until [steps] entries remain in the undo list. */
     fun jumpHistory(undoCount: Int) = post {
+        version++
         while (history.undoNames.size > undoCount) { history.undo()?.let { stack = it.before } ?: break }
         while (history.undoNames.size < undoCount) { history.redo()?.let { stack = it.after } ?: break }
         publish(); invalidate()
@@ -201,7 +228,7 @@ class Engine {
     // ---------------------------------------------------------------- painting
 
     private var stroke: StrokeOp? = null
-    private var strokeLayer: Layer? = null
+    private var strokeTarget: TiledBitmap? = null
     private var strokeBefore: Stack? = null
     private var strokeTool: PaintTool = PaintTool.BRUSH
 
@@ -214,8 +241,13 @@ class Engine {
         if ((tool == PaintTool.CLONE || tool == PaintTool.HEAL) && cloneOffset == null) {
             onMessage?.invoke("Set a source first: tap “Set source”, then tap the spot to copy from"); return@post
         }
-        stroke = StrokeOp(layer.pixels, tool, settings, color, layer.lockAlpha, s.selection, cloneOffset)
-        strokeLayer = layer; strokeBefore = s; strokeTool = tool
+        val target = layer.drawable
+        val onMask = target !== layer.pixels
+        // On a mask, colors become gray and the eraser paints black (hides).
+        val t = if (onMask && tool == PaintTool.ERASER) PaintTool.BRUSH else tool
+        val c = if (onMask) (if (tool == PaintTool.ERASER) MASK_BLACK else maskGray(color)) else color
+        stroke = StrokeOp(target, t, settings, c, layer.lockAlpha && !onMask, s.selection, cloneOffset)
+        strokeTarget = target; strokeBefore = s; strokeTool = tool
     }
 
     fun strokeAdd(points: List<StrokePoint>) = post {
@@ -229,7 +261,7 @@ class Engine {
         stroke = null
         st.catchUp()
         val changes = st.finish()
-        if (changes.isNotEmpty()) record(toolName(strokeTool), strokeBefore!!, listOf(TileDiff(strokeLayer!!.pixels, changes)))
+        if (changes.isNotEmpty()) record(toolName(strokeTool), strokeBefore!!, listOf(TileDiff(strokeTarget!!, changes)))
         else invalidate()
     }
 
@@ -254,21 +286,26 @@ class Engine {
         val r = Rect(0, 0, s.width, s.height)
         if (region != null && !r.intersect(region)) return
         if (sel != null && !r.intersect(sel.bounds)) return
-        val session = TileEditSession(layer.pixels)
+        val target = layer.drawable
+        val onMask = target !== layer.pixels
+        val session = TileEditSession(target)
         val scratch = Bitmap.createBitmap(TILE, TILE, Bitmap.Config.ARGB_8888)
         val sc = Canvas(scratch)
         val maskPaint = Paint().apply { xfermode = PorterDuffXfermode(PorterDuff.Mode.DST_IN) }
         val comp = Paint().apply {
             alpha = (opacity * 255).roundToInt()
             when {
+                // Masks: everything becomes gray; clearing paints black.
+                onMask -> colorFilter = if (eraser) android.graphics.ColorMatrixColorFilter(floatArrayOf(0f, 0f, 0f, 0f, 0f, 0f, 0f, 0f, 0f, 0f, 0f, 0f, 0f, 0f, 0f, 0f, 0f, 0f, 1f, 0f))
+                    else android.graphics.ColorMatrixColorFilter(android.graphics.ColorMatrix().apply { setSaturation(0f) })
                 eraser -> xfermode = PorterDuffXfermode(PorterDuff.Mode.DST_OUT)
                 layer.lockAlpha -> xfermode = PorterDuffXfermode(PorterDuff.Mode.SRC_ATOP)
                 mode.blend != null -> blendMode = mode.blend
             }
         }
         val c = Canvas()
-        layer.pixels.forTilesIn(r) { i ->
-            val tx = layer.pixels.tileX(i).toFloat(); val ty = layer.pixels.tileY(i).toFloat()
+        target.forTilesIn(r) { i ->
+            val tx = target.tileX(i).toFloat(); val ty = target.tileY(i).toFloat()
             scratch.eraseColor(0)
             sc.save(); sc.translate(-tx, -ty); draw(sc); sc.restore()
             if (sel != null) sc.drawBitmap(sel.mask, -tx, -ty, maskPaint)
@@ -277,7 +314,7 @@ class Engine {
         }
         c.setBitmap(null)
         val changes = session.finish()
-        if (changes.isNotEmpty()) record(name, s, listOf(TileDiff(layer.pixels, changes)))
+        if (changes.isNotEmpty()) record(name, s, listOf(TileDiff(target, changes)))
     }
 
     fun fillSelection(color: Int, name: String = "Fill") = post {
@@ -302,7 +339,7 @@ class Engine {
         if (wholeSelection) { paintRegion("Bucket Fill", null, opacity, mode) { it.drawColor(color) }; return@post }
         busy("Filling") {
             val src = if (sampleMerged) Compositor.flatten(s).let { b -> IntArray(s.width * s.height).also { b.getPixels(it, 0, s.width, 0, 0, s.width, s.height) } }
-            else s.active?.pixels?.toPixels() ?: return@busy
+            else s.active?.drawable?.toPixels() ?: return@busy
             val mask = floodFill(src, s.width, s.height, x, y, threshold)
             val mb = Bitmap.createBitmap(s.width, s.height, Bitmap.Config.ALPHA_8)
             Selection.writeMaskBytes(mb, mask, s.width, s.height)
@@ -409,7 +446,7 @@ class Engine {
     fun duplicateLayer() = post {
         val s = stack
         val l = s.active ?: return@post
-        val copy = l.copy(id = newId(), name = uniqueName("${l.name} copy"), pixels = l.pixels.copy())
+        val copy = l.copy(id = newId(), name = uniqueName("${l.name} copy"), pixels = l.pixels.copy(), mask = l.mask?.copy())
         val idx = s.indexOf(l.id) + 1
         stack = s.copy(layers = s.layers.toMutableList().apply { add(idx, copy) }, activeId = copy.id)
         record("Duplicate Layer", s)
@@ -458,7 +495,7 @@ class Engine {
         busy("Merging") {
             val sub = Stack(s.width, s.height, listOf(bottom.copy(opacity = 1f, mode = LayerMode.NORMAL, visible = true), top), top.id)
             val bmp = Compositor.flatten(sub)
-            val merged = bottom.copy(id = newId(), pixels = TiledBitmap.fromBitmap(bmp))
+            val merged = bottom.copy(id = newId(), pixels = TiledBitmap.fromBitmap(bmp), mask = null, editMask = false)
             stack = s.copy(layers = s.layers.toMutableList().apply { removeAt(idx); set(idx - 1, merged) }, activeId = merged.id)
             record("Merge Down", s, extraBytes = s.width.toLong() * s.height * 4)
         }
@@ -479,12 +516,13 @@ class Engine {
     private fun transformAll(name: String, newW: Int, newH: Int, m: Matrix, cropSelection: Boolean = true) {
         val s = stack
         val p = Paint().apply { isFilterBitmap = true }
-        val layers = s.layers.map { l ->
-            val src = l.pixels.toBitmap()
+        fun xf(t: TiledBitmap): TiledBitmap {
             val dst = Bitmap.createBitmap(newW, newH, Bitmap.Config.ARGB_8888)
-            Canvas(dst).drawBitmap(src, m, p)
-            l.copy(pixels = TiledBitmap.fromBitmap(dst))
+            if (t.fill != 0) dst.eraseColor(t.fill)
+            Canvas(dst).drawBitmap(t.toBitmap(), m, p)
+            return TiledBitmap.fromBitmap(dst, fill = t.fill)
         }
+        val layers = s.layers.map { l -> l.copy(pixels = xf(l.pixels), mask = l.mask?.let { xf(it) }) }
         val sel = if (!cropSelection) null else s.selection?.let { sel ->
             val dst = Bitmap.createBitmap(newW, newH, Bitmap.Config.ALPHA_8)
             Canvas(dst).drawBitmap(sel.mask, m, p)
@@ -543,21 +581,90 @@ class Engine {
     fun flipLayer(horizontal: Boolean) = post {
         val s = stack
         val l = s.active ?: return@post
-        val src = l.pixels.toBitmap()
+        val t = l.drawable
         val dst = Bitmap.createBitmap(s.width, s.height, Bitmap.Config.ARGB_8888)
+        if (t.fill != 0) dst.eraseColor(t.fill)
         val m = Matrix().apply { if (horizontal) setScale(-1f, 1f, s.width / 2f, 0f) else setScale(1f, -1f, 0f, s.height / 2f) }
-        Canvas(dst).drawBitmap(src, m, null)
-        replaceLayerPixels(s, l, TiledBitmap.fromBitmap(dst), "Flip Layer")
+        Canvas(dst).drawBitmap(t.toBitmap(), m, null)
+        replaceTiles(s, t, TiledBitmap.fromBitmap(dst, fill = t.fill), "Flip Layer")
     }
 
-    private fun replaceLayerPixels(before: Stack, l: Layer, px: TiledBitmap, name: String) {
+    private fun replaceLayerPixels(before: Stack, l: Layer, px: TiledBitmap, name: String) = replaceTiles(before, l.pixels, px, name)
+
+    /** Swap in all tiles of [px] for [target], as one undoable step. */
+    private fun replaceTiles(before: Stack, target: TiledBitmap, px: TiledBitmap, name: String) {
         val changes = HashMap<Int, Pair<Bitmap?, Bitmap?>>()
         for (i in px.tiles.indices) {
-            val a = l.pixels.tiles[i]; val b = px.tiles[i]
+            val a = target.tiles[i]; val b = px.tiles[i]
             if (a !== b) changes[i] = a to b
-            l.pixels.tiles[i] = b
+            target.tiles[i] = b
         }
-        record(name, before, listOf(TileDiff(l.pixels, changes)))
+        record(name, before, listOf(TileDiff(target, changes)))
+    }
+
+    // ---------------------------------------------------------------- masks
+
+    enum class MaskInit(val label: String) { WHITE("White (full opacity)"), BLACK("Black (full transparency)"), SELECTION("Selection"), ALPHA("Layer's alpha channel"), GRAYSCALE("Grayscale copy of layer") }
+
+    fun addMask(init: MaskInit) = post {
+        val s = stack
+        val l = s.active ?: return@post
+        if (l.mask != null) { onMessage?.invoke("This layer already has a mask"); return@post }
+        val mask = when (init) {
+            MaskInit.WHITE -> newMask(s.width, s.height)
+            MaskInit.BLACK -> TiledBitmap(s.width, s.height, MASK_WHITE).also { t -> for (i in t.tiles.indices) t.tiles[i] = TiledBitmap.newTile().apply { eraseColor(MASK_BLACK) } }
+            MaskInit.SELECTION -> {
+                val sel = s.selection ?: run { onMessage?.invoke("There is no selection"); return@post }
+                val b = sel.bytes()
+                TiledBitmap.fromPixels(IntArray(b.size) { val v = b[it].toInt() and 0xFF; (0xFF shl 24) or (v shl 16) or (v shl 8) or v }, s.width, s.height, MASK_WHITE)
+            }
+            MaskInit.ALPHA, MaskInit.GRAYSCALE -> {
+                val px = l.pixels.toPixels()
+                TiledBitmap.fromPixels(IntArray(px.size) {
+                    val v = if (init == MaskInit.ALPHA) px[it] ushr 24 else luma(px[it])
+                    (0xFF shl 24) or (v shl 16) or (v shl 8) or v
+                }, s.width, s.height, MASK_WHITE)
+            }
+        }
+        stack = s.replace(l.copy(mask = mask, maskEnabled = true, editMask = true))
+        record("Add Layer Mask", s)
+    }
+
+    fun applyMask() = post {
+        val s = stack
+        val l = s.active ?: return@post
+        if (l.mask == null) return@post
+        busy("Applying mask") {
+            val sub = Stack(s.width, s.height, listOf(l.copy(opacity = 1f, mode = LayerMode.NORMAL, visible = true, maskEnabled = true)), l.id)
+            val bmp = Compositor.flatten(sub)
+            stack = s.replace(l.copy(pixels = TiledBitmap.fromBitmap(bmp), mask = null, editMask = false))
+            record("Apply Layer Mask", s, extraBytes = s.width.toLong() * s.height * 4)
+        }
+    }
+
+    fun deleteMask() = post {
+        val s = stack
+        val l = s.active ?: return@post
+        if (l.mask == null) return@post
+        stack = s.replace(l.copy(mask = null, editMask = false))
+        record("Delete Layer Mask", s)
+    }
+
+    /** Choose whether tools act on the layer or its mask. Not an undo step, like in GIMP. */
+    fun setEditMask(id: Long, edit: Boolean) = post {
+        val s = stack
+        val l = s.layers.firstOrNull { it.id == id } ?: return@post
+        stack = s.copy(layers = s.layers.map { if (it.id == id) it.copy(editMask = edit && it.mask != null) else it }, activeId = id)
+        publish()
+        if (l.editMask != edit) onMessage?.invoke(if (edit) "Editing mask: paint black to hide, white to reveal" else "Editing layer pixels")
+    }
+
+    fun maskToSelection() = post {
+        val s = stack
+        val m = s.active?.mask ?: return@post
+        val px = m.toPixels()
+        stack = s.copy(selection = Selection.fromBytes(ByteArray(px.size) { luma(px[it]).toByte() }, s.width, s.height))
+        record("Mask to Selection", s)
     }
 
     // ---------------------------------------------------------------- filters
@@ -565,6 +672,7 @@ class Engine {
     private var filterSrc: IntArray? = null
     private var filterMask: ByteArray? = null
     private var filterLayer: Long = -1
+    private var filterOnMask = false
     private var previewJob: Job? = null
     private var lastResult: Pair<Filter, IntArray>? = null
 
@@ -572,7 +680,8 @@ class Engine {
     fun filterBegin() = post {
         val s = stack
         val l = s.active ?: return@post
-        filterSrc = l.pixels.toPixels()
+        filterOnMask = l.drawable !== l.pixels
+        filterSrc = l.drawable.toPixels()
         filterMask = s.selection?.bytes()
         filterLayer = l.id
         lastResult = null
@@ -586,13 +695,14 @@ class Engine {
         val s = stack
         val id = filterLayer
         previewJob = CoroutineScope(Dispatchers.Default).launch {
+            val onMask = filterOnMask
             val out = maskBlend(src, f.apply(src, s.width, s.height), mask, s.width, s.height)
             ensureActive()
-            val tiles = TiledBitmap.fromPixels(out, s.width, s.height)
+            val tiles = TiledBitmap.fromPixels(out, s.width, s.height, if (onMask) MASK_WHITE else 0)
             ensureActive()
             withContext(dispatcher) {
                 if (filterSrc === src) {
-                    preview = id to tiles
+                    preview = Preview(id, onMask, tiles)
                     lastResult = f to out
                     invalidate()
                 }
@@ -608,7 +718,8 @@ class Engine {
         busy(f.name) {
             val out = withContext(Dispatchers.Default) { maskBlend(src, f.apply(src, s.width, s.height), filterMask, s.width, s.height) }
             filterSrc = null; preview = null
-            replaceLayerPixels(s, l, TiledBitmap.fromPixels(out, s.width, s.height), f.name)
+            val target = if (filterOnMask && l.mask != null) l.mask else l.pixels
+            replaceTiles(s, target, TiledBitmap.fromPixels(out, s.width, s.height, target.fill), f.name)
         }
     }
 
