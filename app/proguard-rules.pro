@@ -1,4 +1,5 @@
-# LiteRT 2's Play model delivery (AiPackModelProvider) is unused; its Play dependency is excluded.
+# LiteRT's native code looks up its Java classes (e.g. LiteRtException) by name, so keep them,
+# except Play model delivery (deployment/AiPackModelProvider): unused, and its Google Play
+# dependencies are excluded, so R8 removes it.
+-keep class !com.google.ai.edge.litert.deployment.**,com.google.ai.edge.litert.** { *; }
 -dontwarn com.google.android.play.**
-# LiteRT's native code looks up its Java classes (e.g. LiteRtException) by name.
--keep class com.google.ai.edge.litert.** { *; }
