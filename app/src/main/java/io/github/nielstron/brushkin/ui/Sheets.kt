@@ -413,7 +413,29 @@ private fun LayersSheet(vm: EditorViewModel, info: DocInfo) {
             SquareAction(Icons.Rounded.VerticalAlignBottom, "Merge down") { e.mergeDown(info.activeId) }
             SquareAction(Icons.Rounded.Delete, "Delete layer") { e.deleteLayer(info.activeId) }
         }
+        ChannelsSection(vm, info)
     }
+}
+
+/** Saved channels (stored selections): show/hide as an overlay, load into the selection, delete. */
+@Composable
+private fun ChannelsSection(vm: EditorViewModel, info: DocInfo) {
+    val e = vm.engine
+    if (info.channels.isEmpty() && !info.hasSelection) return
+    SectionLabel("Channels", Modifier.padding(top = 4.dp, bottom = 6.dp))
+    for ((id, name, visible) in info.channels) Row(
+        Modifier.fillMaxWidth().clip(RoundedCornerShape(12.dp)).background(Ui.panel2).padding(horizontal = 8.dp, vertical = 4.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        IconButton(onClick = { e.updateChannel(id, if (visible) "Hide Channel" else "Show Channel") { it.copy(visible = !it.visible) } }) {
+            Icon(if (visible) Icons.Rounded.Visibility else Icons.Rounded.VisibilityOff, if (visible) "Hide channel" else "Show channel", tint = if (visible) Ui.text else Ui.muted)
+        }
+        Text(name, color = Ui.text, fontSize = 14.sp, modifier = Modifier.weight(1f), maxLines = 1)
+        Chip("Select", false) { e.channelToSelection(id, vm.selectMode) }
+        IconButton(onClick = { e.updateChannel(id, "Delete Channel") { null } }) { Icon(Icons.Rounded.Delete, "Delete channel", tint = Ui.muted) }
+    }
+    if (info.hasSelection) Box(Modifier.padding(top = 8.dp)) { Chip("Save selection to channel", false) { e.saveSelectionToChannel() } }
+    Spacer(Modifier.height(12.dp))
 }
 
 @Composable

@@ -167,13 +167,19 @@ class GlRenderer(private val engine: Engine) : GLSurfaceView.Renderer {
             glEnable(GL_BLEND); glBlendFunc(GL_ONE, GL_ONE_MINUS_SRC_ALPHA)
             drawFloating(f, m, filter, 1f)
         }
-        val qm = s.quickMask
-        if (depth == 0 && qm != null) {
-            // Quick mask: translucent red over everything that isn't selected.
-            glBindFramebuffer(GL_FRAMEBUFFER, acc.fbo)
-            glEnable(GL_BLEND); glBlendFunc(GL_ONE, GL_ONE_MINUS_SRC_ALPHA)
-            glUseProgram(quickMaskProg)
-            drawTiles(quickMaskProg, qm, m, filter, 1f)
+        if (depth == 0) {
+            // Visible saved channels and the quick mask: translucent color over unselected parts.
+            val overlays = s.channels.filter { it.visible }.asReversed().map { it.mask to (it.color to it.opacity) } +
+                listOfNotNull(s.quickMask?.let { it to (0xFFFF0000.toInt() to 0.5f) })
+            for ((mask, look) in overlays) {
+                glBindFramebuffer(GL_FRAMEBUFFER, acc.fbo)
+                glEnable(GL_BLEND); glBlendFunc(GL_ONE, GL_ONE_MINUS_SRC_ALPHA)
+                glUseProgram(quickMaskProg)
+                val c = look.first
+                fun lin(v: Int) = (v / 255f).let { x -> if (x <= 0.04045f) x / 12.92f else Math.pow(((x + 0.055f) / 1.055f).toDouble(), 2.4).toFloat() }
+                glUniform4f(glGetUniformLocation(quickMaskProg, "uColor"), lin((c shr 16) and 0xFF), lin((c shr 8) and 0xFF), lin(c and 0xFF), look.second)
+                drawTiles(quickMaskProg, mask, m, filter, 1f)
+            }
         }
         return acc
     }
@@ -431,10 +437,11 @@ void main() {
 precision highp float;
 in vec2 vUv;
 uniform sampler2D uTex;
+uniform vec4 uColor; // linear rgb, opacity
 out vec4 o;
 void main() {
-    float a = (1.0 - dot(texture(uTex, vUv).rgb, vec3(0.299, 0.587, 0.114))) * 0.5;
-    o = vec4(a, 0.0, 0.0, a);
+    float a = (1.0 - dot(texture(uTex, vUv).rgb, vec3(0.299, 0.587, 0.114))) * uColor.a;
+    o = vec4(uColor.rgb * a, a);
 }"""
 
         private const val VS_FULL = """#version 300 es

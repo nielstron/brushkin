@@ -85,6 +85,12 @@ fun maskGray(color: Int): Int {
 }
 
 /** Immutable snapshot of the layer stack, bottom-most first. */
+/**
+ * A saved channel: a grayscale mask (white = selected) kept with the image, shown as a colored
+ * overlay over its unselected parts when visible.
+ */
+data class SavedChannel(val id: Long = newId(), val name: String, val mask: TiledBitmap, val color: Int = 0xFFE5484D.toInt(), val opacity: Float = 0.5f, val visible: Boolean = false)
+
 /** A guide line: vertical at x = [pos], or horizontal at y = [pos] (image pixels). */
 data class Guide(val vertical: Boolean, val pos: Int)
 
@@ -98,6 +104,8 @@ data class Stack(
     val quickMask: TiledBitmap? = null,
     /** Guides (GIMP-style): straight lines across the image that tools snap to. */
     val guides: List<Guide> = emptyList(),
+    /** Saved channels (stored selections), top-most first. */
+    val channels: List<SavedChannel> = emptyList(),
 ) {
     /** Every layer and group, depth-first, bottom-most first. */
     val all: List<Layer> get() = flatten(layers)

@@ -72,7 +72,14 @@ object Ora {
                 }
             }
             emit(stack.layers)
-            xml.append("</stack>\n</image>\n")
+            xml.append("</stack>\n")
+            // Saved channels (an extension other OpenRaster apps skip).
+            for ((k, ch) in stack.channels.withIndex()) {
+                val src = "data/channel$k.png"
+                xml.append("<brushkin-channel name=\"${esc(ch.name)}\" src=\"$src\" color=\"#%08X\" opacity=\"${ch.opacity}\" visible=\"${ch.visible}\"/>\n".format(ch.color))
+                zip.putNextEntry(ZipEntry(src)); ch.mask.toBitmap().compress(Bitmap.CompressFormat.PNG, 100, zip); zip.closeEntry()
+            }
+            xml.append("</image>\n")
             zip.putNextEntry(ZipEntry("stack.xml")); zip.write(xml.toString().toByteArray()); zip.closeEntry()
 
             val merged = Compositor.flatten(stack)
@@ -96,6 +103,7 @@ object Ora {
         parser.setInput(xml.inputStream(), "UTF-8")
         var w = 0; var h = 0
         val guides = ArrayList<Guide>()
+        val channels = ArrayList<SavedChannel>()
         var activeId = -1L
         val opts = BitmapFactory.Options().apply { inMutable = true; inPreferredConfig = Bitmap.Config.ARGB_8888 }
         // Each open <stack> collects its items (top-most first, as in the file).
@@ -106,6 +114,14 @@ object Ora {
         while (parser.next() != XmlPullParser.END_DOCUMENT) {
             when (parser.eventType) {
                 XmlPullParser.START_TAG -> when (parser.name) {
+                    "brushkin-channel" -> {
+                        val a = attrs()
+                        val bytes = a["src"]?.let { files[it] } ?: continue
+                        val bmp = BitmapFactory.decodeByteArray(bytes, 0, bytes.size, opts) ?: continue
+                        channels.add(SavedChannel(name = a["name"] ?: "Channel", mask = TiledBitmap.fromBitmap(bmp, w, h, fill = MASK_BLACK),
+                            color = a["color"]?.removePrefix("#")?.toLongOrNull(16)?.toInt() ?: 0xFFE5484D.toInt(),
+                            opacity = a["opacity"]?.toFloatOrNull() ?: 0.5f, visible = a["visible"] == "true"))
+                    }
                     "image" -> {
                         w = parser.getAttributeValue(null, "w").toInt(); h = parser.getAttributeValue(null, "h").toInt()
                         parser.getAttributeValue(null, "brushkin-guides")?.split(" ")?.forEach { t ->
@@ -156,7 +172,7 @@ object Ora {
         val layers = root ?: ArrayList()
         if (w <= 0 || h <= 0) error("Invalid image size")
         if (layers.isEmpty()) layers.add(Layer(name = "Background", pixels = TiledBitmap(w, h)))
-        val st = Stack(w, h, layers, activeId, guides = guides)
+        val st = Stack(w, h, layers, activeId, guides = guides, channels = channels)
         return if (st.find(activeId) != null) st else st.copy(activeId = st.all.last { !it.isGroup }.id)
     }
 
