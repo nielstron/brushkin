@@ -36,6 +36,7 @@ class MainActivity : ComponentActivity(), FileActions {
     private val pickOpen = registerForActivityResult(ActivityResultContracts.PickVisualMedia()) { uri -> uri?.let { open(it) } }
     private val pickProject = registerForActivityResult(ActivityResultContracts.OpenDocument()) { uri -> uri?.let { open(it) } }
     private val createProject = registerForActivityResult(ActivityResultContracts.CreateDocument("image/openraster")) { uri -> uri?.let { saveOra(it) } }
+    private val createXcf = registerForActivityResult(ActivityResultContracts.CreateDocument("image/x-xcf")) { uri -> uri?.let { saveXcf(it) } }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -77,7 +78,8 @@ class MainActivity : ComponentActivity(), FileActions {
     override fun pickImageLayer() = pickLayer.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly))
     override fun pickImageLayerFile() = pickLayerFile.launch(arrayOf("image/*"))
     override fun openImage() = pickOpen.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly))
-    override fun openProject() = pickProject.launch(arrayOf("image/openraster", "application/zip", "application/octet-stream", "image/*"))
+    override fun openProject() = pickProject.launch(arrayOf("image/openraster", "image/x-xcf", "application/zip", "application/octet-stream", "image/*"))
+    override fun saveXcf() = createXcf.launch("${vm.engine.docName.substringBeforeLast('.')}.xcf")
     override fun saveProject() = createProject.launch("${vm.engine.docName.substringBeforeLast('.')}.ora")
 
     override fun export(format: String) {
@@ -150,7 +152,10 @@ class MainActivity : ComponentActivity(), FileActions {
         lifecycleScope.launch {
             val name = withContext(Dispatchers.IO) { displayName(uri) }
             try {
-                if (name.endsWith(".ora", ignoreCase = true) || withContext(Dispatchers.IO) { contentResolver.getType(uri) } == "image/openraster") {
+                if (name.endsWith(".xcf", ignoreCase = true)) {
+                    val stack = withContext(Dispatchers.IO) { io.github.nielstron.brushkin.engine.Xcf.read(contentResolver.openInputStream(uri)!!.use { it.readBytes() }) }
+                    vm.engine.openStack(stack, name)
+                } else if (name.endsWith(".ora", ignoreCase = true) || withContext(Dispatchers.IO) { contentResolver.getType(uri) } == "image/openraster") {
                     val stack = withContext(Dispatchers.IO) { contentResolver.openInputStream(uri)!!.use { Ora.read(it) } }
                     vm.engine.openStack(stack, name)
                 } else {
@@ -158,6 +163,18 @@ class MainActivity : ComponentActivity(), FileActions {
                 }
             } catch (t: Throwable) {
                 vm.messages.tryEmit("Couldn't open $name: ${t.message}")
+            }
+        }
+    }
+
+    private fun saveXcf(uri: Uri) {
+        lifecycleScope.launch {
+            try {
+                val snap = vm.engine.snapshot()
+                withContext(Dispatchers.IO) { contentResolver.openOutputStream(uri, "wt")!!.use { io.github.nielstron.brushkin.engine.Xcf.write(snap, it) } }
+                vm.messages.tryEmit("Saved for GIMP")
+            } catch (t: Throwable) {
+                vm.messages.tryEmit("Save failed: ${t.message}")
             }
         }
     }

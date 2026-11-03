@@ -41,6 +41,8 @@ import androidx.compose.material.icons.rounded.ContentCopy
 import androidx.compose.material.icons.rounded.CreateNewFolder
 import androidx.compose.material.icons.rounded.Delete
 import androidx.compose.material.icons.rounded.Edit
+import androidx.compose.material.icons.rounded.ExpandMore
+import androidx.compose.material.icons.rounded.ChevronRight
 import androidx.compose.material.icons.rounded.FolderOpen
 import androidx.compose.material.icons.rounded.ContentPaste
 import androidx.compose.material.icons.rounded.Image
@@ -376,6 +378,7 @@ private fun LayersSheet(vm: EditorViewModel, info: DocInfo) {
                 Modifier.weight(1f).height(52.dp).clip(RoundedCornerShape(14.dp)).background(Ui.accent).clickable { e.addLayer() },
                 horizontalArrangement = Arrangement.Center, verticalAlignment = Alignment.CenterVertically,
             ) { Text("+  New layer", color = Ui.onAccent, fontWeight = FontWeight.SemiBold) }
+            SquareAction(Icons.Rounded.CreateNewFolder, "New layer group") { e.addGroup() }
             SquareAction(Icons.Rounded.ContentCopy, "Duplicate layer") { e.duplicateLayer() }
             SquareAction(Icons.Rounded.VerticalAlignBottom, "Merge down") { e.mergeDown(info.activeId) }
             SquareAction(Icons.Rounded.Delete, "Delete layer") { e.deleteLayer(info.activeId) }
@@ -400,7 +403,10 @@ private fun LayerRow(vm: EditorViewModel, l: LayerInfo, active: Boolean, info: D
             .background(if (active) Color(0xFF2A2822) else Color.Transparent)
             .border(1.dp, if (active) Color(0xFF4A4232) else Color.Transparent, RoundedCornerShape(14.dp))
     ) {
-        Row(Modifier.fillMaxWidth().height(60.dp).clickable { e.setActive(l.id) }, verticalAlignment = Alignment.CenterVertically) {
+        Row(Modifier.fillMaxWidth().height(60.dp).clickable { e.setActive(l.id) }.padding(start = (l.depth * 18).dp), verticalAlignment = Alignment.CenterVertically) {
+            if (l.isGroup) IconButton(onClick = { e.toggleExpanded(l.id) }, modifier = Modifier.size(32.dp, 48.dp)) {
+                Icon(if (l.expanded) Icons.Rounded.ExpandMore else Icons.Rounded.ChevronRight, if (l.expanded) "Collapse group" else "Expand group", tint = Ui.muted)
+            }
             IconButton(onClick = { e.setLayer(l.id, if (l.visible) "Hide Layer" else "Show Layer") { it.copy(visible = !it.visible) } }) {
                 Icon(if (l.visible) Icons.Rounded.Visibility else Icons.Rounded.VisibilityOff, if (l.visible) "Hide ${l.name}" else "Show ${l.name}", tint = if (l.visible) Ui.text else Ui.muted)
             }
@@ -428,7 +434,7 @@ private fun LayerRow(vm: EditorViewModel, l: LayerInfo, active: Boolean, info: D
             Column(Modifier.weight(1f).padding(start = 10.dp)) {
                 Text(l.name, color = if (l.visible) Ui.text else Ui.muted, fontSize = 14.sp, fontWeight = if (active) FontWeight.SemiBold else FontWeight.Normal, maxLines = 1)
                 val sub = buildList {
-                    add(l.mode.label); if (l.opacity < 1f) add("${(l.opacity * 100).roundToInt()}%"); if (l.lockAlpha) add("alpha locked")
+                    if (l.isGroup) add("Group"); add(l.mode.label); if (l.opacity < 1f) add("${(l.opacity * 100).roundToInt()}%"); if (l.lockAlpha) add("alpha locked")
                     if (active && l.editMask) add("editing mask") else if (l.hasMask && !l.maskEnabled) add("mask off")
                 }.joinToString(" · ")
                 Text(sub, color = Ui.muted, fontSize = 12.sp, maxLines = 1)
@@ -445,6 +451,12 @@ private fun LayerRow(vm: EditorViewModel, l: LayerInfo, active: Boolean, info: D
                 IconButton(onClick = { e.moveLayer(l.id, +1) }) { Icon(Icons.Rounded.ArrowUpward, "Raise layer", tint = Ui.text) }
                 IconButton(onClick = { e.moveLayer(l.id, -1) }) { Icon(Icons.Rounded.ArrowDownward, "Lower layer", tint = Ui.text) }
                 IconButton(onClick = { renaming = true }) { Icon(Icons.Rounded.Edit, "Rename layer", tint = Ui.text) }
+            }
+            Spacer(Modifier.height(6.dp))
+            Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                if (l.depth > 0) Chip("Move out of group", false) { e.moveOutOfGroup(l.id) }
+                Chip("Into group above", false) { e.moveIntoGroupAbove(l.id) }
+                if (!l.isGroup) Chip("Put in new group", false) { e.groupActive() }
             }
             Spacer(Modifier.height(6.dp))
             Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(6.dp)) {

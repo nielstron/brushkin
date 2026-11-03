@@ -1,0 +1,69 @@
+package io.github.nielstron.brushkin
+
+import android.graphics.Bitmap
+import android.graphics.BitmapFactory
+import android.graphics.Color
+import androidx.test.ext.junit.runners.AndroidJUnit4
+import androidx.test.platform.app.InstrumentationRegistry
+import io.github.nielstron.brushkin.engine.Compositor
+import io.github.nielstron.brushkin.engine.LayerMode
+import io.github.nielstron.brushkin.engine.Ora
+import io.github.nielstron.brushkin.engine.Stack
+import io.github.nielstron.brushkin.engine.Xcf
+import org.junit.Assert.assertEquals
+import org.junit.Assert.assertNotNull
+import org.junit.Assert.assertTrue
+import org.junit.Test
+import org.junit.runner.RunWith
+import java.io.ByteArrayOutputStream
+import kotlin.math.abs
+
+/** Files made by GIMP 3.2 must render like GIMP's own flattened export, and our writers must round-trip. */
+@RunWith(AndroidJUnit4::class)
+class FileFormatTest {
+    private val assets = InstrumentationRegistry.getInstrumentation().context.assets
+
+    /** [skip]: region excluded from comparison. */
+    private fun maxDiff(a: Bitmap, b: Bitmap, skip: android.graphics.Rect? = null): Int {
+        assertEquals(a.width, b.width); assertEquals(a.height, b.height)
+        var m = 0
+        for (y in 0 until a.height step 3) for (x in 0 until a.width step 3) {
+            if (skip?.contains(x, y) == true) continue
+            val p = a.getPixel(x, y); val q = b.getPixel(x, y)
+            m = maxOf(m, abs(Color.red(p) - Color.red(q)), abs(Color.green(p) - Color.green(q)), abs(Color.blue(p) - Color.blue(q)))
+        }
+        return m
+    }
+
+    private fun check(name: String) {
+        val stack = Xcf.read(assets.open("$name.xcf").readBytes())
+        assertEquals(400, stack.width); assertEquals(300, stack.height)
+        val names = stack.all.map { it.name }
+        assertTrue(names.toString(), names.containsAll(listOf("Background", "Red multiply", "My group", "Inside group")))
+        val red = stack.all.first { it.name == "Red multiply" }
+        assertEquals(LayerMode.MULTIPLY, red.mode)
+        assertNotNull("mask", red.mask)
+        assertTrue(stack.all.first { it.name == "My group" }.isGroup)
+        val ref = BitmapFactory.decodeStream(assets.open("$name-flat.png"))
+        val ours = Compositor.flatten(stack, Color.WHITE)
+        // GIMP 2.10+ blends its default modes in linear light; Brushkin (like GIMP's legacy modes
+        // and Photoshop) blends perceptually. Only the multiply layer's area is affected.
+        val d = maxDiff(ours, ref, android.graphics.Rect(48, 38, 252, 192))
+        val probe = listOf(20 to 20, 100 to 100, 175 to 100, 300 to 200, 175 to 180).joinToString { (x, y) -> "($x,$y) ours=%08X gimp=%08X".format(ours.getPixel(x, y), ref.getPixel(x, y)) }
+        assertTrue("$name differs from GIMP by $d: $probe", d <= 6)
+
+        // Round-trips through our own writers.
+        for (fmt in listOf("xcf", "ora")) {
+            val out = ByteArrayOutputStream()
+            if (fmt == "xcf") Xcf.write(stack, out) else Ora.write(stack, out)
+            val back: Stack = if (fmt == "xcf") Xcf.read(out.toByteArray()) else Ora.read(out.toByteArray().inputStream())
+            assertEquals(stack.all.map { it.name }, back.all.map { it.name })
+            assertTrue(back.all.first { it.name == "Red multiply" }.mask != null)
+            val d2 = maxDiff(Compositor.flatten(back, Color.WHITE), ours)
+            assertTrue("$name $fmt round-trip differs by $d2", d2 <= 2)
+        }
+    }
+
+    @Test fun gimp8bit() = check("test8")
+    @Test fun gimp16bitLinear() = check("test16")
+}

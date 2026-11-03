@@ -32,25 +32,37 @@ object Ora {
             val xml = StringBuilder()
             xml.append("<?xml version='1.0' encoding='UTF-8'?>\n")
             xml.append("<image version=\"0.0.5\" w=\"${stack.width}\" h=\"${stack.height}\">\n<stack>\n")
-            // stack.xml lists layers top-most first.
-            stack.layers.asReversed().forEachIndexed { i, l ->
-                val src = "data/layer$i.png"
-                xml.append("<layer name=\"${esc(l.name)}\" src=\"$src\" x=\"0\" y=\"0\" opacity=\"${l.opacity}\" visibility=\"${if (l.visible) "visible" else "hidden"}\" composite-op=\"${l.mode.oraName}\"")
-                if (l.id == stack.activeId) xml.append(" selected=\"true\"")
-                if (l.lockAlpha) xml.append(" alpha-preserve=\"true\"")
-                // Masks aren't part of the OpenRaster spec; other apps ignore these attributes.
-                val m = l.mask
-                if (m != null) xml.append(" brushkin-mask=\"data/layer${i}_mask.png\" brushkin-mask-enabled=\"${l.maskEnabled}\"")
-                xml.append("/>\n")
-                zip.putNextEntry(ZipEntry(src))
-                l.pixels.toBitmap().compress(Bitmap.CompressFormat.PNG, 100, zip)
-                zip.closeEntry()
-                if (m != null) {
-                    zip.putNextEntry(ZipEntry("data/layer${i}_mask.png"))
-                    m.toBitmap().compress(Bitmap.CompressFormat.PNG, 100, zip)
+            var n = 0
+            // stack.xml lists items top-most first; groups are nested <stack> elements.
+            fun emit(list: List<Layer>) {
+                for (l in list.asReversed()) {
+                    val common = "name=\"${esc(l.name)}\" opacity=\"${l.opacity}\" visibility=\"${if (l.visible) "visible" else "hidden"}\" composite-op=\"${l.mode.oraName}\"" +
+                        (if (l.id == stack.activeId) " selected=\"true\"" else "")
+                    if (l.isGroup) {
+                        xml.append("<stack $common isolation=\"isolate\">\n")
+                        emit(l.children!!)
+                        xml.append("</stack>\n")
+                        continue
+                    }
+                    val i = n++
+                    val src = "data/layer$i.png"
+                    xml.append("<layer $common src=\"$src\" x=\"0\" y=\"0\"")
+                    if (l.lockAlpha) xml.append(" alpha-preserve=\"true\"")
+                    // Masks aren't part of the OpenRaster spec; other apps ignore these attributes.
+                    val m = l.mask
+                    if (m != null) xml.append(" brushkin-mask=\"data/layer${i}_mask.png\" brushkin-mask-enabled=\"${l.maskEnabled}\"")
+                    xml.append("/>\n")
+                    zip.putNextEntry(ZipEntry(src))
+                    l.pixels.toBitmap().compress(Bitmap.CompressFormat.PNG, 100, zip)
                     zip.closeEntry()
+                    if (m != null) {
+                        zip.putNextEntry(ZipEntry("data/layer${i}_mask.png"))
+                        m.toBitmap().compress(Bitmap.CompressFormat.PNG, 100, zip)
+                        zip.closeEntry()
+                    }
                 }
             }
+            emit(stack.layers)
             xml.append("</stack>\n</image>\n")
             zip.putNextEntry(ZipEntry("stack.xml")); zip.write(xml.toString().toByteArray()); zip.closeEntry()
 
@@ -74,40 +86,58 @@ object Ora {
         val parser = Xml.newPullParser()
         parser.setInput(xml.inputStream(), "UTF-8")
         var w = 0; var h = 0
-        val layers = ArrayList<Layer>()
         var activeId = -1L
         val opts = BitmapFactory.Options().apply { inMutable = true; inPreferredConfig = Bitmap.Config.ARGB_8888 }
+        // Each open <stack> collects its items (top-most first, as in the file).
+        val open = ArrayList<Pair<Map<String, String>, ArrayList<Layer>>>()
+        var root: ArrayList<Layer>? = null
+        fun attrs(): Map<String, String> = (0 until parser.attributeCount).associate { parser.getAttributeName(it) to parser.getAttributeValue(it) }
+        fun common(a: Map<String, String>) = Triple(a["visibility"] != "hidden", a["opacity"]?.toFloatOrNull() ?: 1f, LayerMode.fromOra(a["composite-op"]))
         while (parser.next() != XmlPullParser.END_DOCUMENT) {
-            if (parser.eventType != XmlPullParser.START_TAG) continue
-            when (parser.name) {
-                "image" -> { w = parser.getAttributeValue(null, "w").toInt(); h = parser.getAttributeValue(null, "h").toInt() }
-                "layer" -> {
-                    val src = parser.getAttributeValue(null, "src") ?: continue
-                    val bytes = files[src] ?: continue
-                    val bmp = BitmapFactory.decodeByteArray(bytes, 0, bytes.size, opts) ?: continue
-                    val x = parser.getAttributeValue(null, "x")?.toFloatOrNull()?.toInt() ?: 0
-                    val y = parser.getAttributeValue(null, "y")?.toFloatOrNull()?.toInt() ?: 0
-                    val l = Layer(
-                        name = parser.getAttributeValue(null, "name") ?: "Layer",
-                        pixels = TiledBitmap.fromBitmap(bmp, w, h, x, y),
-                        visible = parser.getAttributeValue(null, "visibility") != "hidden",
-                        opacity = parser.getAttributeValue(null, "opacity")?.toFloatOrNull() ?: 1f,
-                        mode = LayerMode.fromOra(parser.getAttributeValue(null, "composite-op")),
-                        lockAlpha = parser.getAttributeValue(null, "alpha-preserve") == "true",
-                        mask = parser.getAttributeValue(null, "brushkin-mask")?.let { files[it] }
-                            ?.let { BitmapFactory.decodeByteArray(it, 0, it.size, opts) }
-                            ?.let { TiledBitmap.fromBitmap(it, w, h, x, y, fill = MASK_WHITE) },
-                        maskEnabled = parser.getAttributeValue(null, "brushkin-mask-enabled") != "false",
-                    )
-                    if (parser.getAttributeValue(null, "selected") == "true") activeId = l.id
-                    layers.add(l)
+            when (parser.eventType) {
+                XmlPullParser.START_TAG -> when (parser.name) {
+                    "image" -> { w = parser.getAttributeValue(null, "w").toInt(); h = parser.getAttributeValue(null, "h").toInt() }
+                    "stack" -> open.add(attrs() to ArrayList())
+                    "layer" -> {
+                        val a = attrs()
+                        val src = a["src"] ?: continue
+                        val bytes = files[src] ?: continue
+                        val bmp = BitmapFactory.decodeByteArray(bytes, 0, bytes.size, opts) ?: continue
+                        val x = a["x"]?.toFloatOrNull()?.toInt() ?: 0
+                        val y = a["y"]?.toFloatOrNull()?.toInt() ?: 0
+                        val (vis, op, mode) = common(a)
+                        val l = Layer(
+                            name = a["name"] ?: "Layer",
+                            pixels = TiledBitmap.fromBitmap(bmp, w, h, x, y),
+                            visible = vis, opacity = op, mode = mode,
+                            lockAlpha = a["alpha-preserve"] == "true",
+                            mask = a["brushkin-mask"]?.let { files[it] }
+                                ?.let { BitmapFactory.decodeByteArray(it, 0, it.size, opts) }
+                                ?.let { TiledBitmap.fromBitmap(it, w, h, x, y, fill = MASK_WHITE) },
+                            maskEnabled = a["brushkin-mask-enabled"] != "false",
+                        )
+                        if (a["selected"] == "true") activeId = l.id
+                        open.lastOrNull()?.second?.add(l)
+                    }
+                }
+                XmlPullParser.END_TAG -> if (parser.name == "stack") {
+                    val (a, items) = open.removeAt(open.size - 1)
+                    val children = items.asReversed().toList() // bottom-most first
+                    if (open.isEmpty()) root = ArrayList(children)
+                    else {
+                        val (vis, op, mode) = common(a)
+                        val g = Layer(name = a["name"] ?: "Layer Group", pixels = TiledBitmap(w, h), visible = vis, opacity = op, mode = mode, children = children)
+                        if (a["selected"] == "true") activeId = g.id
+                        open.last().second.add(g)
+                    }
                 }
             }
         }
+        val layers = root ?: ArrayList()
         if (w <= 0 || h <= 0) error("Invalid image size")
         if (layers.isEmpty()) layers.add(Layer(name = "Background", pixels = TiledBitmap(w, h)))
-        layers.reverse()
-        return Stack(w, h, layers, if (activeId >= 0) activeId else layers.last().id)
+        val st = Stack(w, h, layers, activeId)
+        return if (st.find(activeId) != null) st else st.copy(activeId = st.all.last { !it.isGroup }.id)
     }
 
     private fun esc(s: String) = s.replace("&", "&amp;").replace("\"", "&quot;").replace("<", "&lt;").replace(">", "&gt;")
