@@ -231,6 +231,7 @@ private fun ContextChips(vm: EditorViewModel, hasSelection: Boolean, holder: Can
                 if (hasSelection) {
                     Chip("Invert", false) { vm.engine.selectInvert() }
                     Chip("Deselect", false) { vm.engine.selectNone() }
+                    Chip("Crop", false, ToolIcons.crop) { vm.engine.cropToSelection() }
                 }
                 for (m in SelectMode.entries) Chip(m.name.lowercase().replaceFirstChar { it.uppercase() }, vm.selectMode == m) { vm.selectMode = m }
                 if (t == Tool.RECT_SELECT || t == Tool.ELLIPSE_SELECT) {
@@ -262,7 +263,10 @@ private fun ContextChips(vm: EditorViewModel, hasSelection: Boolean, holder: Can
                 Chip("Flip horizontally", false, ToolIcons.mirror) { vm.engine.flipLayer(true) }
                 Chip("Flip vertically", false) { vm.engine.flipLayer(false) }
             }
-            t == Tool.CROP -> Text("Drag to choose the area to keep", color = Ui.muted, fontSize = 13.sp, modifier = Modifier.padding(8.dp))
+            t == Tool.CROP -> {
+                if (hasSelection) Chip("Crop to selection", false, ToolIcons.crop) { vm.engine.cropToSelection() }
+                Text("Drag to choose the area to keep", color = Ui.muted, fontSize = 13.sp, modifier = Modifier.padding(8.dp))
+            }
             t == Tool.TEXT -> Text("Tap the canvas to add text", color = Ui.muted, fontSize = 13.sp, modifier = Modifier.padding(8.dp))
             t == Tool.PICKER -> Text("Touch the canvas to pick a color", color = Ui.muted, fontSize = 13.sp, modifier = Modifier.padding(8.dp))
         }
