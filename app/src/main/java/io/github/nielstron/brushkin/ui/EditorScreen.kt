@@ -69,6 +69,20 @@ fun EditorScreen(vm: EditorViewModel, files: FileActions) {
     val holder = remember { CanvasHolder() }
     val snack = remember { SnackbarHostState() }
     LaunchedEffect(Unit) { vm.messages.collect { snack.showSnackbar(it) } }
+    // Pause the GL thread with the activity so it doesn't render (or hold the GPU) in the background.
+    val lifecycle = androidx.lifecycle.compose.LocalLifecycleOwner.current.lifecycle
+    androidx.compose.runtime.DisposableEffect(lifecycle) {
+        val obs = androidx.lifecycle.LifecycleEventObserver { _, e ->
+            val glView = holder.view?.gl?.view
+            when (e) {
+                androidx.lifecycle.Lifecycle.Event.ON_PAUSE -> glView?.onPause()
+                androidx.lifecycle.Lifecycle.Event.ON_RESUME -> glView?.onResume()
+                else -> {}
+            }
+        }
+        lifecycle.addObserver(obs)
+        onDispose { lifecycle.removeObserver(obs) }
+    }
     // Tool-dependent overlays (paths, clone source, crop) must redraw when the tool changes.
     LaunchedEffect(vm.tool, vm.pathVersion, vm.cloneSource) { holder.view?.invalidate() }
 

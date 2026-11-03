@@ -58,7 +58,8 @@ enum class GradientShape { LINEAR, RADIAL }
  * only ever posts requests and draws immutable snapshots. Heavy pixel work (filters, flood fill)
  * fans out to all cores from that thread.
  */
-private const val PREVIEW_MAX = 2048f
+/** Filter previews run on a proxy no larger than this (about screen resolution). */
+private const val PREVIEW_MAX = 1280f
 
 class Engine {
     private val executor = Executors.newSingleThreadExecutor { r -> Thread(r, "brushkin-engine").apply { priority = Thread.NORM_PRIORITY + 1 } }
