@@ -103,7 +103,9 @@ class ObjectSelectClient(context: Context) {
             val (enc, dec) = interpreters()
             val w = image.width; val h = image.height
             val k = SIDE / maxOf(w, h).toFloat()
+            val t0 = System.nanoTime()
             val emb = embedding(enc, image, k)
+            val t1 = System.nanoTime()
             // Prompt: the tap plus SAM's padding point, or a box around almost everything for
             // "whole foreground".
             val coords = floats(4); val labels = floats(2)
@@ -113,6 +115,7 @@ class ObjectSelectClient(context: Context) {
             val masks = floats(4 * LOW * LOW); val scores = floats(4)
             dec.runForMultipleInputsOutputs(arrayOf(emb, coords, labels), mapOf(0 to masks, 1 to scores))
             masks.rewind(); scores.rewind()
+            android.util.Log.i("Brushkin", "ObjectSelect: LiteRT 1.x CPU, encoder %d ms%s, decoder %d ms".format((t1 - t0) / 1_000_000, if (t1 - t0 < 1_000_000) " (cached)" else "", (System.nanoTime() - t1) / 1_000_000))
             // SAM proposes several masks; take the one it's most confident in.
             val sc = FloatArray(4) { scores.getFloat() }
             val best = sc.indices.maxBy { sc[it] }
