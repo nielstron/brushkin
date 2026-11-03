@@ -173,7 +173,10 @@ private fun ToolGrid(vm: EditorViewModel, tools: List<Tool>) {
                 Column(Modifier.align(Alignment.Center), horizontalAlignment = Alignment.CenterHorizontally) {
                     Icon(ToolIcons.of(t), null, tint = if (active) Ui.onAccent else Ui.text, modifier = Modifier.size(22.dp))
                     Spacer(Modifier.height(6.dp))
-                    Text(t.label, color = if (active) Ui.onAccent else Ui.text, fontSize = 11.sp, maxLines = 1)
+                    // Long names (e.g. "Handle Transform") wrap to a second line, centered.
+                    Text(t.label, color = if (active) Ui.onAccent else Ui.text, fontSize = 11.sp, lineHeight = 13.sp, maxLines = 2,
+                        textAlign = androidx.compose.ui.text.style.TextAlign.Center, overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis,
+                        modifier = Modifier.padding(horizontal = 4.dp))
                 }
                 if (t in vm.favorites) Icon(
                     androidx.compose.material.icons.Icons.Rounded.Star, "In the toolbar",
