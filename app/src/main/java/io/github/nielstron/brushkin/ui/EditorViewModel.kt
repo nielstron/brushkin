@@ -215,6 +215,8 @@ class EditorViewModel(app: Application) : AndroidViewModel(app) {
     // Modifier chips (GIMP's Shift/Ctrl/Alt).
     var lineMode by mutableStateOf(false)
     var pickMode by mutableStateOf(false)
+    /** Pipette from the color sheet: the next touch on the image picks a color, then the sheet returns. */
+    var pipette by mutableStateOf(false)
     var eraseToggle by mutableStateOf(false)
     var fromCenter by mutableStateOf(false)
     var fixedRatio by mutableStateOf(false)

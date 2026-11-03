@@ -242,7 +242,10 @@ private fun ContextChips(vm: EditorViewModel, hasSelection: Boolean, holder: Can
         val t = vm.tool
         val quickMask = vm.engine.info.collectAsState().value.quickMask
         if (quickMask) Chip("Quick mask", true) { vm.engine.quickMaskToggle() }
-        when {
+        if (vm.pipette) {
+            Text("Touch the image to pick a color", color = Ui.text, fontSize = 13.sp, modifier = Modifier.align(Alignment.CenterVertically).padding(horizontal = 4.dp))
+            Chip("Cancel", false) { vm.pipette = false; vm.sheet = Sheet.COLOR }
+        } else when {
             t == Tool.PERSPECTIVE_CLONE -> {
                 Chip("Modify plane", vm.perspEditing) { vm.perspEditing = true; holder?.view?.invalidate() }
                 Chip("Clone", !vm.perspEditing) { vm.perspEditing = false; holder?.view?.invalidate() }

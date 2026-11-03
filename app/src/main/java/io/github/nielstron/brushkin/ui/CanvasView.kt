@@ -735,6 +735,7 @@ class CanvasView(context: Context, private val vm: EditorViewModel) : View(conte
     }
 
     private fun startSingle(e: MotionEvent) {
+        if (vm.pipette) { mode = Mode.PICK; pick(e.x, e.y); return }
         val f = engine.floating
         val tool = vm.tool
         if (f != null) { startFloating(e, f); return }
@@ -898,7 +899,17 @@ class CanvasView(context: Context, private val vm: EditorViewModel) : View(conte
                 }
                 preview = null; lasso = null
             }
-            Mode.PICK -> vm.pushRecent(vm.fg)
+            Mode.PICK -> {
+                // Sample where the finger lifted; the result arrives from the engine thread.
+                val back = vm.pipette
+                vm.pipette = false
+                engine.pickColor(d.x.toInt(), d.y.toInt(), merged = true) { c ->
+                    vm.fg = c; vm.pushRecent(c)
+                    // The pipette returns to the color sheet, showing the picked color.
+                    if (back) vm.sheet = io.github.nielstron.brushkin.ui.Sheet.COLOR
+                }
+                if (back) postDelayed({ if (vm.sheet == io.github.nielstron.brushkin.ui.Sheet.NONE) vm.sheet = io.github.nielstron.brushkin.ui.Sheet.COLOR }, 300)
+            }
             Mode.FLOAT_MOVE -> if (moving || vm.tool == Tool.MOVE) {
                 moving = false
                 val m = engine.floating?.let { moveDelta(it, toDoc(e.x, e.y)) } ?: PointF(d.x - downDoc.x, d.y - downDoc.y)
