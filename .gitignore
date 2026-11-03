@@ -9,3 +9,4 @@ captures/
 bugreport-*.zip
 *.keystore
 *.jks
+__pycache__/
