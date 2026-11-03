@@ -532,12 +532,6 @@ private fun LayerRow(vm: EditorViewModel, l: LayerInfo, active: Boolean, info: D
             }
             Spacer(Modifier.height(6.dp))
             Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                if (!l.isGroup) {
-                    // Act on the whole layer, or just the selected part of it.
-                    Chip("Move", false, ToolIcons.move) { vm.sheet = Sheet.NONE; vm.selectTool(Tool.MOVE) }
-                    Chip("Scale", false, ToolIcons.transform) { vm.sheet = Sheet.NONE; vm.selectTool(Tool.SCALE) }
-                    Chip("Rotate", false, ToolIcons.rotate) { vm.sheet = Sheet.NONE; vm.selectTool(Tool.ROTATE) }
-                }
                 if (l.isText) Chip("Edit text", false, ToolIcons.text) { vm.sheet = Sheet.NONE; vm.dialog = "text-edit:${l.id}" }
                 if (l.depth > 0) Chip("Move out of group", false) { e.moveOutOfGroup(l.id) }
                 Chip("Into group above", false) { e.moveIntoGroupAbove(l.id) }
