@@ -1,5 +1,6 @@
 package io.github.nielstron.brushkin.ui
 
+import androidx.compose.material.icons.rounded.Colorize
 import androidx.compose.foundation.combinedClickable
 import androidx.compose.ui.draw.drawBehind
 import androidx.compose.runtime.collectAsState
@@ -348,6 +349,7 @@ private fun ColorSheet(vm: EditorViewModel) {
                     cursorBrush = androidx.compose.ui.graphics.SolidColor(Ui.accent), modifier = Modifier.padding(start = 6.dp),
                 )
             }
+            IconButton(onClick = { vm.pipette = true; vm.sheet = Sheet.NONE }) { Icon(Icons.Rounded.Colorize, "Pick a color from the image", tint = Ui.text) }
             IconButton(onClick = { vm.swapColors() }) { Icon(Icons.Rounded.SwapHoriz, "Swap foreground and background", tint = Ui.text) }
         }
         Spacer(Modifier.height(14.dp))
