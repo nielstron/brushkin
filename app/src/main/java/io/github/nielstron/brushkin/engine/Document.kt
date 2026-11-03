@@ -73,6 +73,9 @@ fun maskGray(color: Int): Int {
 }
 
 /** Immutable snapshot of the layer stack, bottom-most first. */
+/** A guide line: vertical at x = [pos], or horizontal at y = [pos] (image pixels). */
+data class Guide(val vertical: Boolean, val pos: Int)
+
 data class Stack(
     val width: Int,
     val height: Int,
@@ -81,6 +84,8 @@ data class Stack(
     val selection: Selection? = null,
     /** Quick mask: while set, the selection is this grayscale channel and paint tools edit it. */
     val quickMask: TiledBitmap? = null,
+    /** Guides (GIMP-style): straight lines across the image that tools snap to. */
+    val guides: List<Guide> = emptyList(),
 ) {
     /** Every layer and group, depth-first, bottom-most first. */
     val all: List<Layer> get() = flatten(layers)

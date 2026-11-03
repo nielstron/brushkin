@@ -63,6 +63,16 @@ class FileFormatTest {
         }
     }
 
+    @Test fun guidesRoundTrip() {
+        val stack = Xcf.read(assets.open("test8.xcf").readBytes()).copy(guides = listOf(io.github.nielstron.brushkin.engine.Guide(true, 120), io.github.nielstron.brushkin.engine.Guide(false, 77)))
+        for (fmt in listOf("xcf", "ora")) {
+            val out = ByteArrayOutputStream()
+            if (fmt == "xcf") Xcf.write(stack, out) else Ora.write(stack, out)
+            val back: Stack = if (fmt == "xcf") Xcf.read(out.toByteArray()) else Ora.read(out.toByteArray().inputStream())
+            assertEquals(fmt, stack.guides, back.guides)
+        }
+    }
+
     @Test fun gimp8bit() = check("test8")
     @Test fun gimp16bitLinear() = check("test16")
     @Test fun gimp64bitDouble() = check("test64")

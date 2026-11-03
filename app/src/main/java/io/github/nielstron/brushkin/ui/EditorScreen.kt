@@ -142,7 +142,7 @@ fun EditorScreen(vm: EditorViewModel, files: FileActions) {
         // Del key and Edit → Clear.
         if ((info.hasSelection || vm.clipHasImage) && !info.floating) {
             Row(
-                Modifier.align(Alignment.TopEnd).statusBarsPadding().padding(top = 72.dp, end = 12.dp)
+                Modifier.align(Alignment.TopEnd).statusBarsPadding().padding(top = if (vm.showRulers) 94.dp else 72.dp, end = 12.dp)
                     .clip(RoundedCornerShape(14.dp)).background(Ui.panel.copy(alpha = 0.94f))
                     .border(1.dp, Ui.border, RoundedCornerShape(14.dp)),
             ) {
@@ -154,9 +154,11 @@ fun EditorScreen(vm: EditorViewModel, files: FileActions) {
             }
         }
 
+        androidx.compose.runtime.LaunchedEffect(vm.showGrid, vm.gridSize, vm.showRulers) { holder.view?.invalidate() }
+
         // Side sliders for size and opacity, within reach of the holding thumb.
         if (vm.strokeTool.paint != null && info.floating.not()) {
-            SideSliders(vm, Modifier.align(Alignment.CenterStart).padding(start = 10.dp))
+            SideSliders(vm, Modifier.align(Alignment.CenterStart).padding(start = if (vm.showRulers) 26.dp else 10.dp))
         }
 
         Column(Modifier.align(Alignment.BottomCenter).navigationBarsPadding().padding(horizontal = 12.dp).padding(bottom = 12.dp)) {

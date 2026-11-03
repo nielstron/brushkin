@@ -479,6 +479,17 @@ class Engine {
         }
     }
 
+    // ---------------------------------------------------------------- guides
+
+    fun addGuide(g: Guide) = post { val s = stack; stack = s.copy(guides = s.guides + g); record("Add Guide", s) }
+    fun moveGuide(index: Int, g: Guide?) = post {
+        val s = stack
+        if (index !in s.guides.indices) return@post
+        stack = s.copy(guides = s.guides.toMutableList().apply { if (g == null) removeAt(index) else set(index, g) })
+        record(if (g == null) "Remove Guide" else "Move Guide", s)
+    }
+    fun clearGuides() = post { val s = stack; if (s.guides.isEmpty()) return@post; stack = s.copy(guides = emptyList()); record("Remove All Guides", s) }
+
     /** Toggle quick mask: the selection becomes a paintable channel (shown as a red overlay) and back. */
     fun quickMaskToggle() = post {
         val s = stack
@@ -650,7 +661,15 @@ class Engine {
             Canvas(dst).drawBitmap(sel.mask, m, p)
             Selection.fromMask(dst)
         }
-        stack = Stack(newW, newH, layers, s.activeId, sel)
+        // Guides follow the image (a quarter turn makes vertical guides horizontal).
+        val guides = s.guides.mapNotNull { g ->
+            val pts = if (g.vertical) floatArrayOf(g.pos.toFloat(), 0f, g.pos.toFloat(), 1f) else floatArrayOf(0f, g.pos.toFloat(), 1f, g.pos.toFloat())
+            m.mapPoints(pts)
+            val vertical = kotlin.math.abs(pts[0] - pts[2]) < 0.01f
+            val pos = (if (vertical) pts[0] else pts[1]).roundToInt()
+            if (pos < 0 || pos > (if (vertical) newW else newH)) null else Guide(vertical, pos)
+        }
+        stack = Stack(newW, newH, layers, s.activeId, sel, guides = guides)
         thumbs.clear()
         record(name, s, extraBytes = newW.toLong() * newH * 4 * layers.size)
     }

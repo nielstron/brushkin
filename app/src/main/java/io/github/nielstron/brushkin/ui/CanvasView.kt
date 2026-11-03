@@ -24,6 +24,8 @@ import kotlin.math.atan2
 import kotlin.math.hypot
 import kotlin.math.max
 import kotlin.math.min
+import kotlin.math.pow
+import kotlin.math.roundToInt
 
 /**
  * The painting surface. Renders the engine's current snapshot through the hardware canvas (each
@@ -125,6 +127,7 @@ class CanvasView(context: Context, private val vm: EditorViewModel) : View(conte
         if (g != null) {
             // The GL view underneath renders the document in linear light; this view only adds overlays.
             loupeFrame = null
+            drawAids(canvas, s)
             s.selection?.let { sel -> drawAnts(canvas, sel) }
             drawOverlays(canvas)
             drawLoupe(canvas, s)
@@ -152,11 +155,150 @@ class CanvasView(context: Context, private val vm: EditorViewModel) : View(conte
         canvas.restore()
 
         drawQuickMask(canvas, s)
+        drawAids(canvas, s)
         // Selection outline in screen space so it stays equally visible at any zoom.
         s.selection?.let { sel -> drawAnts(canvas, sel) }
 
         drawOverlays(canvas)
         drawLoupe(canvas, s)
+    }
+
+    // ------------------------------------------------------------------ grid, guides, rulers, snapping
+
+    private val gridPaint = Paint().apply { style = Paint.Style.STROKE; strokeWidth = 0f; color = 0x55808080 }
+    private val guidePaint = Paint().apply { style = Paint.Style.STROKE; strokeWidth = 1.5f * resources.displayMetrics.density; color = 0xFF29B6F6.toInt(); pathEffect = android.graphics.DashPathEffect(floatArrayOf(10f, 6f), 0f) }
+    private val guideActive = Paint(guidePaint).apply { color = 0xFFFFB547.toInt(); pathEffect = null }
+    private val rulerBg = Paint().apply { color = 0xF01C1C21.toInt() }
+    private val rulerTick = Paint().apply { color = 0xFF9A9AA6.toInt(); strokeWidth = 1f }
+    private val rulerText = Paint().apply { color = 0xFF9A9AA6.toInt(); textSize = 9f * resources.displayMetrics.scaledDensity; isAntiAlias = true }
+    /** Guide being dragged: index in the stack (-1: new from a ruler) and its current position. */
+    private var guideDrag: Pair<Int, io.github.nielstron.brushkin.engine.Guide>? = null
+
+    private val rulerSize get() = 18 * density
+    private val rulerTop get() = (rootWindowInsets?.getInsets(android.view.WindowInsets.Type.statusBars())?.top ?: 0) + 76 * density
+
+    private fun inRuler(x: Float, y: Float) = vm.showRulers && ((y >= rulerTop && y < rulerTop + rulerSize) || (x < rulerSize && y >= rulerTop))
+
+    /** Touches on a ruler pull out a new guide; with the Move tool, existing guides can be dragged. */
+    private fun startGuide(e: MotionEvent): Boolean {
+        val s = engine.stack
+        if (vm.showRulers && e.y >= rulerTop && e.y < rulerTop + rulerSize) { guideDrag = -1 to io.github.nielstron.brushkin.engine.Guide(false, toDoc(e.x, e.y).y.roundToInt()); mode = Mode.GUIDE; return true }
+        if (vm.showRulers && e.x < rulerSize && e.y >= rulerTop) { guideDrag = -1 to io.github.nielstron.brushkin.engine.Guide(true, toDoc(e.x, e.y).x.roundToInt()); mode = Mode.GUIDE; return true }
+        if (vm.tool == Tool.MOVE && engine.floating == null && s.guides.isNotEmpty()) {
+            val d = toDoc(e.x, e.y); val th = 14 * density / scale
+            val i = s.guides.indexOfFirst { abs((if (it.vertical) d.x else d.y) - it.pos) < th }
+            if (i >= 0) { guideDrag = i to s.guides[i]; mode = Mode.GUIDE; return true }
+        }
+        return false
+    }
+
+    /** Tools whose points snap to the grid and guides. */
+    private val snaps get() = vm.tool == Tool.RECT_SELECT || vm.tool == Tool.ELLIPSE_SELECT || vm.tool == Tool.CROP || vm.tool == Tool.GRADIENT ||
+        vm.tool == Tool.PATHS || vm.tool == Tool.SCISSORS || vm.tool == Tool.TEXT || vm.tool == Tool.FREE_SELECT || (vm.strokeTool.paint != null && vm.lineMode)
+
+    private fun docPoint(x: Float, y: Float): PointF { val d = toDoc(x, y); return if (snaps) snap(d) else d }
+
+    private fun snapTargets(vertical: Boolean, v: Float, best: Float): Pair<Float, Float>? {
+        var out: Float? = null; var b = best
+        if (vm.snapGuides) for (g in engine.stack.guides) if (g.vertical == vertical) { val dd = abs(v - g.pos); if (dd < b) { b = dd; out = g.pos.toFloat() } }
+        if (vm.snapGrid && vm.gridSize >= 1f) { val gv = Math.round(v / vm.gridSize) * vm.gridSize; val dd = abs(v - gv); if (dd < b) { b = dd; out = gv } }
+        return out?.let { it to b }
+    }
+
+    private fun snap(p: PointF): PointF {
+        val th = 10 * density / scale
+        return PointF(snapTargets(true, p.x, th)?.first ?: p.x, snapTargets(false, p.y, th)?.first ?: p.y)
+    }
+
+    /** Move-tool offset with the layer's edges or center snapped to guides / grid. */
+    private fun moveDelta(f: io.github.nielstron.brushkin.engine.Floating, d: PointF): PointF {
+        var dx = d.x - downDoc.x; var dy = d.y - downDoc.y
+        if (!vm.snapGuides && !vm.snapGrid) return PointF(dx, dy)
+        val r = RectF(0f, 0f, f.bitmap.width.toFloat(), f.bitmap.height.toFloat()); f.initial.mapRect(r); r.offset(dx, dy)
+        val th = 10 * density / scale
+        var bx: Pair<Float, Float>? = null
+        for (x in floatArrayOf(r.left, r.right, r.centerX())) snapTargets(true, x, bx?.second ?: th)?.let { (t, dist) -> bx = (t - x) to dist }
+        var by: Pair<Float, Float>? = null
+        for (y in floatArrayOf(r.top, r.bottom, r.centerY())) snapTargets(false, y, by?.second ?: th)?.let { (t, dist) -> by = (t - y) to dist }
+        bx?.let { dx += it.first }; by?.let { dy += it.first }
+        return PointF(dx, dy)
+    }
+
+    private fun drawAids(canvas: Canvas, s: io.github.nielstron.brushkin.engine.Stack) {
+        val sc = scale
+        if (vm.showGrid && vm.gridSize * sc >= 6f) {
+            canvas.save(); canvas.concat(viewMatrix)
+            canvas.clipRect(0f, 0f, s.width.toFloat(), s.height.toFloat())
+            val vis = RectF(0f, 0f, width.toFloat(), height.toFloat()); inverse.mapRect(vis)
+            val gs = vm.gridSize
+            var x = maxOf(0f, (vis.left / gs).toInt() * gs)
+            while (x <= minOf(s.width.toFloat(), vis.right)) { canvas.drawLine(x, 0f, x, s.height.toFloat(), gridPaint); x += gs }
+            var y = maxOf(0f, (vis.top / gs).toInt() * gs)
+            while (y <= minOf(s.height.toFloat(), vis.bottom)) { canvas.drawLine(0f, y, s.width.toFloat(), y, gridPaint); y += gs }
+            canvas.restore()
+        }
+        val big = 4f * maxOf(s.width, s.height)
+        fun guideLine(g: io.github.nielstron.brushkin.engine.Guide, p: Paint) {
+            val pts = if (g.vertical) floatArrayOf(g.pos.toFloat(), -big, g.pos.toFloat(), big) else floatArrayOf(-big, g.pos.toFloat(), big, g.pos.toFloat())
+            viewMatrix.mapPoints(pts)
+            canvas.drawLine(pts[0], pts[1], pts[2], pts[3], p)
+        }
+        val drag = guideDrag
+        canvas.save()
+        // Guides span the canvas area, not the toolbars above it.
+        canvas.clipRect(if (vm.showRulers) rulerSize else 0f, if (vm.showRulers) rulerTop + rulerSize else rulerTop, width.toFloat(), height.toFloat())
+        for ((i, g) in s.guides.withIndex()) if (drag?.first != i) guideLine(g, guidePaint)
+        drag?.let { guideLine(it.second, guideActive) }
+        canvas.restore()
+        if (vm.showRulers) drawRulers(canvas)
+        else if (exclusionFor != -1f) { exclusionFor = -1f; systemGestureExclusionRects = emptyList() }
+    }
+
+    private var exclusionFor = -1f
+
+    private fun drawRulers(canvas: Canvas) {
+        val top = rulerTop; val rs = rulerSize
+        // The left ruler sits in the back-gesture zone: claim part of it (Android grants up to
+        // 200dp per edge) so guides can be pulled out there.
+        if (exclusionFor != top + height) {
+            exclusionFor = top + height
+            val h = 200 * density; val cy = (top + height) / 2f
+            systemGestureExclusionRects = listOf(android.graphics.Rect(0, (cy - h / 2).toInt(), (rs * 2).toInt(), (cy + h / 2).toInt()))
+        }
+        canvas.drawRect(0f, top, width.toFloat(), top + rs, rulerBg)
+        canvas.drawRect(0f, top, rs, height.toFloat(), rulerBg)
+        // Tick spacing: the 1-2-5 step that is at least ~56 px on screen.
+        var step = 1f
+        val steps = floatArrayOf(1f, 2f, 5f)
+        outer@ for (k in 0..6) for (m in steps) { step = m * 10f.pow(k); if (step * scale >= 56 * density) break@outer }
+        val sub = step / 5f
+        val docAtTop = toDoc(0f, top + rs)
+        // Horizontal ruler (x).
+        val x0 = toDoc(rs, top).x; val x1 = toDoc(width.toFloat(), top).x
+        var v = Math.floor((minOf(x0, x1) / sub).toDouble()).toFloat() * sub
+        while (v <= maxOf(x0, x1)) {
+            val sx = toView(v, docAtTop.y).x
+            if (sx >= rs) {
+                val major = abs(v / step - Math.round(v / step)) < 1e-3f
+                canvas.drawLine(sx, top + rs, sx, top + rs - (if (major) rs * 0.7f else rs * 0.25f), rulerTick)
+                if (major) canvas.drawText(v.roundToInt().toString(), sx + 2 * density, top + rulerText.textSize, rulerText)
+            }
+            v += sub
+        }
+        // Vertical ruler (y).
+        val y0 = toDoc(rs, top + rs).y; val y1 = toDoc(rs, height.toFloat()).y
+        v = Math.floor((minOf(y0, y1) / sub).toDouble()).toFloat() * sub
+        while (v <= maxOf(y0, y1)) {
+            val sy = toView(docAtTop.x, v).y
+            if (sy >= top + rs) {
+                val major = abs(v / step - Math.round(v / step)) < 1e-3f
+                canvas.drawLine(rs, sy, rs - (if (major) rs * 0.7f else rs * 0.25f), sy, rulerTick)
+                if (major) { canvas.save(); canvas.rotate(-90f, 2 * density + rulerText.textSize * 0.8f, sy - 2 * density); canvas.drawText(v.roundToInt().toString(), 2 * density + rulerText.textSize * 0.8f, sy - 2 * density, rulerText); canvas.restore() }
+            }
+            v += sub
+        }
+        // Where the finger is, marked on both rulers.
+        lastTouch?.let { t -> canvas.drawLine(t.x, top, t.x, top + rs, guideActive); canvas.drawLine(0f, t.y, rs, t.y, guideActive) }
     }
 
     // ------------------------------------------------------------------ scissors
@@ -411,7 +553,7 @@ class CanvasView(context: Context, private val vm: EditorViewModel) : View(conte
     // ------------------------------------------------------------------ input
 
     private enum class Mode { NONE, STROKE, VIEW, SHAPE, PICK, FLOAT_MOVE, FLOAT_SCALE, FLOAT_ROTATE, CROP, IGNORE, PATH_POINT, PATH_HANDLE, PATH_NEW,
-        FLOAT_SHEAR, FLOAT_CORNER, FLOAT_3D, FLOAT_HANDLE, WARP_PUSH, CAGE_DRAG }
+        FLOAT_SHEAR, FLOAT_CORNER, FLOAT_3D, FLOAT_HANDLE, WARP_PUSH, CAGE_DRAG, GUIDE }
 
     private var mode = Mode.NONE
     private var downTime = 0L
@@ -459,8 +601,8 @@ class CanvasView(context: Context, private val vm: EditorViewModel) : View(conte
             MotionEvent.ACTION_DOWN -> {
                 maxPointers = 1; moved = false
                 downTime = e.eventTime
-                down = PointF(e.x, e.y); downDoc = toDoc(e.x, e.y)
-                startSingle(e)
+                down = PointF(e.x, e.y); downDoc = docPoint(e.x, e.y)
+                if (!startGuide(e)) startSingle(e)
             }
             MotionEvent.ACTION_POINTER_DOWN -> {
                 maxPointers = max(maxPointers, e.pointerCount)
@@ -575,8 +717,9 @@ class CanvasView(context: Context, private val vm: EditorViewModel) : View(conte
     }
 
     private fun moveSingle(e: MotionEvent) {
-        val d = toDoc(e.x, e.y)
+        val d = docPoint(e.x, e.y)
         when (mode) {
+            Mode.GUIDE -> guideDrag = guideDrag?.let { (i, g) -> i to g.copy(pos = (if (g.vertical) d.x else d.y).roundToInt()) }
             Mode.WARP_PUSH -> { cursor = PointF(e.x, e.y); dragFloating(e) }
             Mode.STROKE -> {
                 val pts = ArrayList<StrokePoint>(e.historySize + 1)
@@ -633,9 +776,21 @@ class CanvasView(context: Context, private val vm: EditorViewModel) : View(conte
     }
 
     private fun endSingle(e: MotionEvent) {
-        val d = toDoc(e.x, e.y)
+        val d = docPoint(e.x, e.y)
         val isTap = !moved
         when (mode) {
+            Mode.GUIDE -> {
+                guideDrag?.let { (i, g) ->
+                    val s = engine.stack
+                    // Dropped back on a ruler (or outside the image): remove.
+                    val gone = inRuler(e.x, e.y) || g.pos < 0 || g.pos > (if (g.vertical) s.width else s.height)
+                    when {
+                        i < 0 && !gone -> engine.addGuide(g)
+                        i >= 0 -> engine.moveGuide(i, if (gone) null else g)
+                    }
+                }
+                guideDrag = null
+            }
             Mode.STROKE -> { engine.strokeEnd(); lastLineEnd = d }
             Mode.SHAPE -> {
                 val st = vm.strokeTool
@@ -675,7 +830,11 @@ class CanvasView(context: Context, private val vm: EditorViewModel) : View(conte
                 preview = null; lasso = null
             }
             Mode.PICK -> vm.pushRecent(vm.fg)
-            Mode.FLOAT_MOVE -> if (moving || vm.tool == Tool.MOVE) { moving = false; engine.commitMove(d.x - downDoc.x, d.y - downDoc.y) }
+            Mode.FLOAT_MOVE -> if (moving || vm.tool == Tool.MOVE) {
+                moving = false
+                val m = engine.floating?.let { moveDelta(it, toDoc(e.x, e.y)) } ?: PointF(d.x - downDoc.x, d.y - downDoc.y)
+                engine.commitMove(m.x, m.y)
+            }
             else -> {}
         }
     }
@@ -857,7 +1016,7 @@ class CanvasView(context: Context, private val vm: EditorViewModel) : View(conte
     private fun dragFloating(e: MotionEvent) {
         val f = engine.floating ?: return
         val d = toDoc(e.x, e.y)
-        if (moving) { f.matrix.set(f.initial); f.matrix.postTranslate(d.x - downDoc.x, d.y - downDoc.y); return }
+        if (moving) { val m = moveDelta(f, d); f.matrix.set(f.initial); f.matrix.postTranslate(m.x, m.y); return }
         when (mode) {
             Mode.WARP_PUSH -> {
                 engine.meshPush(lastWarp.x, lastWarp.y, d.x - lastWarp.x, d.y - lastWarp.y, vm.warpRadius, vm.warpStrength)

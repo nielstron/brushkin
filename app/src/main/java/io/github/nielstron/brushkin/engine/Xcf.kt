@@ -29,6 +29,7 @@ object Xcf {
     private const val PROP_ACTIVE_LAYER = 2
     private const val PROP_OFFSETS = 15
     private const val PROP_COMPRESSION = 17
+    private const val PROP_GUIDES = 16
     private const val PROP_GROUP_ITEM = 29
     private const val PROP_ITEM_PATH = 30
     private const val PROP_FLOAT_OPACITY = 33
@@ -85,6 +86,7 @@ object Xcf {
         val prec = precision(version, if (version >= 4) r.u32() else 150)
         var compression = 0
         var colormap: IntArray? = null
+        val guides = ArrayList<Guide>()
         // Image properties.
         while (true) {
             val type = r.u32(); val len = r.u32()
@@ -92,6 +94,8 @@ object Xcf {
             when (type) {
                 PROP_END -> break
                 PROP_COMPRESSION -> compression = b.get().toInt()
+                // Guides: (int32 position, int8 orientation: 1 horizontal, 2 vertical) each.
+                PROP_GUIDES -> repeat(len / 5) { val pos = r.u32(); val o = b.get().toInt(); if (o == 1 || o == 2) guides.add(Guide(o == 2, pos)) }
                 PROP_COLORMAP -> { val n = r.u32(); colormap = IntArray(n) { (0xFF shl 24) or ((b.get().toInt() and 0xFF) shl 16) or ((b.get().toInt() and 0xFF) shl 8) or (b.get().toInt() and 0xFF) } }
             }
             b.position(start + len)
@@ -170,7 +174,7 @@ object Xcf {
         val activeIdx = xl.indexOfFirst { it.active }
         val activeName = if (activeIdx >= 0) xl[activeIdx].name else null
         val active = flatten(layers).firstOrNull { it.name == activeName && it.children == null } ?: flatten(layers).last { it.children == null }
-        return Stack(w, h, layers, active.id)
+        return Stack(w, h, layers, active.id, guides = guides)
     }
 
     private fun flatten(l: List<Layer>): List<Layer> = l.flatMap { listOf(it) + flatten(it.children ?: emptyList()) }
@@ -311,6 +315,7 @@ object Xcf {
         out.str("gimp xcf v011"); out.u8(0)
         out.u32(stack.width); out.u32(stack.height); out.u32(0); out.u32(150)
         out.prop(PROP_COMPRESSION) { u8(2) }
+        if (stack.guides.isNotEmpty()) out.prop(PROP_GUIDES) { for (g in stack.guides) { u32(g.pos); u8(if (g.vertical) 2 else 1) } }
         out.u32(PROP_END); out.u32(0)
         // Flatten the tree top-to-bottom with item paths.
         data class Item(val layer: Layer, val path: List<Int>)
