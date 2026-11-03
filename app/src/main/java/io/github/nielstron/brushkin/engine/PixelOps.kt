@@ -70,6 +70,8 @@ sealed interface Filter {
     val margin: Int get() = 0
     /** Bands must start at multiples of this (block-based filters). */
     val bandAlign: Int get() = 1
+    /** Needs the whole image at once (position-dependent or histogram-based filters). */
+    val wholeImage: Boolean get() = false
 }
 
 /** Per-channel LUT filter used by Curves, Brightness-Contrast, Invert, Threshold, Posterize. */
@@ -387,7 +389,7 @@ fun applyFilterBanded(target: TiledBitmap, f: Filter, sel: android.graphics.Bitm
     val w = target.width; val h = target.height
     val result = TiledBitmap(w, h, target.fill)
     val align = f.bandAlign
-    val bandH = maxOf(align, ((bandPixels / w).coerceAtLeast(1) / align) * align)
+    val bandH = if (f.wholeImage) h else maxOf(align, ((bandPixels / w).coerceAtLeast(1) / align) * align)
     var y = 0
     while (y < h) {
         val y1 = minOf(h, y + bandH)
