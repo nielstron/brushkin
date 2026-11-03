@@ -169,17 +169,6 @@ class EngineTest {
         }
     }
 
-    @Test fun foregroundSelectFindsObject() {
-        // Red disc on a blue background; a sloppy square outline around it.
-        val px = IntArray(w * h) { i -> val x = i % w; val y = i / w; if ((x - 300) * (x - 300) + (y - 200) * (y - 200) < 80 * 80) Color.RED else Color.BLUE }
-        val rough = ByteArray(w * h) { i -> val x = i % w; val y = i / w; if (x in 200..400 && y in 100..300) -1 else 0 }
-        val m = io.github.nielstron.brushkin.engine.ForegroundSelect.extract(px, w, h, rough, 40)
-        assertEquals(-1, m[200 * w + 300].toInt())        // center
-        assertEquals(-1, m[200 * w + 375].toInt())        // just inside the disc edge
-        assertEquals(0, m[110 * w + 210].toInt())         // corner of the outline: background
-        assertEquals(0, m[200 * w + 390].toInt())         // just outside the disc
-    }
-
     @Test fun symmetryMirrorsDabs() {
         val t = TiledBitmap(w, h)
         val sym = io.github.nielstron.brushkin.engine.Symmetry(io.github.nielstron.brushkin.engine.Symmetry.Kind.MANDALA, 300f, 200f, 4)

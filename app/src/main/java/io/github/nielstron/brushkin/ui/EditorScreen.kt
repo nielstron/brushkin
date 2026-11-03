@@ -35,6 +35,7 @@ import androidx.compose.material.icons.rounded.ContentPaste
 import androidx.compose.material.icons.rounded.IosShare
 import androidx.compose.material.icons.rounded.Menu
 import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.SnackbarHost
@@ -202,14 +203,24 @@ fun EditorScreen(vm: EditorViewModel, files: FileActions) {
         }
 
         val anyBusy = busy ?: vm.mlBusy
+        val progress by vm.engine.progress.collectAsState()
         if (anyBusy != null) {
-            Row(
-                Modifier.align(Alignment.TopCenter).statusBarsPadding().padding(top = 76.dp)
-                    .clip(RoundedCornerShape(20.dp)).background(Ui.panel).padding(horizontal = 14.dp, vertical = 8.dp),
-                verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp),
+            // Full-width card: what's happening, and a bar that fills when the progress is known.
+            Column(
+                Modifier.align(Alignment.TopCenter).statusBarsPadding().padding(top = 76.dp).padding(horizontal = 16.dp).fillMaxWidth()
+                    .clip(RoundedCornerShape(16.dp)).background(Ui.panel).padding(horizontal = 16.dp, vertical = 12.dp),
+                verticalArrangement = Arrangement.spacedBy(8.dp),
             ) {
-                CircularProgressIndicator(Modifier.size(16.dp), color = Ui.accent, strokeWidth = 2.dp)
-                Text("$anyBusy…", color = Ui.text, fontSize = 13.sp)
+                val canCancel = vm.engine.cancellable.collectAsState().value || (busy == null && vm.mlBusy != null)
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text("$anyBusy…", color = Ui.text, fontSize = 13.sp, modifier = Modifier.weight(1f))
+                    if (canCancel) Text("Cancel", color = Ui.accent, fontSize = 13.sp, fontWeight = FontWeight.SemiBold,
+                        modifier = Modifier.clip(RoundedCornerShape(8.dp)).clickable { vm.cancelWork() }.padding(horizontal = 8.dp, vertical = 4.dp))
+                }
+                val p = progress.takeIf { busy != null }
+                val mod = Modifier.fillMaxWidth().height(6.dp).clip(RoundedCornerShape(3.dp))
+                if (p != null) LinearProgressIndicator(progress = { p }, modifier = mod, color = Ui.accent, trackColor = Ui.panel2, drawStopIndicator = {})
+                else LinearProgressIndicator(modifier = mod, color = Ui.accent, trackColor = Ui.panel2)
             }
         }
 
@@ -276,12 +287,13 @@ private fun ContextChips(vm: EditorViewModel, hasSelection: Boolean, holder: Can
                     Chip("Deselect", false) { vm.engine.selectNone() }
                     Chip("Crop", false, ToolIcons.crop) { vm.engine.cropToSelection() }
                 }
-                for (m in SelectMode.entries) Chip(m.name.lowercase().replaceFirstChar { it.uppercase() }, vm.selectMode == m) { vm.selectMode = m }
+                if (t == Tool.OBJECT_SELECT) ObjectChips(vm, holder, removeChip = hasSelection)
+                if (t != Tool.OBJECT_SELECT || vm.objPoints.isEmpty())
+                    for (m in SelectMode.entries) Chip(m.name.lowercase().replaceFirstChar { it.uppercase() }, vm.selectMode == m) { vm.selectMode = m }
                 if (t == Tool.RECT_SELECT || t == Tool.ELLIPSE_SELECT) {
                     Chip("From center", vm.fromCenter) { vm.fromCenter = !vm.fromCenter }
                     Chip("Fixed 1:1", vm.fixedRatio) { vm.fixedRatio = !vm.fixedRatio }
                 }
-                if (t == Tool.OBJECT_SELECT) Chip("Whole foreground", false) { vm.objectSelect(-1f, -1f) }
                 if (t == Tool.SCISSORS) {
                     androidx.compose.runtime.LaunchedEffect(vm.scissorsVersion) { holder?.view?.invalidate() }
                     Chip("Close & select", false) { vm.scissorsClose() }
@@ -289,6 +301,11 @@ private fun ContextChips(vm: EditorViewModel, hasSelection: Boolean, holder: Can
                     Chip("Clear", false) { vm.scissorsClear(); holder?.view?.invalidate() }
                 }
                 if (!quickMask) Chip("Quick mask", false) { vm.engine.quickMaskToggle() }
+            }
+            t == Tool.REMOVE_OBJECT -> {
+                if (hasSelection) Chip("Remove", true) { vm.removeObject() }
+                ObjectChips(vm, holder, removeChip = false)
+                if (!hasSelection) Text("Tap the object to remove", color = Ui.muted, fontSize = 13.sp, modifier = Modifier.align(Alignment.CenterVertically).padding(horizontal = 4.dp))
             }
             t == Tool.BUCKET || t == Tool.GRADIENT -> {
                 Chip("Pick", vm.pickMode, ToolIcons.picker) { vm.pickMode = !vm.pickMode }
@@ -406,4 +423,16 @@ private fun VerticalSlider(value: Float, fill: Color, label: String, onChange: (
             Modifier.align(Alignment.BottomCenter).offset(y = (-(value.coerceIn(0f, 1f)) * 110).dp).size(20.dp).clip(CircleShape).background(Ui.text)
         )
     }
+}
+
+/** Object selection: while an object is being picked, taps add to it (Include) or take away from it (Exclude). */
+@Composable
+private fun androidx.compose.foundation.layout.RowScope.ObjectChips(vm: EditorViewModel, holder: CanvasHolder?, removeChip: Boolean) {
+    if (vm.objPoints.isNotEmpty()) {
+        Chip("Include", !vm.objSubtract) { vm.objSubtract = false }
+        Chip("Exclude", vm.objSubtract) { vm.objSubtract = true }
+        Chip("New object", false) { vm.objectNew(); holder?.view?.invalidate() }
+    }
+    Chip("Whole foreground", false) { vm.selectForeground() }
+    if (removeChip) Chip("Remove object", false) { vm.removeObject() }
 }

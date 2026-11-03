@@ -60,6 +60,8 @@ class CanvasView(context: Context, private val vm: EditorViewModel) : View(conte
     private val guide = Paint().apply { style = Paint.Style.STROKE; color = Color.WHITE; strokeWidth = 1.5f * density; isAntiAlias = true }
     private val guideDark = Paint().apply { style = Paint.Style.STROKE; color = 0x99000000.toInt(); strokeWidth = 3f * density; isAntiAlias = true }
     private val handleFill = Paint().apply { color = Color.WHITE; isAntiAlias = true }
+    private val marker = Paint().apply { style = Paint.Style.FILL; isAntiAlias = true }
+    private val markerRing = Paint().apply { color = 0xFFFFFFFF.toInt(); style = Paint.Style.STROKE; strokeWidth = 2f * density; isAntiAlias = true }
     private val accent = Paint().apply { color = 0xFFFFB547.toInt(); style = Paint.Style.STROKE; strokeWidth = 2f * density; isAntiAlias = true }
     private val dim = Paint().apply { color = 0x99000000.toInt() }
 
@@ -507,6 +509,19 @@ class CanvasView(context: Context, private val vm: EditorViewModel) : View(conte
         engine.floating?.let { drawFloatingHandles(canvas, it) }
         drawPath(canvas)
         if (vm.tool == Tool.SCISSORS) drawScissors(canvas)
+        if (vm.tool.picksObjects) for (p in vm.objPoints) {
+            // Object taps: green on the object, red for what isn't part of it.
+            val v = toView(p.x, p.y)
+            marker.color = if (p.positive) 0xFF3DBE5C.toInt() else 0xFFE5484D.toInt()
+            canvas.drawCircle(v.x, v.y, 7f * density, marker)
+            canvas.drawCircle(v.x, v.y, 7f * density, markerRing)
+        }
+        if (vm.dofOpen) vm.dofFocus?.let { f ->
+            val v = toView(f.x, f.y); val r = 16f * density
+            canvas.drawCircle(v.x, v.y, r, guideDark); canvas.drawCircle(v.x, v.y, r, accent)
+            canvas.drawLine(v.x - r * 1.6f, v.y, v.x - r * 0.5f, v.y, accent); canvas.drawLine(v.x + r * 0.5f, v.y, v.x + r * 1.6f, v.y, accent)
+            canvas.drawLine(v.x, v.y - r * 1.6f, v.x, v.y - r * 0.5f, accent); canvas.drawLine(v.x, v.y + r * 0.5f, v.x, v.y + r * 1.6f, accent)
+        }
         // The active layer's boundary when it's smaller than the image (GIMP's yellow dashes).
         engine.info.value.let { i -> i.layers.firstOrNull { it.id == i.activeId }?.bounds }?.let { b ->
             val p = Path().apply { addRect(RectF(b), Path.Direction.CW); transform(viewMatrix) }
@@ -600,7 +615,7 @@ class CanvasView(context: Context, private val vm: EditorViewModel) : View(conte
     // ------------------------------------------------------------------ input
 
     private enum class Mode { NONE, STROKE, VIEW, SHAPE, PICK, FLOAT_MOVE, FLOAT_SCALE, FLOAT_ROTATE, CROP, IGNORE, PATH_POINT, PATH_HANDLE, PATH_NEW,
-        FLOAT_SHEAR, FLOAT_CORNER, FLOAT_3D, FLOAT_HANDLE, WARP_PUSH, CAGE_DRAG, GUIDE, PLANE_CORNER }
+        FLOAT_SHEAR, FLOAT_CORNER, FLOAT_3D, FLOAT_HANDLE, WARP_PUSH, CAGE_DRAG, GUIDE, PLANE_CORNER, FOCUS }
 
     private var mode = Mode.NONE
     private var downTime = 0L
@@ -736,6 +751,8 @@ class CanvasView(context: Context, private val vm: EditorViewModel) : View(conte
 
     private fun startSingle(e: MotionEvent) {
         if (vm.pipette) { mode = Mode.PICK; pick(e.x, e.y); return }
+        // Depth of field: touching the image moves the focus point.
+        if (vm.dofOpen) { mode = Mode.FOCUS; vm.dofFocus = PointF(downDoc.x, downDoc.y); invalidate(); return }
         val f = engine.floating
         val tool = vm.tool
         if (f != null) { startFloating(e, f); return }
@@ -779,7 +796,7 @@ class CanvasView(context: Context, private val vm: EditorViewModel) : View(conte
         }
         when (tool) {
             Tool.RECT_SELECT, Tool.ELLIPSE_SELECT, Tool.GRADIENT -> { mode = Mode.SHAPE; preview = Path() }
-            Tool.FREE_SELECT, Tool.FOREGROUND_SELECT -> { mode = Mode.SHAPE; lasso = Path().apply { moveTo(downDoc.x, downDoc.y) }; preview = lasso }
+            Tool.FREE_SELECT -> { mode = Mode.SHAPE; lasso = Path().apply { moveTo(downDoc.x, downDoc.y) }; preview = lasso }
             else -> mode = Mode.SHAPE // taps
         }
     }
@@ -802,6 +819,7 @@ class CanvasView(context: Context, private val vm: EditorViewModel) : View(conte
                 cursor = PointF(e.x, e.y)
             }
             Mode.PICK -> pick(e.x, e.y)
+            Mode.FOCUS -> { vm.dofFocus = PointF(d.x, d.y); invalidate() }
             Mode.CROP -> vm.cropRect = RectF(min(downDoc.x, d.x), min(downDoc.y, d.y), max(downDoc.x, d.x), max(downDoc.y, d.y)).also { constrain(it) }
             Mode.SHAPE -> when {
                 lasso != null -> lasso!!.lineTo(d.x, d.y)
@@ -879,12 +897,8 @@ class CanvasView(context: Context, private val vm: EditorViewModel) : View(conte
                         if (l != null && !isTap) { l.close(); engine.select(Path(l), vm.selectMode, vm.antialias, vm.feather, "Free Select") }
                         else if (isTap) engine.selectNone()
                     }
-                    vm.tool == Tool.OBJECT_SELECT -> if (isTap) vm.objectSelect(d.x, d.y)
+                    vm.tool.picksObjects -> if (isTap) vm.objectTap(d.x, d.y)
                     vm.tool == Tool.SCISSORS -> if (isTap) { vm.scissorsTap(PointF(d.x, d.y), 24 * density / scale); invalidate() }
-                    vm.tool == Tool.FOREGROUND_SELECT -> {
-                        val l = lasso
-                        if (l != null && !isTap) { l.close(); engine.foregroundSelect(Path(l), vm.fgBand.toInt(), vm.selectMode) }
-                    }
                     vm.tool == Tool.FUZZY_SELECT || vm.tool == Tool.COLOR_SELECT -> if (isTap)
                         engine.fuzzySelect(d.x.toInt(), d.y.toInt(), vm.threshold.toInt(), vm.selectMode, vm.tool == Tool.COLOR_SELECT, vm.sampleMerged)
                     vm.tool == Tool.BUCKET -> if (isTap) {

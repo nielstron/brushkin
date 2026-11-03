@@ -58,5 +58,13 @@ class History(private val maxBytes: Long = 512L * 1024 * 1024, private val maxEn
         return e
     }
 
+    /** Removes the newest entry without undoing it (its effect is about to be replaced). */
+    fun dropLast(): HistoryEntry? {
+        if (redo.isNotEmpty()) return null
+        val e = undo.removeLastOrNull() ?: return null
+        total -= e.bytes
+        return e
+    }
+
     fun clear() { undo.clear(); redo.clear(); total = 0 }
 }

@@ -84,6 +84,16 @@ class Engine {
     val info: StateFlow<DocInfo> = _info
     private val _busy = MutableStateFlow<String?>(null)
     val busy: StateFlow<String?> = _busy
+    private val _progress = MutableStateFlow<Float?>(null)
+    /** Progress (0…1) of the current busy operation when it's known. */
+    val progress: StateFlow<Float?> = _progress
+    private val _cancellable = MutableStateFlow(false)
+    /** The current busy operation can be cancelled ([cancelBusy]) without leaving anything half done. */
+    val cancellable: StateFlow<Boolean> = _cancellable
+    private var busyJob: Job? = null
+
+    /** Stops a cancellable busy operation; the document stays as it was. */
+    fun cancelBusy() { if (_cancellable.value) busyJob?.cancel() }
 
     /** Called (from any thread) when the visible image changed. */
     @Volatile var onInvalidate: (() -> Unit)? = null
@@ -105,9 +115,10 @@ class Engine {
         }
     }
 
-    private suspend fun <T> busy(label: String, block: suspend () -> T): T {
-        _busy.value = label
-        try { return block() } finally { _busy.value = null }
+    private suspend fun <T> busy(label: String, cancellable: Boolean = false, block: suspend () -> T): T {
+        _busy.value = label; _progress.value = null; _cancellable.value = cancellable
+        busyJob = kotlin.coroutines.coroutineContext[Job]
+        try { return block() } finally { _busy.value = null; _progress.value = null; _cancellable.value = false; busyJob = null }
     }
 
     // ---------------------------------------------------------------- document
@@ -450,15 +461,24 @@ class Engine {
         }
     }
 
-    /** Combine a mask computed elsewhere (e.g. object segmentation, any resolution) with the selection. */
-    fun selectFromMask(bytes: ByteArray, mw: Int, mh: Int, mode: SelectMode, name: String) = post {
-        val s = stack
+    private var maskSession: Pair<Long, Long>? = null
+
+    /**
+     * Combine a mask computed elsewhere (e.g. object segmentation, any resolution) with the selection.
+     * Successive calls with the same nonzero [session] (refining one object) replace each other's
+     * result, as one undo step, as long as nothing else changed the document in between.
+     */
+    fun selectFromMask(bytes: ByteArray, mw: Int, mh: Int, mode: SelectMode, name: String, session: Long = 0) = post {
+        var s = stack
+        val ms = maskSession
+        if (session != 0L && ms != null && ms.first == session && ms.second == version) history.dropLast()?.let { s = it.before }
         val small = Bitmap.createBitmap(mw, mh, Bitmap.Config.ALPHA_8)
         Selection.writeMaskBytes(small, bytes, mw, mh)
         val full = Bitmap.createBitmap(s.width, s.height, Bitmap.Config.ALPHA_8)
         Canvas(full).drawBitmap(small, null, Rect(0, 0, s.width, s.height), Paint().apply { isFilterBitmap = true })
         stack = s.copy(selection = Selection.combineMask(s.selection, full, mode))
         record(name, s)
+        maskSession = if (session != 0L) session to version else null
     }
 
     private var mergedCache: Pair<Long, IntArray>? = null
@@ -476,20 +496,6 @@ class Engine {
     suspend fun scissorsSegment(ax: Float, ay: Float, bx: Float, by: Float): FloatArray = withContext(dispatcher) {
         val s = stack
         Scissors.liveWire(mergedPixels(s), s.width, s.height, ax.toInt(), ay.toInt(), bx.toInt(), by.toInt())
-    }
-
-    /** Foreground select: refine a rough outline into the object's edge using color models. */
-    fun foregroundSelect(rough: Path, band: Int, mode: SelectMode) = post {
-        val s = stack
-        busy("Selecting foreground") {
-            val m = Bitmap.createBitmap(s.width, s.height, Bitmap.Config.ALPHA_8)
-            Canvas(m).drawPath(rough, Paint().apply { color = Color.BLACK; isAntiAlias = false })
-            val out = ForegroundSelect.extract(mergedPixels(s), s.width, s.height, Selection.maskBytes(m, s.width, s.height), band)
-            val mb = Bitmap.createBitmap(s.width, s.height, Bitmap.Config.ALPHA_8)
-            Selection.writeMaskBytes(mb, out, s.width, s.height)
-            stack = s.copy(selection = Selection.combineMask(s.selection, mb, mode))
-            record("Foreground Select", s)
-        }
     }
 
     private fun transformMask(mk: TiledBitmap, m: Matrix, w: Int, h: Int): TiledBitmap {
@@ -774,7 +780,55 @@ class Engine {
 
     // ---------------------------------------------------------------- whole-image transforms
 
-    private fun transformAll(name: String, newW: Int, newH: Int, m: Matrix, cropSelection: Boolean = true) {
+    /**
+     * Runs [op] (e.g. a neural network, off this thread) on the active layer's pixels as a
+     * canvas-sized bitmap with the selection mask (0…255 per pixel, null = everything) and a progress
+     * callback, and puts its result back as one undo step: within the selection when
+     * [clipToSelection], else as returned.
+     */
+    fun processActive(name: String, clipToSelection: Boolean = true, op: suspend (Bitmap, ByteArray?, (Float) -> Unit) -> Bitmap) = post {
+        val s = stack
+        val l = s.active ?: return@post
+        if (l.isGroup) { onMessage?.invoke("This works on layers, not groups. Pick a layer."); return@post }
+        if (l.drawable !== l.pixels) { onMessage?.invoke("This works on the layer, not its mask"); return@post }
+        if (l.lockPixels) { onMessage?.invoke("The active layer's pixels are locked"); return@post }
+        val w = s.width; val h = s.height
+        busy(name, cancellable = true) {
+            val src = l.pixels.toBitmap()
+            val sel = clipSelection(s, l)?.let { Selection.maskBytes(it.mask, w, h) }
+            val out = withContext(Dispatchers.Default) {
+                val res = op(src, sel) { p -> _progress.value = p }
+                val px = IntArray(w * h).also { res.getPixels(it, 0, w, 0, 0, w, h) }
+                if (clipToSelection && sel != null) maskBlend(IntArray(w * h).also { src.getPixels(it, 0, w, 0, 0, w, h) }, px, sel, w, h) else px
+            }
+            if (l.text != null) stack = dropText(stack)
+            replaceTiles(s, l.pixels, TiledBitmap.fromPixels(out, w, h, l.pixels.fill), name)
+        }
+    }
+
+    /**
+     * Enlarges the image [factor] times. Plain pixel layers go through [upscaler] (a neural
+     * network); masks, selection, text and layers with content off the canvas are scaled smoothly.
+     */
+    fun upscaleImage(factor: Int, name: String, upscaler: suspend (Bitmap, (Float) -> Unit) -> Bitmap) = post {
+        val s = stack
+        val nw = s.width * factor; val nh = s.height * factor
+        val leaves = s.all.filter { !it.isGroup && it.text == null && it.outside.isEmpty() && it.bounds == null && !it.pixels.isEmpty() }
+        busy(name, cancellable = true) {
+            val replaced = HashMap<Long, TiledBitmap>()
+            leaves.forEachIndexed { i, l ->
+                val big = withContext(Dispatchers.Default) {
+                    upscaler(l.pixels.toBitmap()) { p -> _progress.value = (i + p) / leaves.size }
+                }
+                replaced[l.id] = TiledBitmap.fromBitmap(big)
+                big.recycle()
+            }
+            if (stack !== s) { onMessage?.invoke("The image changed while upscaling; try again"); return@busy }
+            transformAll(name, nw, nh, Matrix().apply { setScale(factor.toFloat(), factor.toFloat()) }, replace = replaced)
+        }
+    }
+
+    private fun transformAll(name: String, newW: Int, newH: Int, m: Matrix, cropSelection: Boolean = true, replace: Map<Long, TiledBitmap> = emptyMap()) {
         val s = stack
         val p = Paint().apply { isFilterBitmap = true }
         fun xf(t: TiledBitmap): TiledBitmap {
@@ -785,6 +839,7 @@ class Engine {
         }
         val layers = Stack.mapTree(s.layers) { l ->
             if (l.isGroup) l.copy(pixels = TiledBitmap(newW, newH), mask = l.mask?.let { xf(it) })
+            else if (l.id in replace) l.copy(pixels = replace.getValue(l.id), mask = l.mask?.let { xf(it) })
             else {
                 // Content off the canvas comes along (a canvas resize can bring it back into view).
                 val (px, outside) = LayerExtent.transform(l, m, newW, newH)
