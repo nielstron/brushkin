@@ -311,9 +311,6 @@ private fun ContextChips(vm: EditorViewModel, hasSelection: Boolean, holder: Can
                 if (t == Tool.OBJECT_SELECT) ObjectChips(vm, holder, removeChip = hasSelection)
                 if (t != Tool.OBJECT_SELECT || vm.objPoints.isEmpty())
                     for (m in SelectMode.entries) Chip(m.name.lowercase().replaceFirstChar { it.uppercase() }, vm.selectMode == m) { vm.selectMode = m }
-                if (t == Tool.RECT_SELECT || t == Tool.ELLIPSE_SELECT) {
-                    Chip("From center", vm.fromCenter) { vm.fromCenter = !vm.fromCenter }
-                }
                 if (t == Tool.SCISSORS) {
                     androidx.compose.runtime.LaunchedEffect(vm.scissorsVersion) { holder?.view?.invalidate() }
                     Chip("Close & select", false) { vm.scissorsClose() }

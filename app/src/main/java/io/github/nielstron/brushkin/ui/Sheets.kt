@@ -300,6 +300,7 @@ private fun OptionsSheet(vm: EditorViewModel) {
             Toggle("Antialiasing", vm.antialias) { vm.antialias = it }
             if (t == Tool.RECT_SELECT) LabeledSlider("Rounded corners", vm.cornerRadius, 0f..300f, "${vm.cornerRadius.roundToInt()} px", { vm.cornerRadius = it })
         }
+        if (t == Tool.RECT_SELECT || t == Tool.ELLIPSE_SELECT) Toggle("Expand from center", vm.fromCenter) { vm.fromCenter = it }
         if (t == Tool.RECT_SELECT || t == Tool.ELLIPSE_SELECT || t == Tool.CROP) AspectPicker(vm)
         if (t == Tool.FUZZY_SELECT || t == Tool.COLOR_SELECT || t == Tool.BUCKET) {
             LabeledSlider("Threshold", vm.threshold, 0f..255f, "${vm.threshold.roundToInt()}", { vm.threshold = it })
