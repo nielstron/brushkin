@@ -1,5 +1,8 @@
 package io.github.nielstron.brushkin.ui
 
+import androidx.compose.foundation.combinedClickable
+import androidx.compose.ui.draw.drawBehind
+import androidx.compose.runtime.collectAsState
 import android.graphics.Bitmap
 import android.graphics.Paint
 import android.graphics.Path
@@ -158,18 +161,20 @@ private fun OptionsSheet(vm: EditorViewModel) {
             Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 for (p in BRUSH_PRESETS) {
                     val s = vm.settings
-                    val sel = s.shape == p.shape && s.hardness == p.hardness && s.aspect == p.aspect
+                    val sel = s.tipImage == null && s.shape == p.shape && s.hardness == p.hardness && s.aspect == p.aspect
                     Column(horizontalAlignment = Alignment.CenterHorizontally) {
                         Box(
                             Modifier.size(56.dp).clip(RoundedCornerShape(12.dp)).background(Ui.panel2)
                                 .border(2.dp, if (sel) Ui.accent else Color.Transparent, RoundedCornerShape(12.dp))
-                                .clickable { vm.settings = vm.settings.copy(shape = p.shape, hardness = p.hardness, aspect = p.aspect, angle = p.angle, spacing = p.spacing) },
+                                .clickable { vm.settings = vm.settings.copy(shape = p.shape, hardness = p.hardness, aspect = p.aspect, angle = p.angle, spacing = p.spacing, tipImage = null) },
                             contentAlignment = Alignment.Center,
                         ) { TipGlyph(p.shape, p.hardness, p.aspect, p.angle) }
                         Text(p.name, color = Ui.muted, fontSize = 10.sp, modifier = Modifier.padding(top = 4.dp))
                     }
                 }
             }
+            ImageBrushes(vm)
+            if (t == Tool.MYPAINT) MyPaintBrushes(vm)
             Spacer(Modifier.height(8.dp))
             val s = vm.settings
             LabeledSlider("Size", sizeToPos(s.size), 0f..1f, "${s.size.roundToInt()} px", { vm.settings = vm.settings.copy(size = posToSize(it)) })
@@ -224,8 +229,9 @@ private fun OptionsSheet(vm: EditorViewModel) {
                 Chip("Linear", vm.gradientShape == GradientShape.LINEAR) { vm.gradientShape = GradientShape.LINEAR }
                 Chip("Radial", vm.gradientShape == GradientShape.RADIAL) { vm.gradientShape = GradientShape.RADIAL }
             }
-            Toggle("FG to transparent", vm.fgToTransparent) { vm.fgToTransparent = it }
+            GradientPicker(vm)
         }
+        if (t == Tool.BUCKET) PatternPicker(vm)
         if (t == Tool.WARP) {
             LabeledSlider("Radius", vm.warpRadius, 10f..600f, "${vm.warpRadius.roundToInt()} px", { vm.warpRadius = it })
             LabeledSlider("Strength", vm.warpStrength, 0.05f..1f, "${(vm.warpStrength * 100).roundToInt()}%", { vm.warpStrength = it })
@@ -365,7 +371,7 @@ private fun ColorSheet(vm: EditorViewModel) {
         Spacer(Modifier.height(18.dp))
         SectionLabel("Palette")
         Spacer(Modifier.height(8.dp))
-        Swatches(PALETTE) { vm.pickColor(it) }
+        PaletteSection(vm)
         Spacer(Modifier.height(16.dp))
         SectionLabel("Recent")
         Spacer(Modifier.height(8.dp))
@@ -651,7 +657,130 @@ fun renderSticker(s: Sticker, size: Int, accent: Int): Bitmap {
 
 private fun signed(v: Float) = (if (v > 0.005f) "+" else "") + "${(v * 100).roundToInt()}%"
 
+// ---------------------------------------------------------------------------- resources
+
 @Composable
-private fun SectionLabel(text: String) {
-    Text(text.uppercase(), color = Ui.muted, fontSize = 12.sp, fontWeight = FontWeight.SemiBold, letterSpacing = 1.sp, modifier = Modifier.padding(top = 14.dp, bottom = 2.dp))
+private fun ImageBrushes(vm: EditorViewModel) {
+    val brushes by vm.resources.brushes.collectAsState()
+    Spacer(Modifier.height(10.dp))
+    Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
+        for (b in brushes) {
+            val sel = vm.settings.tipImage == b.name
+            val thumb = remember(b) { b.frames.first().extractAlpha() }
+            Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                Box(
+                    Modifier.size(56.dp).clip(RoundedCornerShape(12.dp)).background(Ui.panel2)
+                        .border(2.dp, if (sel) Ui.accent else Color.Transparent, RoundedCornerShape(12.dp))
+                        .clickable { vm.settings = vm.settings.copy(tipImage = b.name, spacing = b.spacing.coerceIn(0.02f, 1f)) },
+                    contentAlignment = Alignment.Center,
+                ) { androidx.compose.foundation.Image(thumb.asImageBitmap(), b.name, Modifier.size(40.dp), colorFilter = androidx.compose.ui.graphics.ColorFilter.tint(Ui.text)) }
+                Text(b.name.take(10), color = Ui.muted, fontSize = 10.sp, modifier = Modifier.padding(top = 4.dp), maxLines = 1)
+            }
+        }
+        Chip("From selection", false) { vm.selectionToResource(brush = true) }
+        Chip("Import…", false) { vm.dialog = "import" }
+    }
+}
+
+@Composable
+private fun MyPaintBrushes(vm: EditorViewModel) {
+    val list by vm.resources.mypaint.collectAsState()
+    SectionLabel("MyPaint brushes", Modifier.padding(top = 14.dp, bottom = 6.dp))
+    Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+        for (b in list) Chip(b.name, vm.myPaintBrush == b.name) { vm.myPaintBrush = b.name; vm.settings = b.settings }
+        Chip("Import .myb…", false) { vm.dialog = "import" }
+    }
+}
+
+@Composable
+private fun GradientPicker(vm: EditorViewModel) {
+    val list by vm.resources.gradients.collectAsState()
+    SectionLabel("Gradient", Modifier.padding(top = 10.dp, bottom = 6.dp))
+    Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+        for (g in list) {
+            val (cols, pos) = g.stops(vm.fg, vm.bg, vm.gradientReverse)
+            Row(
+                Modifier.fillMaxWidth().clip(RoundedCornerShape(10.dp)).background(if (vm.gradient === g) Ui.panel2 else Color.Transparent)
+                    .border(1.dp, if (vm.gradient === g) Ui.accent else Ui.border, RoundedCornerShape(10.dp)).clickable { vm.gradient = g }.padding(8.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Canvas(Modifier.width(110.dp).height(22.dp).clip(RoundedCornerShape(6.dp))) {
+                    val n = 32
+                    for (k in 0 until n) {
+                        val x = (k + 0.5f) / n
+                        drawRect(Color(sampleStops(cols, pos, x)), topLeft = Offset(size.width * k / n, 0f), size = androidx.compose.ui.geometry.Size(size.width / n + 1, size.height))
+                    }
+                }
+                Text(g.name, color = Ui.text, fontSize = 13.sp, modifier = Modifier.padding(start = 10.dp).weight(1f), maxLines = 1)
+            }
+        }
+    }
+    Row(Modifier.padding(vertical = 8.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+        Chip("Reverse", vm.gradientReverse) { vm.gradientReverse = !vm.gradientReverse }
+        Chip("Edit…", false) { vm.dialog = "gradient-edit" }
+        Chip("Import…", false) { vm.dialog = "import" }
+    }
+}
+
+/** Color of a multi-stop gradient at [x] (0…1). */
+fun sampleStops(cols: IntArray, pos: FloatArray, x: Float): Int {
+    if (cols.isEmpty()) return 0
+    if (x <= pos.first()) return cols.first()
+    for (i in 1 until pos.size) if (x <= pos[i]) {
+        val t = if (pos[i] - pos[i - 1] < 1e-6f) 1f else (x - pos[i - 1]) / (pos[i] - pos[i - 1])
+        return io.github.nielstron.brushkin.engine.GradientRes.lerpColor(cols[i - 1], cols[i], t)
+    }
+    return cols.last()
+}
+
+@Composable
+private fun PatternPicker(vm: EditorViewModel) {
+    val list by vm.resources.patterns.collectAsState()
+    Toggle("Fill with pattern", vm.fillWithPattern) { vm.fillWithPattern = it; if (it && vm.pattern == null) vm.pattern = list.firstOrNull() }
+    if (vm.fillWithPattern) Row(Modifier.horizontalScroll(rememberScrollState()).padding(vertical = 6.dp), horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
+        for (p in list) {
+            val img = remember(p) { p.bitmap.asImageBitmap() }
+            Box(
+                Modifier.size(48.dp).clip(RoundedCornerShape(10.dp)).border(2.dp, if (vm.pattern === p) Ui.accent else Ui.border, RoundedCornerShape(10.dp)).clickable { vm.pattern = p }
+                    .drawBehind {
+                        // Tile the pattern across the swatch.
+                        var y = 0f
+                        while (y < size.height) { var x = 0f; while (x < size.width) { drawImage(img, Offset(x, y)); x += img.width.coerceAtLeast(1) }; y += img.height.coerceAtLeast(1) }
+                    },
+            )
+        }
+        Chip("From selection", false) { vm.selectionToResource(brush = false) }
+        Chip("Import…", false) { vm.dialog = "import" }
+    }
+}
+
+/** Palette swatches; user palettes can be edited (+ adds the FG color, long-press removes). */
+@OptIn(ExperimentalLayoutApi::class, androidx.compose.foundation.ExperimentalFoundationApi::class)
+@Composable
+private fun PaletteSection(vm: EditorViewModel) {
+    val palettes by vm.resources.palettes.collectAsState()
+    val current = vm.palette
+    Row(Modifier.horizontalScroll(rememberScrollState()).padding(bottom = 8.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+        Chip("Default", current == null) { vm.palette = null }
+        for (p in palettes) Chip(p.name, current === p) { vm.palette = p }
+        Chip("New", false) {
+            vm.palette = vm.resources.savePalette(io.github.nielstron.brushkin.engine.PaletteRes("Palette ${palettes.size + 1}", listOf(vm.fg)))
+        }
+        Chip("Import…", false) { vm.dialog = "import" }
+    }
+    val colors = current?.colors ?: PALETTE
+    FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        for ((i, c) in colors.withIndex()) Box(
+            Modifier.size(36.dp).clip(RoundedCornerShape(10.dp)).background(Color(c)).border(1.dp, Color.White.copy(alpha = 0.1f), RoundedCornerShape(10.dp))
+                .combinedClickable(onClick = { vm.pickColor(c) }, onLongClick = {
+                    if (current != null) vm.palette = vm.resources.savePalette(io.github.nielstron.brushkin.engine.PaletteRes(current.name, current.colors.filterIndexed { k, _ -> k != i }), current)
+                })
+        )
+        if (current != null) Box(
+            Modifier.size(36.dp).clip(RoundedCornerShape(10.dp)).border(1.dp, Ui.border, RoundedCornerShape(10.dp))
+                .clickable { vm.palette = vm.resources.savePalette(io.github.nielstron.brushkin.engine.PaletteRes(current.name, current.colors + vm.fg), current) },
+            contentAlignment = Alignment.Center,
+        ) { Text("+", color = Ui.text, fontSize = 18.sp) }
+    }
+    if (current != null) Text("Tap + to add the current color · long-press a swatch to remove it", color = Ui.muted, fontSize = 11.sp, modifier = Modifier.padding(top = 6.dp))
 }

@@ -88,7 +88,7 @@ fun EditorScreen(vm: EditorViewModel, files: FileActions) {
         onDispose { lifecycle.removeObserver(obs) }
     }
     // Tool-dependent overlays (paths, clone source, crop) must redraw when the tool changes.
-    LaunchedEffect(vm.tool, vm.pathVersion, vm.cloneSource) { holder.view?.invalidate() }
+    LaunchedEffect(vm.tool, vm.pathVersion, vm.cloneSource, vm.perspPlane, vm.perspEditing) { holder.view?.invalidate() }
 
     Box(Modifier.fillMaxSize().background(Ui.ground)) {
         AndroidView(
@@ -243,6 +243,11 @@ private fun ContextChips(vm: EditorViewModel, hasSelection: Boolean, holder: Can
         val quickMask = vm.engine.info.collectAsState().value.quickMask
         if (quickMask) Chip("Quick mask", true) { vm.engine.quickMaskToggle() }
         when {
+            t == Tool.PERSPECTIVE_CLONE -> {
+                Chip("Modify plane", vm.perspEditing) { vm.perspEditing = true; holder?.view?.invalidate() }
+                Chip("Clone", !vm.perspEditing) { vm.perspEditing = false; holder?.view?.invalidate() }
+                if (!vm.perspEditing) Chip(if (vm.cloneSource == null) "Set source" else "New source", vm.settingSource, ToolIcons.target) { vm.settingSource = !vm.settingSource }
+            }
             t == Tool.CLONE || t == Tool.HEAL -> {
                 Chip(if (vm.cloneSource == null) "Set source" else "New source", vm.settingSource, ToolIcons.target) { vm.settingSource = !vm.settingSource }
                 Chip("Line", vm.lineMode, ToolIcons.line) { vm.lineMode = !vm.lineMode }
