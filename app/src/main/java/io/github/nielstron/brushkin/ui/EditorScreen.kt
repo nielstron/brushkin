@@ -35,6 +35,7 @@ import androidx.compose.material.icons.rounded.ContentCut
 import androidx.compose.material.icons.rounded.ContentPaste
 import androidx.compose.material.icons.rounded.IosShare
 import androidx.compose.material.icons.rounded.Menu
+import androidx.compose.material.icons.rounded.Remove
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.Icon
@@ -161,6 +162,10 @@ fun EditorScreen(vm: EditorViewModel, files: FileActions) {
         // Side sliders for size and opacity, within reach of the holding thumb.
         if (vm.strokeTool.paint != null && info.floating.not()) {
             SideSliders(vm, Modifier.align(Alignment.CenterStart).padding(start = if (vm.showRulers) 26.dp else 10.dp))
+        }
+        // Picking an object: whether taps add to it or take away from it, apart from the chips below.
+        if (vm.tool.picksObjects && vm.objPoints.isNotEmpty()) {
+            ObjectSidePanel(vm, holder, Modifier.align(Alignment.CenterStart).padding(start = if (vm.showRulers) 26.dp else 10.dp))
         }
 
         Column(Modifier.align(Alignment.BottomCenter).navigationBarsPadding().padding(horizontal = 12.dp).padding(bottom = 12.dp)) {
@@ -437,11 +442,6 @@ private fun VerticalSlider(value: Float, fill: Color, label: String, onChange: (
 /** Object selection: while an object is being picked, taps add to it (Include) or take away from it (Exclude). */
 @Composable
 private fun androidx.compose.foundation.layout.RowScope.ObjectChips(vm: EditorViewModel, holder: CanvasHolder?, removeChip: Boolean) {
-    if (vm.objPoints.isNotEmpty()) {
-        Chip("Include", !vm.objSubtract) { vm.objSubtract = false }
-        Chip("Exclude", vm.objSubtract) { vm.objSubtract = true }
-        Chip("New object", false) { vm.objectNew(); holder?.view?.invalidate() }
-    }
     Chip("Whole foreground", false) { vm.selectForeground() }
     if (removeChip) Chip("Remove object", false) { vm.removeObject() }
 }
@@ -467,5 +467,27 @@ private fun FavoriteBar(vm: EditorViewModel) {
                 contentAlignment = Alignment.Center,
             ) { Icon(ToolIcons.of(t), t.label, tint = if (active) Ui.onAccent else Ui.text, modifier = Modifier.size(22.dp)) }
         }
+    }
+}
+
+/** Include / exclude taps and starting over, for the object being picked. */
+@Composable
+private fun ObjectSidePanel(vm: EditorViewModel, holder: CanvasHolder, modifier: Modifier) {
+    Column(
+        modifier.width(52.dp).clip(RoundedCornerShape(26.dp)).background(Ui.panel.copy(alpha = 0.94f)).border(1.dp, Ui.border, RoundedCornerShape(26.dp)).padding(vertical = 8.dp),
+        horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(8.dp),
+    ) {
+        @Composable
+        fun Btn(icon: ImageVector, label: String, selected: Boolean, color: Color, onClick: () -> Unit) {
+            Box(
+                Modifier.size(40.dp).clip(CircleShape).background(if (selected) color else Color.Transparent)
+                    .border(2.dp, color, CircleShape).clickable(onClickLabel = label, onClick = onClick),
+                contentAlignment = Alignment.Center,
+            ) { Icon(icon, label, tint = if (selected) Color.White else color, modifier = Modifier.size(24.dp)) }
+        }
+        Btn(Icons.Rounded.Add, "Taps include", !vm.objSubtract, Color(0xFF3DBE5C)) { vm.objSubtract = false }
+        Btn(Icons.Rounded.Remove, "Taps exclude", vm.objSubtract, Color(0xFFE5484D)) { vm.objSubtract = true }
+        Box(Modifier.size(24.dp, 1.dp).background(Ui.border))
+        Btn(Icons.Rounded.Close, "New object", false, Ui.muted) { vm.objectNew(); holder.view?.invalidate() }
     }
 }
