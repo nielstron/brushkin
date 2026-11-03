@@ -389,7 +389,9 @@ object Xcf {
         val hierPos = out.size; out.u64(0)
         val maskPos = out.size; out.u64(0)
         out.patch64(hierPos, out.size.toLong())
-        val px = if (l.children != null) IntArray(lw * lh) else if (reg == android.graphics.Rect(0, 0, s.width, s.height) && l.outside.isEmpty()) l.pixels.toPixels()
+        // GIMP stores its own filter graph; effects are baked in so the file looks the same there.
+        val px = if (l.children != null) IntArray(lw * lh) else if (l.effects.isNotEmpty()) Effects.pixelsSync(l).toPixels().let { full -> if (reg == android.graphics.Rect(0, 0, s.width, s.height)) full else LayerExtent.render(l.copy(pixels = Effects.pixelsSync(l)), reg).let { b -> IntArray(lw * lh).also { b.getPixels(it, 0, lw, 0, 0, lw, lh) } } }
+            else if (reg == android.graphics.Rect(0, 0, s.width, s.height) && l.outside.isEmpty()) l.pixels.toPixels()
             else LayerExtent.render(l, reg).let { b -> IntArray(lw * lh).also { b.getPixels(it, 0, lw, 0, 0, lw, lh) } }
         writeHierarchy(out, px, lw, lh, 4)
         val m = l.mask ?: return

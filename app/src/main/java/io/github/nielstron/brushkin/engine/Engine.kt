@@ -34,6 +34,7 @@ data class LayerInfo(
     val hasMask: Boolean = false, val maskEnabled: Boolean = true, val editMask: Boolean = false, val maskThumb: Bitmap? = null,
     val depth: Int = 0, val isGroup: Boolean = false, val expanded: Boolean = true, val isText: Boolean = false,
     val lockPosition: Boolean = false, val linked: Boolean = false, val bounds: Rect? = null,
+    val effects: List<LayerEffect> = emptyList(),
 )
 
 data class DocInfo(
@@ -89,6 +90,11 @@ class Engine {
     @Volatile var onMessage: ((String) -> Unit)? = null
 
     private fun invalidate() = onInvalidate?.invoke()
+
+    init {
+        // Layers with non-destructive effects show their filtered pixels, computed off this thread.
+        Compositor.displayPixels = { l -> Effects.pixelsAsync(l, { job -> scope.launch(Dispatchers.Default) { job() } }, { invalidate() }) }
+    }
 
     fun post(block: suspend () -> Unit): Job = scope.launch {
         try { block() } catch (t: Throwable) {
@@ -150,7 +156,7 @@ class Engine {
                             l.id, l.name, l.visible, l.opacity, l.mode, l.lockAlpha, thumbs[l.id]?.second,
                             hasMask = l.mask != null, maskEnabled = l.maskEnabled, editMask = l.editMask && l.mask != null, maskThumb = maskThumbs[l.id]?.second,
                             depth = depth, isGroup = l.isGroup, expanded = l.expanded, isText = l.text != null,
-                            lockPosition = l.lockPosition, linked = l.linked, bounds = l.bounds,
+                            lockPosition = l.lockPosition, linked = l.linked, bounds = l.bounds, effects = l.effects,
                         ))
                         if (l.isGroup && l.expanded) add(l.children!!, depth + 1)
                     }
@@ -489,6 +495,37 @@ class Engine {
         if (mk.fill != 0) dst.eraseColor(mk.fill)
         Canvas(dst).drawBitmap(mk.toBitmap(), m, Paint().apply { isFilterBitmap = true })
         return TiledBitmap.fromBitmap(dst, fill = mk.fill)
+    }
+
+    // ---------------------------------------------------------------- non-destructive effects
+
+    /** Ends a filter preview by adding the filter as a layer effect instead of changing pixels. */
+    fun filterAsEffect(e: LayerEffect) = post {
+        previewJob?.cancel(); proxy = null; preview = null
+        val s = stack
+        val l = s.find(filterLayer) ?: return@post
+        if (filterOnMask) { onMessage?.invoke("Effects apply to layer pixels, not masks"); invalidate(); return@post }
+        stack = s.replace(l.copy(effects = l.effects + e))
+        record("Add ${e.name} Effect", s)
+    }
+
+    fun setEffects(layerId: Long, name: String, f: (List<LayerEffect>) -> List<LayerEffect>) = post {
+        val s = stack
+        val l = s.find(layerId) ?: return@post
+        stack = s.replace(l.copy(effects = f(l.effects)))
+        record(name, s)
+    }
+
+    /** Bakes the effects into the pixels (GIMP's "Merge Filters"). */
+    fun mergeEffects(layerId: Long) = post {
+        val s = stack
+        val l = s.find(layerId) ?: return@post
+        if (l.effects.isEmpty()) return@post
+        busy("Merging effects") {
+            val out = withContext(Dispatchers.Default) { Effects.pixelsSync(l) }
+            stack = s.replace(l.copy(effects = emptyList()))
+            replaceLayerPixels(s, l, out.copy(), "Merge Effects")
+        }
     }
 
     // ---------------------------------------------------------------- layer boundary

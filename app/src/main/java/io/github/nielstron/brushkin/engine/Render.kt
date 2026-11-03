@@ -36,6 +36,9 @@ class Floating(
  * export and color sampling, so what you see is exactly what you export.
  */
 object Compositor {
+    /** On-screen pixels of a layer, with its non-destructive effects (set by the engine). */
+    @Volatile var displayPixels: ((Layer) -> TiledBitmap)? = null
+
     private val tilePaint = ThreadLocal.withInitial { Paint() }
     private val whitePaint = Paint().apply { color = android.graphics.Color.WHITE }
     /** Mask tiles: luminance → alpha, then keep only that much of the layer. */
@@ -95,7 +98,7 @@ object Compositor {
                     // The lifted layer shows only what was left behind; the floating part is drawn on top.
                     isFloatTarget -> floating!!.remainder
                     pv != null && !pv.mask -> pv.tiles
-                    else -> layer.pixels
+                    else -> displayPixels?.invoke(layer) ?: layer.pixels
                 }
                 if (pixels != null) {
                     if (pv != null && !pv.mask && pv.scale != 1f) drawScaled(canvas, pv, tp, pixelSize)
@@ -178,7 +181,7 @@ object Compositor {
                 canvas.saveLayer(0f, 0f, w, h, lp)
             }
             if (layer.isGroup) drawLinear(canvas, stack, layer.children!!, visible)
-            else drawTiles(canvas, layer.pixels, visible, tp)
+            else drawTiles(canvas, Effects.pixelsSync(layer), visible, tp)
             if (mask != null) {
                 // Mask values are coverage, not color: turn each tile into an alpha mask first so
                 // no color conversion touches them.

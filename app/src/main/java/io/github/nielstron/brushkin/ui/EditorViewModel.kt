@@ -367,6 +367,7 @@ class EditorViewModel(app: Application) : AndroidViewModel(app) {
 
     init {
         engine.onMessage = { messages.tryEmit(it) }
+        io.github.nielstron.brushkin.engine.Effects.factory = { buildEffect(it) }
         viewModelScope.launch(Dispatchers.IO) { resources.load() }
         // Posted, not immediate: the clipboard property is declared further down.
         viewModelScope.launch(Dispatchers.Main) { clipboardManager.addPrimaryClipChangedListener { refreshClipboard() } }
