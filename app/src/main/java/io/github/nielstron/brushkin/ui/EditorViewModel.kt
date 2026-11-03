@@ -127,6 +127,20 @@ class EditorViewModel(app: Application) : AndroidViewModel(app) {
         }
     }
 
+    /** Saves the current generated tip (shape, spikes, hardness…) as a GIMP .gbr brush. */
+    fun saveGeneratedBrush() {
+        val s = settings
+        viewModelScope.launch(Dispatchers.IO) {
+            val d = s.size.roundToInt().coerceIn(8, 512)
+            val tip = io.github.nielstron.brushkin.engine.TipCache.get(d.toFloat(), s, false)
+            val scaled = android.graphics.Bitmap.createScaledBitmap(tip, d, d, true)
+            val mask = ByteArray(d * d).also { val buf = java.nio.ByteBuffer.allocate(scaled.rowBytes * d); scaled.copyPixelsToBuffer(buf); for (y in 0 until d) System.arraycopy(buf.array(), y * scaled.rowBytes, it, y * d, d) }
+            val name = "Generated ${resources.brushes.value.size + 1}"
+            val b = resources.saveBrush(name, mask, d, d)
+            withContext(Dispatchers.Main) { settings = settings.copy(tipImage = b.name, spacing = s.spacing); messages.tryEmit("Saved “$name”") }
+        }
+    }
+
     /** GIMP's "Paste as new brush / pattern": the selection (or layer) becomes a resource. */
     fun selectionToResource(brush: Boolean) {
         viewModelScope.launch {

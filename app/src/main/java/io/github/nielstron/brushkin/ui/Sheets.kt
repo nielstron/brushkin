@@ -182,9 +182,18 @@ private fun OptionsSheet(vm: EditorViewModel) {
             if (t != Tool.PENCIL) LabeledSlider("Hardness", s.hardness, 0f..1f, "%.2f".format(s.hardness), { vm.settings = vm.settings.copy(hardness = it) })
             LabeledSlider("Flow", s.flow, 0.01f..1f, "${(s.flow * 100).roundToInt()}%", { vm.settings = vm.settings.copy(flow = it) })
             LabeledSlider("Spacing", s.spacing, 0.01f..1f, "${(s.spacing * 100).roundToInt()}", { vm.settings = vm.settings.copy(spacing = it) })
-            if (s.shape == TipShape.FLAT) {
+            if (s.tipImage == null && s.shape != TipShape.SPLATTER) {
+                // GIMP's brush editor: a generated shape with spikes, aspect and angle.
+                SectionLabel("Brush shape", Modifier.padding(top = 10.dp, bottom = 4.dp))
+                Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    for ((i, n) in listOf("Circle", "Square", "Diamond").withIndex()) Chip(n, s.genShape == i) { vm.settings = vm.settings.copy(genShape = i) }
+                    Chip("Save as brush", false) { vm.saveGeneratedBrush() }
+                }
+                LabeledSlider("Spikes", s.spikes.toFloat(), 2f..20f, "${s.spikes}", { vm.settings = vm.settings.copy(spikes = it.roundToInt()) })
                 LabeledSlider("Angle", s.angle, -90f..90f, "${s.angle.roundToInt()}°", { vm.settings = vm.settings.copy(angle = it) })
                 LabeledSlider("Aspect", s.aspect, 0.05f..1f, "%.2f".format(s.aspect), { vm.settings = vm.settings.copy(aspect = it) })
+            } else if (s.shape == TipShape.FLAT) {
+                LabeledSlider("Angle", s.angle, -90f..90f, "${s.angle.roundToInt()}°", { vm.settings = vm.settings.copy(angle = it) })
             }
             LabeledSlider("Smoothing", s.smoothing, 0f..0.95f, "${(s.smoothing * 100).roundToInt()}", { vm.settings = vm.settings.copy(smoothing = it) })
             val rateLabel = when (t) { Tool.SMUDGE -> "Rate"; Tool.DODGE_BURN -> "Exposure"; Tool.BLUR_SHARPEN -> "Strength"; else -> null }

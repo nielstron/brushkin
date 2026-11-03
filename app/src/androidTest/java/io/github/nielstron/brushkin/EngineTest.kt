@@ -200,4 +200,20 @@ class EngineTest {
         val heights = (0..8).map { k -> val x = 40 + k * 60; (170..230).count { y -> Color.alpha(px[y * w + x]) > 128 } }
         assertTrue(heights.toString(), heights.toSet().size > 2)
     }
+
+    @Test fun generatedBrushShapes() {
+        fun coverage(s: BrushSettings): Int {
+            val tip = io.github.nielstron.brushkin.engine.TipCache.get(64f, s, false)
+            val b = java.nio.ByteBuffer.allocate(tip.rowBytes * tip.height); tip.copyPixelsToBuffer(b)
+            return b.array().count { (it.toInt() and 0xFF) > 128 }
+        }
+        val circle = coverage(BrushSettings(hardness = 1f))
+        val square = coverage(BrushSettings(hardness = 1f, genShape = 1))
+        val diamond = coverage(BrushSettings(hardness = 1f, genShape = 2))
+        val star = coverage(BrushSettings(hardness = 1f, spikes = 5, aspect = 0.3f))
+        // Areas relative to the circle: square 4/π, diamond 2/π, a thin 5-point star much less.
+        assertTrue("$square $circle", abs(square / circle.toFloat() - 4 / Math.PI.toFloat()) < 0.08f)
+        assertTrue("$diamond $circle", abs(diamond / circle.toFloat() - 2 / Math.PI.toFloat()) < 0.08f)
+        assertTrue("$star $circle", star < circle * 0.75f && star > circle * 0.3f + 1)
+    }
 }
