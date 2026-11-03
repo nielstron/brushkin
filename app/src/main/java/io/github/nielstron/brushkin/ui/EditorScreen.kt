@@ -238,6 +238,8 @@ private fun ConfirmBar(label: String, onCancel: () -> Unit, onApply: () -> Unit)
 private fun ContextChips(vm: EditorViewModel, hasSelection: Boolean, holder: CanvasHolder? = null) {
     Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
         val t = vm.tool
+        val quickMask = vm.engine.info.collectAsState().value.quickMask
+        if (quickMask) Chip("Quick mask", true) { vm.engine.quickMaskToggle() }
         when {
             t == Tool.CLONE || t == Tool.HEAL -> {
                 Chip(if (vm.cloneSource == null) "Set source" else "New source", vm.settingSource, ToolIcons.target) { vm.settingSource = !vm.settingSource }
@@ -270,6 +272,7 @@ private fun ContextChips(vm: EditorViewModel, hasSelection: Boolean, holder: Can
                     Chip("Fixed 1:1", vm.fixedRatio) { vm.fixedRatio = !vm.fixedRatio }
                 }
                 if (t == Tool.OBJECT_SELECT) Chip("Whole foreground", false) { vm.objectSelect(-1f, -1f) }
+                if (!quickMask) Chip("Quick mask", false) { vm.engine.quickMaskToggle() }
             }
             t == Tool.BUCKET || t == Tool.GRADIENT -> {
                 Chip("Pick", vm.pickMode, ToolIcons.picker) { vm.pickMode = !vm.pickMode }

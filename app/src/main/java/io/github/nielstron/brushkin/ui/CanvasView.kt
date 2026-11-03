@@ -151,11 +151,41 @@ class CanvasView(context: Context, private val vm: EditorViewModel) : View(conte
 
         canvas.restore()
 
+        drawQuickMask(canvas, s)
         // Selection outline in screen space so it stays equally visible at any zoom.
         s.selection?.let { sel -> drawAnts(canvas, sel) }
 
         drawOverlays(canvas)
         drawLoupe(canvas, s)
+    }
+
+    // ------------------------------------------------------------------ quick mask
+
+    /** Gray mask tile → red tint, half opaque where unselected (like GIMP's quick mask). */
+    private val quickMaskPaint = Paint().apply {
+        colorFilter = android.graphics.ColorMatrixColorFilter(floatArrayOf(
+            0f, 0f, 0f, 0f, 255f,
+            0f, 0f, 0f, 0f, 0f,
+            0f, 0f, 0f, 0f, 0f,
+            -0.5f, 0f, 0f, 0f, 127.5f,
+        ))
+    }
+    private val quickMaskFill = Paint()
+
+    private fun drawQuickMask(canvas: Canvas, s: io.github.nielstron.brushkin.engine.Stack) {
+        val qm = s.quickMask ?: return
+        canvas.save()
+        canvas.concat(viewMatrix)
+        canvas.clipRect(0f, 0f, s.width.toFloat(), s.height.toFloat())
+        quickMaskFill.color = Color.argb(127 - Color.red(qm.fill) / 2, 255, 0, 0)
+        val t = io.github.nielstron.brushkin.engine.TILE.toFloat()
+        for (i in qm.tiles.indices) {
+            val x = qm.tileX(i).toFloat(); val y = qm.tileY(i).toFloat()
+            val tile = qm.tiles[i]
+            if (tile == null) canvas.drawRect(x, y, x + t, y + t, quickMaskFill)
+            else canvas.drawBitmap(tile, x, y, quickMaskPaint)
+        }
+        canvas.restore()
     }
 
     // ------------------------------------------------------------------ loupe
@@ -566,7 +596,14 @@ class CanvasView(context: Context, private val vm: EditorViewModel) : View(conte
 
     private fun shapePath(a: PointF, b: PointF): Path {
         val r = shapeRect(a, b)
-        return Path().apply { if (vm.tool == Tool.ELLIPSE_SELECT) addOval(r, Path.Direction.CW) else addRect(r, Path.Direction.CW) }
+        val rad = minOf(vm.cornerRadius, r.width() / 2, r.height() / 2)
+        return Path().apply {
+            when {
+                vm.tool == Tool.ELLIPSE_SELECT -> addOval(r, Path.Direction.CW)
+                vm.tool == Tool.RECT_SELECT && rad > 0.5f -> addRoundRect(r, rad, rad, Path.Direction.CW)
+                else -> addRect(r, Path.Direction.CW)
+            }
+        }
     }
 
     private fun constrain(r: RectF) {

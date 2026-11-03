@@ -130,6 +130,8 @@ class EditorViewModel(app: Application) : AndroidViewModel(app) {
     var eraseToggle by mutableStateOf(false)
     var fromCenter by mutableStateOf(false)
     var fixedRatio by mutableStateOf(false)
+    /** Rounded corners for the rectangle select tool (px). */
+    var cornerRadius by mutableStateOf(0f)
     var keepRatio by mutableStateOf(true)
     /** Handle Transform: (source point in the lifted bitmap, current doc point). */
     val handles = ArrayList<Pair<android.graphics.PointF, android.graphics.PointF>>()

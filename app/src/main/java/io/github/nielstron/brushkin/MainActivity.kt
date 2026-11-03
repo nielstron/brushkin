@@ -78,6 +78,7 @@ class MainActivity : ComponentActivity(), FileActions {
             }
             return true
         }
+        if (keyCode == android.view.KeyEvent.KEYCODE_Q && event.isShiftPressed) { e.quickMaskToggle(); return true }
         if ((keyCode == android.view.KeyEvent.KEYCODE_DEL || keyCode == android.view.KeyEvent.KEYCODE_FORWARD_DEL) && sel) {
             e.clearSelection(); return true
         }

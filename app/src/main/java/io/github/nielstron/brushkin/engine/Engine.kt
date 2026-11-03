@@ -46,6 +46,7 @@ data class DocInfo(
     val redoNames: List<String> = emptyList(),
     val hasSelection: Boolean = false,
     val floating: Boolean = false,
+    val quickMask: Boolean = false,
     val name: String = "Untitled",
     /** Bumped on every document change; used to decide when to autosave. */
     val version: Long = 0,
@@ -159,6 +160,7 @@ class Engine {
             undoNames = history.undoNames, redoNames = history.redoNames,
             hasSelection = s.selection != null,
             floating = floating != null,
+            quickMask = s.quickMask != null,
             name = docName,
             version = version,
         )
@@ -265,6 +267,13 @@ class Engine {
         if ((tool == PaintTool.CLONE || tool == PaintTool.HEAL) && cloneOffset == null) {
             onMessage?.invoke("Set a source first: tap “Set source”, then tap the spot to copy from"); return@post
         }
+        s.quickMask?.let { qm ->
+            // Quick mask: paint white to select, black (or the eraser) to deselect.
+            val t = if (tool == PaintTool.ERASER) PaintTool.BRUSH else tool
+            stroke = StrokeOp(qm, t, settings, if (tool == PaintTool.ERASER) MASK_BLACK else maskGray(color), false, null, cloneOffset)
+            strokeTarget = qm; strokeBefore = s; strokeTool = tool
+            return@post
+        }
         val target = layer.drawable
         val onMask = target !== layer.pixels
         // On a mask, colors become gray and the eraser paints black (hides).
@@ -306,13 +315,14 @@ class Engine {
     private fun paintRegion(name: String, region: Rect?, opacity: Float, mode: LayerMode, eraser: Boolean = false, draw: (Canvas) -> Unit) {
         val s = stack
         val layer = s.active ?: return
-        if (layer.isGroup) { onMessage?.invoke("Layer groups can't be painted on. Pick a layer."); return }
-        if (layer.lockPixels) { onMessage?.invoke("The active layer's pixels are locked"); return }
+        val qm = s.quickMask
+        if (qm == null && layer.isGroup) { onMessage?.invoke("Layer groups can't be painted on. Pick a layer."); return }
+        if (qm == null && layer.lockPixels) { onMessage?.invoke("The active layer's pixels are locked"); return }
         val sel = s.selection
         val r = Rect(0, 0, s.width, s.height)
         if (region != null && !r.intersect(region)) return
         if (sel != null && !r.intersect(sel.bounds)) return
-        val target = layer.drawable
+        val target = qm ?: layer.drawable
         val onMask = target !== layer.pixels
         if (layer.text != null && !onMask) stack = dropText(stack)
         val session = TileEditSession(target)
@@ -436,6 +446,38 @@ class Engine {
         Canvas(full).drawBitmap(small, null, Rect(0, 0, s.width, s.height), Paint().apply { isFilterBitmap = true })
         stack = s.copy(selection = Selection.combineMask(s.selection, full, mode))
         record(name, s)
+    }
+
+    /** Toggle quick mask: the selection becomes a paintable channel (shown as a red overlay) and back. */
+    fun quickMaskToggle() = post {
+        val s = stack
+        val qm = s.quickMask
+        if (qm == null) {
+            val sel = s.selection
+            val m = if (sel == null) TiledBitmap(s.width, s.height, MASK_BLACK)
+            else sel.bytes().let { b -> TiledBitmap.fromPixels(IntArray(b.size) { val v = b[it].toInt() and 0xFF; (0xFF shl 24) or (v * 0x010101) }, s.width, s.height, MASK_BLACK) }
+            stack = s.copy(quickMask = m, selection = null)
+            onMessage?.invoke("Quick mask: paint white to select, black to deselect")
+        } else {
+            val px = qm.toPixels()
+            stack = s.copy(quickMask = null, selection = Selection.fromBytes(ByteArray(px.size) { (px[it] and 0xFF).toByte() }, s.width, s.height))
+        }
+        record("Quick Mask", s)
+    }
+
+    /** Select a band of [radius] px around the selection edge (Select ▸ Border). */
+    fun selectBorder(radius: Int) = post {
+        val s = stack
+        val sel = s.selection ?: return@post
+        busy("Border") {
+            val b = Selection.blurBytes(sel.bytes(), s.width, s.height, radius * 2)
+            // Grown minus shrunk: inside the blur's transition zone.
+            for (i in b.indices) {
+                val v = b[i].toInt() and 0xFF
+                b[i] = (if (v in 9..246) 255 else 0).toByte()
+            }
+            stack = s.copy(selection = Selection.fromBytes(b, s.width, s.height)); record("Border", s)
+        }
     }
 
     fun selectAll() = post { val s = stack; stack = s.copy(selection = Selection.all(s.width, s.height)); record("Select All", s) }
