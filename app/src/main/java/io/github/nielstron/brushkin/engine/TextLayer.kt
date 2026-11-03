@@ -27,6 +27,8 @@ data class TextSpec(
     /** Text on a path: Bézier anchors as (x, y, inX, inY, outX, outY)*, in doc coordinates. */
     val path: FloatArray? = null,
     val pathClosed: Boolean = false,
+    /** Fixed text box width (px): lines wrap inside it. Null = the box grows with the text. */
+    val boxWidth: Float? = null,
 ) {
     val typeface: Typeface get() = Typeface.create(family, (if (bold) Typeface.BOLD else 0) or (if (italic) Typeface.ITALIC else 0))
 
@@ -38,6 +40,23 @@ data class TextSpec(
 
     /** The text rendered unpositioned (for placing as a floating layer). */
     fun renderBox(): Bitmap {
+        val bw = boxWidth
+        if (bw != null) {
+            // Fixed box: wrap lines like GIMP's fixed text boxes.
+            val tp = android.text.TextPaint(paint())
+            val pad = size * 0.15f
+            val inner = (bw - pad * 2).toInt().coerceAtLeast(1)
+            val layout = android.text.StaticLayout.Builder.obtain(text, 0, text.length, tp, inner).setIncludePad(false).build()
+            val bmp = Bitmap.createBitmap(bw.toInt().coerceAtLeast(1), (layout.height + pad * 2).toInt().coerceAtLeast(1), Bitmap.Config.ARGB_8888)
+            val c = Canvas(bmp)
+            c.translate(pad, pad)
+            if (outline) {
+                val op = android.text.TextPaint(outlinePaint(tp))
+                android.text.StaticLayout.Builder.obtain(text, 0, text.length, op, inner).setIncludePad(false).build().draw(c)
+            }
+            layout.draw(c)
+            return bmp
+        }
         val p = paint()
         val lines = text.split('\n')
         val fm = p.fontMetrics
@@ -89,6 +108,7 @@ data class TextSpec(
         put("text", text); put("size", size.toDouble()); put("family", family); put("bold", bold); put("italic", italic)
         put("color", color); put("outline", outline); put("matrix", JSONArray(matrix.map { it.toDouble() }))
         path?.let { put("path", JSONArray(it.map { v -> v.toDouble() })) }; put("pathClosed", pathClosed)
+        boxWidth?.let { put("boxWidth", it.toDouble()) }
     }.toString()
 
     override fun equals(other: Any?) = other is TextSpec && toJson() == other.toJson()
@@ -102,6 +122,7 @@ data class TextSpec(
                 o.getString("text"), o.getDouble("size").toFloat(), o.optString("family", "sans-serif"), o.optBoolean("bold"), o.optBoolean("italic"),
                 o.optInt("color", 0xFF000000.toInt()), o.optBoolean("outline"), floats(o.getJSONArray("matrix")),
                 o.optJSONArray("path")?.let { floats(it) }, o.optBoolean("pathClosed"),
+                if (o.has("boxWidth")) o.getDouble("boxWidth").toFloat() else null,
             )
         }.getOrNull()
     }
