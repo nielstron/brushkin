@@ -820,7 +820,11 @@ class CanvasView(context: Context, private val vm: EditorViewModel) : View(conte
             }
             Mode.PICK -> pick(e.x, e.y)
             Mode.FOCUS -> { vm.dofFocus = PointF(d.x, d.y); invalidate() }
-            Mode.CROP -> vm.cropRect = RectF(min(downDoc.x, d.x), min(downDoc.y, d.y), max(downDoc.x, d.x), max(downDoc.y, d.y)).also { constrain(it) }
+            Mode.CROP -> {
+                var w = d.x - downDoc.x; var h = d.y - downDoc.y
+                vm.aspect?.let { r -> val m = max(abs(w), abs(h) * r); w = Math.copySign(m, w); h = Math.copySign(m / r, h) }
+                vm.cropRect = RectF(min(downDoc.x, downDoc.x + w), min(downDoc.y, downDoc.y + h), max(downDoc.x, downDoc.x + w), max(downDoc.y, downDoc.y + h)).also { if (vm.aspect == null) constrain(it) }
+            }
             Mode.SHAPE -> when {
                 lasso != null -> lasso!!.lineTo(d.x, d.y)
                 vm.strokeTool.paint != null && vm.lineMode -> {
@@ -840,7 +844,7 @@ class CanvasView(context: Context, private val vm: EditorViewModel) : View(conte
 
     private fun shapeRect(a: PointF, b: PointF): RectF {
         var w = b.x - a.x; var h = b.y - a.y
-        if (vm.fixedRatio) { val m = max(abs(w), abs(h)); w = Math.copySign(m, w); h = Math.copySign(m, h) }
+        vm.aspect?.let { r -> val m = max(abs(w), abs(h) * r); w = Math.copySign(m, w); h = Math.copySign(m / r, h) }
         return if (vm.fromCenter) RectF(a.x - abs(w), a.y - abs(h), a.x + abs(w), a.y + abs(h))
         else RectF(min(a.x, a.x + w), min(a.y, a.y + h), max(a.x, a.x + w), max(a.y, a.y + h))
     }
