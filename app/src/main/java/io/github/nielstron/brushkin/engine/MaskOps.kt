@@ -40,6 +40,15 @@ object MaskOps {
         }
     }
 
+    /** DST_IN with [mask] at (left, top), leaving everything outside the mask's rect untouched. */
+    fun multiply(canvas: Canvas, mask: Bitmap, left: Float, top: Float) {
+        val p = Paint().apply {
+            shader = BitmapShader(mask, Shader.TileMode.CLAMP, Shader.TileMode.CLAMP).apply { setLocalMatrix(Matrix().apply { setTranslate(left, top) }) }
+            xfermode = PorterDuffXfermode(PorterDuff.Mode.DST_IN)
+        }
+        canvas.drawRect(left, top, left + mask.width, top + mask.height, p)
+    }
+
     fun apply(canvas: Canvas, mask: Bitmap, left: Float, top: Float, mode: PorterDuff.Mode = PorterDuff.Mode.DST_IN) =
         apply(canvas, mask, RectF(left, top, left + mask.width, top + mask.height), mode)
 }

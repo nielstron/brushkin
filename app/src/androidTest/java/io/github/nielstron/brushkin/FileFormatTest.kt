@@ -46,9 +46,8 @@ class FileFormatTest {
         assertTrue(stack.all.first { it.name == "My group" }.isGroup)
         val ref = BitmapFactory.decodeStream(assets.open("$name-flat.png"))
         val ours = Compositor.flatten(stack, Color.WHITE)
-        // GIMP 2.10+ blends its default modes in linear light; Brushkin (like GIMP's legacy modes
-        // and Photoshop) blends perceptually. Only the multiply layer's area is affected.
-        val d = maxDiff(ours, ref, android.graphics.Rect(48, 38, 252, 192))
+        // Brushkin composites in linear light like GIMP 2.10+, so the whole image must match.
+        val d = maxDiff(ours, ref)
         val probe = listOf(20 to 20, 100 to 100, 175 to 100, 300 to 200, 175 to 180).joinToString { (x, y) -> "($x,$y) ours=%08X gimp=%08X".format(ours.getPixel(x, y), ref.getPixel(x, y)) }
         assertTrue("$name differs from GIMP by $d: $probe", d <= 6)
 
