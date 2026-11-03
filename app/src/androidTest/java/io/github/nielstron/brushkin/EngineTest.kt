@@ -153,4 +153,30 @@ class EngineTest {
         assertEquals(-1, m[10 * w + 10].toInt())
         assertEquals(0, m[10 * w + 400].toInt())
     }
+
+    @Test fun scissorsFollowEdges() {
+        // A dark square on white: the live wire between two points on its top edge hugs the edge
+        // even though the straight line would cut across white.
+        val px = IntArray(w * h) { i -> val x = i % w; val y = i / w; if (x in 100..400 && y in 100..300) Color.BLACK else Color.WHITE }
+        val p = io.github.nielstron.brushkin.engine.Scissors.liveWire(px, w, h, 100, 120, 130, 100)
+        // Every point stays within 2px of the square's boundary.
+        var k = 0
+        while (k < p.size) {
+            val x = p[k]; val y = p[k + 1]
+            val dEdge = minOf(abs(x - 100f), abs(y - 100f))
+            assertTrue("($x,$y) off edge", dEdge <= 2.5f)
+            k += 2
+        }
+    }
+
+    @Test fun foregroundSelectFindsObject() {
+        // Red disc on a blue background; a sloppy square outline around it.
+        val px = IntArray(w * h) { i -> val x = i % w; val y = i / w; if ((x - 300) * (x - 300) + (y - 200) * (y - 200) < 80 * 80) Color.RED else Color.BLUE }
+        val rough = ByteArray(w * h) { i -> val x = i % w; val y = i / w; if (x in 200..400 && y in 100..300) -1 else 0 }
+        val m = io.github.nielstron.brushkin.engine.ForegroundSelect.extract(px, w, h, rough, 40)
+        assertEquals(-1, m[200 * w + 300].toInt())        // center
+        assertEquals(-1, m[200 * w + 375].toInt())        // just inside the disc edge
+        assertEquals(0, m[110 * w + 210].toInt())         // corner of the outline: background
+        assertEquals(0, m[200 * w + 390].toInt())         // just outside the disc
+    }
 }
