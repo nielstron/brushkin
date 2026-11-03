@@ -24,6 +24,13 @@ class TiledBitmap(val width: Int, val height: Int, /** Color of a missing tile: 
     val rows = (height + TILE - 1) / TILE
     val tiles: Array<Bitmap?> = arrayOfNulls(cols * rows)
 
+    /**
+     * Per-tile write counters, bumped *after* a write completes. The GPU renderer re-uploads a
+     * tile when its counter changes (bitmap generation IDs change too early to be reliable).
+     */
+    val versions = java.util.concurrent.atomic.AtomicIntegerArray(cols * rows)
+    fun touched(i: Int) { versions.incrementAndGet(i) }
+
     fun index(cx: Int, cy: Int) = cy * cols + cx
     fun tileX(i: Int) = (i % cols) * TILE
     fun tileY(i: Int) = (i / cols) * TILE
@@ -71,6 +78,29 @@ class TiledBitmap(val width: Int, val height: Int, /** Color of a missing tile: 
 
     fun isEmpty() = tiles.all { it == null }
 
+    /** Tight bounds of non-transparent pixels, or null if the layer is empty. */
+    fun contentBounds(): Rect? {
+        var l = width; var t = height; var r = -1; var b = -1
+        val px = IntArray(TILE * TILE)
+        for (i in tiles.indices) {
+            val tile = tiles[i] ?: continue
+            val tx = tileX(i); val ty = tileY(i)
+            // Skip tiles that can't extend the current bounds.
+            if (r >= 0 && tx >= l && ty >= t && tx + TILE <= r && ty + TILE <= b) continue
+            tile.getPixels(px, 0, TILE, 0, 0, TILE, TILE)
+            val w = minOf(TILE, width - tx); val h = minOf(TILE, height - ty)
+            for (y in 0 until h) {
+                val row = y * TILE
+                for (x in 0 until w) if ((px[row + x] ushr 24) != 0) {
+                    val ax = tx + x; val ay = ty + y
+                    if (ax < l) l = ax; if (ax + 1 > r) r = ax + 1
+                    if (ay < t) t = ay; if (ay + 1 > b) b = ay + 1
+                }
+            }
+        }
+        return if (r < 0) null else Rect(l, t, r, b)
+    }
+
     /** Pixels of rows [y0, y1) as one array (missing tiles read as [fill]). */
     fun readRows(y0: Int, y1: Int): IntArray {
         val n = y1 - y0
@@ -95,6 +125,7 @@ class TiledBitmap(val width: Int, val height: Int, /** Color of a missing tile: 
             val r0 = maxOf(y0, ty); val r1 = minOf(y0 + n, ty + TILE)
             val w = minOf(TILE, width - tx)
             t.setPixels(px, (r0 - y0) * width + tx, width, 0, r0 - ty, w, r1 - r0)
+            touched(i)
         }
     }
 

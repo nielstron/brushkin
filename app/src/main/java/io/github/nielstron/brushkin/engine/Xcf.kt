@@ -13,7 +13,7 @@ import kotlin.math.roundToInt
  * GIMP's native XCF format.
  *
  * Reading supports versions 0–22: RGB / grayscale / indexed images, 8/16/32-bit integer and
- * 16/32-bit float precision (linear data is converted to sRGB), uncompressed, RLE and zlib tiles,
+ * 16/32/64-bit float precision (linear data is converted to sRGB), uncompressed, RLE and zlib tiles,
  * layer offsets, opacity, visibility, modes, lock alpha, layer masks and layer groups (as
  * Brushkin groups). Writing produces version 11 files (8-bit sRGB, zlib) with masks and groups.
  */
@@ -62,7 +62,7 @@ object Xcf {
             100 -> Precision(1, true, 0); 150 -> Precision(1, false, 0); 200 -> Precision(2, true, 0); 250 -> Precision(2, false, 0)
             300 -> Precision(4, true, 0); 350 -> Precision(4, false, 0); 500 -> Precision(2, true, 1); 550 -> Precision(2, false, 1)
             600 -> Precision(4, true, 2); 650 -> Precision(4, false, 2)
-            700 -> error("64-bit double precision images aren't supported"); 750 -> error("64-bit double precision images aren't supported")
+            700 -> Precision(8, true, 3); 750 -> Precision(8, false, 3)
             else -> error("Unknown precision $p")
         }
     }
@@ -96,7 +96,8 @@ object Xcf {
             }
             b.position(start + len)
         }
-        if (compression == 3) error("Fractal-compressed XCF files aren't supported")
+        // Value 3 ("fractal") is reserved in the format but no GIMP version ever wrote it.
+        if (compression == 3) error("This XCF file uses an unknown compression")
         val layerPtrs = ArrayList<Long>()
         while (true) { val p = r.ptr(); if (p == 0L) break; layerPtrs.add(p) }
 
@@ -241,6 +242,7 @@ object Xcf {
                         bpc == 1 -> (data[o].toInt() and 0xFF) / 255f
                         prec.kind == 1 -> halfToFloat(((data[o].toInt() and 0xFF) shl 8) or (data[o + 1].toInt() and 0xFF))
                         bpc == 2 -> (((data[o].toInt() and 0xFF) shl 8) or (data[o + 1].toInt() and 0xFF)) / 65535f
+                        prec.kind == 3 -> java.lang.Double.longBitsToDouble((0 until 8).fold(0L) { acc, k -> (acc shl 8) or (data[o + k].toLong() and 0xFF) }).toFloat()
                         prec.kind == 2 -> java.lang.Float.intBitsToFloat(((data[o].toInt() and 0xFF) shl 24) or ((data[o + 1].toInt() and 0xFF) shl 16) or ((data[o + 2].toInt() and 0xFF) shl 8) or (data[o + 3].toInt() and 0xFF))
                         else -> ((((data[o].toLong() and 0xFF) shl 24) or ((data[o + 1].toLong() and 0xFF) shl 16) or ((data[o + 2].toLong() and 0xFF) shl 8) or (data[o + 3].toLong() and 0xFF)) / 4294967295.0).toFloat()
                     }

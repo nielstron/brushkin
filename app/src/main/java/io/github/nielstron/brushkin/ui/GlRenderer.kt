@@ -260,8 +260,9 @@ class GlRenderer(private val engine: Engine) : GLSurfaceView.Renderer {
         // Upload only tiles whose bitmap or contents changed since last frame.
         for (i in t.tiles.indices) {
             val b = t.tiles[i]
-            val gen = b?.generationId ?: 0
-            if (a.bmps[i] === b && a.gens[i] == gen && (b != null || a.gens[i] == 0)) continue
+            // Read the version before the pixels: a write finishing mid-upload bumps it again.
+            val gen = t.versions.get(i)
+            if (a.bmps[i] === b && a.gens[i] == gen) continue
             GLUtils.texSubImage2D(GL_TEXTURE_2D, 0, t.tileX(i), t.tileY(i), b ?: if (t.fill != 0) whiteTile else clearTile)
             a.bmps[i] = b; a.gens[i] = gen
         }

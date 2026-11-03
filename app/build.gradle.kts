@@ -50,6 +50,8 @@ dependencies {
     debugImplementation("androidx.compose.ui:ui-tooling")
     implementation("androidx.compose.ui:ui-tooling-preview")
 
+    // Full system emoji picker (categories, skin tones, recents).
+    implementation("androidx.emoji2:emoji2-emojipicker:1.5.0")
     // Object selection: ML Kit subject segmentation, model provided by Google Play services.
     implementation("com.google.android.gms:play-services-mlkit-subject-segmentation:16.0.0-beta1")
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-play-services:1.10.2")
