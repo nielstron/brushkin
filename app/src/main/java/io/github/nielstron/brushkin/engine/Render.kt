@@ -74,7 +74,7 @@ object Compositor {
         preview: Preview?, floating: Floating?, pixelSize: Float, tp: Paint, hiddenId: Long = -1,
     ) {
         val w = stack.width.toFloat(); val h = stack.height.toFloat()
-        for (layer in list) {
+        for (layer in Stack.expandPassThrough(list)) {
             if (!layer.visible || layer.id == hiddenId) continue
             val pv = preview?.takeIf { it.layerId == layer.id }
             val mask = if (!layer.masked) null else if (pv != null && pv.mask) pv.tiles else layer.mask
@@ -167,7 +167,7 @@ object Compositor {
     private fun drawLinear(canvas: Canvas, stack: Stack, list: List<Layer>, visible: RectF) {
         val w = stack.width.toFloat(); val h = stack.height.toFloat()
         val tp = Paint().apply { isFilterBitmap = false }
-        for (layer in list) {
+        for (layer in Stack.expandPassThrough(list)) {
             if (!layer.visible) continue
             val mask = if (layer.masked) layer.mask else null
             val needsLayer = layer.isGroup || layer.opacity < 1f || layer.mode.blend != null || mask != null

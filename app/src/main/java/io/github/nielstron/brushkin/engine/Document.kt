@@ -21,10 +21,12 @@ enum class LayerMode(val label: String, val blend: BlendMode?, val oraName: Stri
     SATURATION("HSL Saturation", BlendMode.SATURATION, "svg:saturation"),
     COLOR("HSL Color", BlendMode.COLOR, "svg:color"),
     LUMINOSITY("Luminosity", BlendMode.LUMINOSITY, "svg:luminosity"),
-    ADDITION("Addition", BlendMode.PLUS, "svg:plus");
+    ADDITION("Addition", BlendMode.PLUS, "svg:plus"),
+    /** Groups only: children blend straight into what's below the group (GIMP's Pass through). */
+    PASS_THROUGH("Pass through", null, "svg:src-over");
 
     companion object {
-        fun fromOra(s: String?) = entries.firstOrNull { it.oraName == s } ?: NORMAL
+        fun fromOra(s: String?) = entries.firstOrNull { it.oraName == s && it != PASS_THROUGH } ?: NORMAL
     }
 }
 
@@ -55,6 +57,14 @@ data class Layer(
     val expanded: Boolean = true,
     /** Non-null for an editable text layer; its pixels are rendered from this. */
     val text: TextSpec? = null,
+    /** Content beyond the canvas edges (see [LayerExtent]). */
+    val outside: Map<Long, android.graphics.Bitmap> = emptyMap(),
+    /** A layer boundary smaller than the canvas: painting is clipped to it. Null = canvas-sized. */
+    val bounds: android.graphics.Rect? = null,
+    /** GIMP's "lock position": move/transform tools leave the layer alone. */
+    val lockPosition: Boolean = false,
+    /** Linked layers move and transform together. */
+    val linked: Boolean = false,
 ) {
     val isGroup get() = children != null
     /** What paint tools and filters currently modify. */
@@ -117,6 +127,16 @@ data class Stack(
         if (parent == null) copy(layers = list) else replace(find(parent.id)!!.copy(children = list))
 
     companion object {
+        /**
+         * Pass-through groups don't composite in isolation: their (visible) children take their
+         * place in the parent, with the group's opacity applied to each.
+         */
+        fun expandPassThrough(list: List<Layer>): List<Layer> = if (list.none { it.mode == LayerMode.PASS_THROUGH && it.isGroup }) list else list.flatMap { l ->
+            if (l.isGroup && l.mode == LayerMode.PASS_THROUGH) {
+                if (!l.visible) emptyList() else expandPassThrough(l.children!!).map { it.copy(opacity = it.opacity * l.opacity) }
+            } else listOf(l)
+        }
+
         fun flatten(list: List<Layer>): List<Layer> = list.flatMap { listOf(it) + flatten(it.children ?: emptyList()) }
         fun mapTree(list: List<Layer>, f: (Layer) -> Layer): List<Layer> =
             list.map { l -> f(l).let { m -> if (m.children != null) m.copy(children = mapTree(m.children, f)) else m } }

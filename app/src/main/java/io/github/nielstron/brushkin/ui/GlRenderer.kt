@@ -124,7 +124,7 @@ class GlRenderer(private val engine: Engine) : GLSurfaceView.Renderer {
         clear(acc)
         val f = engine.floating
         val pv = engine.preview
-        for (l in list) {
+        for (l in Stack.expandPassThrough(list)) {
             if (!l.visible || l.id == engine.hiddenLayerId) continue
             val p = pv?.takeIf { it.layerId == l.id }
             val mask = if (!l.masked) null else if (p != null && p.mask) p.tiles else l.mask

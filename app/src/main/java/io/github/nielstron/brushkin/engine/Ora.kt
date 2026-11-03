@@ -41,14 +41,19 @@ object Ora {
                     val common = "name=\"${esc(l.name)}\" opacity=\"${l.opacity}\" visibility=\"${if (l.visible) "visible" else "hidden"}\" composite-op=\"${l.mode.oraName}\"" +
                         (if (l.id == stack.activeId) " selected=\"true\"" else "")
                     if (l.isGroup) {
-                        xml.append("<stack $common isolation=\"isolate\">\n")
+                        xml.append("<stack $common isolation=\"${if (l.mode == LayerMode.PASS_THROUGH) "auto" else "isolate"}\">\n")
                         emit(l.children!!)
                         xml.append("</stack>\n")
                         continue
                     }
                     val i = n++
                     val src = "data/layer$i.png"
-                    xml.append("<layer $common src=\"$src\" x=\"0\" y=\"0\"")
+                    // Layers keep their own extent: a smaller boundary, or content past the canvas.
+                    val reg = LayerExtent.saveRegion(l, stack.width, stack.height)
+                    val whole = reg == android.graphics.Rect(0, 0, stack.width, stack.height) && l.outside.isEmpty()
+                    xml.append("<layer $common src=\"$src\" x=\"${reg.left}\" y=\"${reg.top}\"")
+                    if (l.lockPosition) xml.append(" brushkin-lock-position=\"true\"")
+                    if (l.linked) xml.append(" brushkin-linked=\"true\"")
                     if (l.lockAlpha) xml.append(" alpha-preserve=\"true\"")
                     l.text?.let { xml.append(" brushkin-text=\"${esc(it.toJson())}\"") }
                     // Masks aren't part of the OpenRaster spec; other apps ignore these attributes.
@@ -56,7 +61,7 @@ object Ora {
                     if (m != null) xml.append(" brushkin-mask=\"data/layer${i}_mask.png\" brushkin-mask-enabled=\"${l.maskEnabled}\"")
                     xml.append("/>\n")
                     zip.putNextEntry(ZipEntry(src))
-                    l.pixels.toBitmap().compress(Bitmap.CompressFormat.PNG, 100, zip)
+                    (if (whole) l.pixels.toBitmap() else LayerExtent.render(l, reg)).compress(Bitmap.CompressFormat.PNG, 100, zip)
                     zip.closeEntry()
                     if (m != null) {
                         zip.putNextEntry(ZipEntry("data/layer${i}_mask.png"))
@@ -115,14 +120,17 @@ object Ora {
                         val x = a["x"]?.toFloatOrNull()?.toInt() ?: 0
                         val y = a["y"]?.toFloatOrNull()?.toInt() ?: 0
                         val (vis, op, mode) = common(a)
+                        val (px, outside, bounds) = LayerExtent.fromPlaced(bmp, x, y, w, h)
                         val l = Layer(
                             name = a["name"] ?: "Layer",
-                            pixels = TiledBitmap.fromBitmap(bmp, w, h, x, y),
+                            pixels = px, outside = outside, bounds = bounds,
+                            lockPosition = a["brushkin-lock-position"] == "true", linked = a["brushkin-linked"] == "true",
                             visible = vis, opacity = op, mode = mode,
                             lockAlpha = a["alpha-preserve"] == "true",
                             mask = a["brushkin-mask"]?.let { files[it] }
                                 ?.let { BitmapFactory.decodeByteArray(it, 0, it.size, opts) }
-                                ?.let { TiledBitmap.fromBitmap(it, w, h, x, y, fill = MASK_WHITE) },
+                                // Masks are stored canvas-sized at the origin, whatever the layer's extent.
+                                ?.let { TiledBitmap.fromBitmap(it, w, h, 0, 0, fill = MASK_WHITE) },
                             maskEnabled = a["brushkin-mask-enabled"] != "false",
                             text = a["brushkin-text"]?.let { TextSpec.fromJson(it) },
                         )
@@ -136,7 +144,7 @@ object Ora {
                     if (open.isEmpty()) root = ArrayList(children)
                     else {
                         val (vis, op, mode) = common(a)
-                        val g = Layer(name = a["name"] ?: "Layer Group", pixels = TiledBitmap(w, h), visible = vis, opacity = op, mode = mode, children = children)
+                        val g = Layer(name = a["name"] ?: "Layer Group", pixels = TiledBitmap(w, h), visible = vis, opacity = op, mode = if (a["isolation"] == "auto") LayerMode.PASS_THROUGH else mode, children = children)
                         if (a["selected"] == "true") activeId = g.id
                         open.last().second.add(g)
                     }

@@ -507,6 +507,11 @@ class CanvasView(context: Context, private val vm: EditorViewModel) : View(conte
         engine.floating?.let { drawFloatingHandles(canvas, it) }
         drawPath(canvas)
         if (vm.tool == Tool.SCISSORS) drawScissors(canvas)
+        // The active layer's boundary when it's smaller than the image (GIMP's yellow dashes).
+        engine.info.value.let { i -> i.layers.firstOrNull { it.id == i.activeId }?.bounds }?.let { b ->
+            val p = Path().apply { addRect(RectF(b), Path.Direction.CW); transform(viewMatrix) }
+            canvas.drawPath(p, layerBoundary)
+        }
         vm.symmetry()?.takeIf { vm.strokeTool.paint != null }?.let { drawSymmetry(canvas, it) }
         if (vm.tool == Tool.PERSPECTIVE_CLONE) drawPlane(canvas)
         if (vm.tool == Tool.CLONE || vm.tool == Tool.HEAL || vm.tool == Tool.PERSPECTIVE_CLONE) {
@@ -975,6 +980,7 @@ class CanvasView(context: Context, private val vm: EditorViewModel) : View(conte
         }
     }
 
+    private val layerBoundary = Paint().apply { style = Paint.Style.STROKE; strokeWidth = 1.5f * resources.displayMetrics.density; color = 0xFFFFD54F.toInt(); pathEffect = android.graphics.DashPathEffect(floatArrayOf(8f, 6f), 0f) }
     private val accentFill = Paint().apply { color = 0xFFFFB547.toInt(); isAntiAlias = true }
 
     private fun onLongPress() {

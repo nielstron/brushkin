@@ -24,6 +24,7 @@ object Xcf {
     private const val PROP_MODE = 7
     private const val PROP_VISIBLE = 8
     private const val PROP_LINKED = 9
+    private const val PROP_LOCK_POSITION = 32
     private const val PROP_LOCK_ALPHA = 10
     private const val PROP_APPLY_MASK = 11
     private const val PROP_ACTIVE_LAYER = 2
@@ -71,6 +72,7 @@ object Xcf {
     private class XLayer(
         val name: String, val w: Int, val h: Int, val type: Int, var opacity: Float = 1f, var visible: Boolean = true,
         var mode: Int = 0, var ox: Int = 0, var oy: Int = 0, var lockAlpha: Boolean = false, var applyMask: Boolean = true,
+        var linked: Boolean = false, var lockPosition: Boolean = false,
         var group: Boolean = false, var path: IntArray? = null, var hierarchy: Long = 0, var mask: Long = 0, var active: Boolean = false,
     )
 
@@ -120,6 +122,8 @@ object Xcf {
                     PROP_MODE -> l.mode = r.u32()
                     PROP_OFFSETS -> { l.ox = r.u32(); l.oy = r.u32() }
                     PROP_LOCK_ALPHA -> l.lockAlpha = r.u32() != 0
+                    PROP_LINKED -> l.linked = r.u32() != 0
+                    PROP_LOCK_POSITION -> l.lockPosition = r.u32() != 0
                     PROP_APPLY_MASK -> l.applyMask = r.u32() != 0
                     PROP_GROUP_ITEM -> l.group = true
                     PROP_ITEM_PATH -> l.path = IntArray(len / 4) { r.u32() }
@@ -131,11 +135,11 @@ object Xcf {
             l
         }
 
-        fun pixels(l: XLayer): TiledBitmap {
+        fun pixels(l: XLayer): Triple<TiledBitmap, Map<Long, Bitmap>, android.graphics.Rect?> {
             val px = readHierarchy(r, l.hierarchy, compression, prec, l.type, colormap, base)
             val t = Bitmap.createBitmap(l.w.coerceAtLeast(1), l.h.coerceAtLeast(1), Bitmap.Config.ARGB_8888)
             t.setPixels(px, 0, l.w, 0, 0, l.w, l.h)
-            return TiledBitmap.fromBitmap(t, w, h, l.ox, l.oy)
+            return LayerExtent.fromPlaced(t, l.ox, l.oy, w, h)
         }
 
         fun mask(l: XLayer): TiledBitmap? {
@@ -152,13 +156,18 @@ object Xcf {
 
         // Build the tree. XCF lists items top-to-bottom; ITEM_PATH gives each item's position
         // (indices at each depth). Without paths everything is top level.
-        fun toLayer(l: XLayer, children: List<Layer>?): Layer = Layer(
-            name = l.name.ifEmpty { "Layer" },
-            pixels = if (l.group) TiledBitmap(w, h) else pixels(l),
-            visible = l.visible, opacity = l.opacity.coerceIn(0f, 1f), mode = modeOf(l.mode), lockAlpha = l.lockAlpha,
-            mask = mask(l), maskEnabled = l.applyMask,
-            children = children,
-        )
+        fun toLayer(l: XLayer, children: List<Layer>?): Layer {
+            val (px, outside, bounds) = if (l.group) Triple(TiledBitmap(w, h), emptyMap(), null) else pixels(l)
+            val mode = modeOf(l.mode).let { if (it == LayerMode.PASS_THROUGH && !l.group) LayerMode.NORMAL else it }
+            return Layer(
+                name = l.name.ifEmpty { "Layer" },
+                pixels = px, outside = outside, bounds = bounds,
+                visible = l.visible, opacity = l.opacity.coerceIn(0f, 1f), mode = mode, lockAlpha = l.lockAlpha,
+                lockPosition = l.lockPosition, linked = l.linked,
+                mask = mask(l), maskEnabled = l.applyMask,
+                children = children,
+            )
+        }
 
         fun build(prefix: List<Int>): List<Layer> {
             val out = ArrayList<Layer>()
@@ -197,6 +206,7 @@ object Xcf {
         18, 44 -> LayerMode.HARD_LIGHT
         19, 45 -> LayerMode.SOFT_LIGHT
         52 -> LayerMode.EXCLUSION
+        61 -> LayerMode.PASS_THROUGH
         else -> LayerMode.NORMAL
     }
 
@@ -205,7 +215,7 @@ object Xcf {
         LayerMode.DIFFERENCE -> 32; LayerMode.ADDITION -> 33; LayerMode.DARKEN -> 35; LayerMode.LIGHTEN -> 36
         LayerMode.HUE -> 37; LayerMode.SATURATION -> 38; LayerMode.COLOR -> 39; LayerMode.LUMINOSITY -> 56
         LayerMode.DODGE -> 42; LayerMode.BURN -> 43; LayerMode.HARD_LIGHT -> 44; LayerMode.SOFT_LIGHT -> 45
-        LayerMode.EXCLUSION -> 52
+        LayerMode.EXCLUSION -> 52; LayerMode.PASS_THROUGH -> 61
     }
 
     /** Decode a hierarchy to ARGB ints. [type]: 0 RGB, 1 RGBA, 2 GRAY, 3 GRAYA, 4 INDEXED, 5 INDEXEDA. */
@@ -359,15 +369,19 @@ object Xcf {
     }
 
     private fun writeLayer(out: Bytes, l: Layer, path: List<Int>, s: Stack, active: Boolean) {
-        out.u32(s.width); out.u32(s.height); out.u32(1); out.xstr(l.name)
+        // Layers keep their own size and offset (smaller than the canvas, or reaching past it).
+        val reg = if (l.children != null) android.graphics.Rect(0, 0, s.width, s.height) else LayerExtent.saveRegion(l, s.width, s.height)
+        val lw = reg.width(); val lh = reg.height()
+        out.u32(lw); out.u32(lh); out.u32(1); out.xstr(l.name)
         if (active) out.prop(PROP_ACTIVE_LAYER) {}
         out.prop(PROP_OPACITY) { u32((l.opacity * 255).roundToInt()) }
         out.prop(PROP_FLOAT_OPACITY) { f32(l.opacity) }
         out.prop(PROP_VISIBLE) { u32(if (l.visible) 1 else 0) }
-        out.prop(PROP_LINKED) { u32(0) }
+        out.prop(PROP_LINKED) { u32(if (l.linked) 1 else 0) }
+        if (l.lockPosition) out.prop(PROP_LOCK_POSITION) { u32(1) }
         out.prop(PROP_LOCK_ALPHA) { u32(if (l.lockAlpha) 1 else 0) }
         out.prop(PROP_APPLY_MASK) { u32(if (l.maskEnabled) 1 else 0) }
-        out.prop(PROP_OFFSETS) { u32(0); u32(0) }
+        out.prop(PROP_OFFSETS) { u32(reg.left); u32(reg.top) }
         out.prop(PROP_MODE) { u32(xcfMode(l.mode)) }
         if (l.children != null) out.prop(PROP_GROUP_ITEM) {}
         if (path.size > 1) out.prop(PROP_ITEM_PATH) { path.forEach { u32(it) } }
@@ -375,16 +389,24 @@ object Xcf {
         val hierPos = out.size; out.u64(0)
         val maskPos = out.size; out.u64(0)
         out.patch64(hierPos, out.size.toLong())
-        writeHierarchy(out, if (l.children != null) IntArray(s.width * s.height) else l.pixels.toPixels(), s.width, s.height, 4)
+        val px = if (l.children != null) IntArray(lw * lh) else if (reg == android.graphics.Rect(0, 0, s.width, s.height) && l.outside.isEmpty()) l.pixels.toPixels()
+            else LayerExtent.render(l, reg).let { b -> IntArray(lw * lh).also { b.getPixels(it, 0, lw, 0, 0, lw, lh) } }
+        writeHierarchy(out, px, lw, lh, 4)
         val m = l.mask ?: return
         out.patch64(maskPos, out.size.toLong())
-        out.u32(s.width); out.u32(s.height); out.xstr("${l.name} mask")
+        out.u32(lw); out.u32(lh); out.xstr("${l.name} mask")
         out.prop(PROP_OPACITY) { u32(255) }
         out.prop(PROP_VISIBLE) { u32(0) }
         out.u32(PROP_END); out.u32(0)
         val mh = out.size; out.u64(0)
         out.patch64(mh, out.size.toLong())
-        writeHierarchy(out, m.toPixels(), s.width, s.height, 1)
+        // The mask matches the layer's extent; beyond the canvas it's white (fully shown).
+        val mpx = if (lw == s.width && lh == s.height && reg.left == 0 && reg.top == 0) m.toPixels() else {
+            val mb = Bitmap.createBitmap(lw, lh, Bitmap.Config.ARGB_8888); mb.eraseColor(MASK_WHITE)
+            val c = android.graphics.Canvas(mb); c.translate(-reg.left.toFloat(), -reg.top.toFloat()); Compositor.drawTiles(c, m, null, null)
+            IntArray(lw * lh).also { mb.getPixels(it, 0, lw, 0, 0, lw, lh) }
+        }
+        writeHierarchy(out, mpx, lw, lh, 1)
     }
 
     private fun writeHierarchy(out: Bytes, px: IntArray, w: Int, h: Int, bpp: Int) {

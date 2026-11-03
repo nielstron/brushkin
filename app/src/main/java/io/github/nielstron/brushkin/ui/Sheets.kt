@@ -250,7 +250,7 @@ fun Toggle(label: String, value: Boolean, onChange: (Boolean) -> Unit) {
 }
 
 @Composable
-fun ModePicker(mode: LayerMode, onPick: (LayerMode) -> Unit) {
+fun ModePicker(mode: LayerMode, group: Boolean = false, onPick: (LayerMode) -> Unit) {
     var open by remember { mutableStateOf(false) }
     Box {
         Row(Modifier.fillMaxWidth().height(48.dp).clickable { open = true }, verticalAlignment = Alignment.CenterVertically) {
@@ -258,7 +258,7 @@ fun ModePicker(mode: LayerMode, onPick: (LayerMode) -> Unit) {
             Text(mode.label, color = Ui.text, fontSize = 14.sp)
         }
         DropdownMenu(open, { open = false }, Modifier.heightIn(max = 400.dp)) {
-            for (m in LayerMode.entries) DropdownMenuItem(text = { Text(m.label) }, onClick = { onPick(m); open = false })
+            for (m in LayerMode.entries.filter { group || it != LayerMode.PASS_THROUGH }) DropdownMenuItem(text = { Text(m.label) }, onClick = { onPick(m); open = false })
         }
     }
 }
@@ -465,6 +465,7 @@ private fun LayerRow(vm: EditorViewModel, l: LayerInfo, active: Boolean, info: D
                 Text(l.name, color = if (l.visible) Ui.text else Ui.muted, fontSize = 14.sp, fontWeight = if (active) FontWeight.SemiBold else FontWeight.Normal, maxLines = 1)
                 val sub = buildList {
                     if (l.isGroup) add("Group"); if (l.isText) add("Text"); add(l.mode.label); if (l.opacity < 1f) add("${(l.opacity * 100).roundToInt()}%"); if (l.lockAlpha) add("alpha locked")
+                    if (l.lockPosition) add("position locked"); if (l.linked) add("linked"); if (l.bounds != null) add("${l.bounds.width()}×${l.bounds.height()}")
                     if (active && l.editMask) add("editing mask") else if (l.hasMask && !l.maskEnabled) add("mask off")
                 }.joinToString(" · ")
                 Text(sub, color = Ui.muted, fontSize = 12.sp, maxLines = 1)
@@ -472,12 +473,14 @@ private fun LayerRow(vm: EditorViewModel, l: LayerInfo, active: Boolean, info: D
             if (l.lockAlpha) Icon(Icons.Rounded.Lock, null, tint = Ui.muted, modifier = Modifier.size(16.dp).padding(end = 4.dp))
         }
         if (active) Column(Modifier.padding(horizontal = 12.dp).padding(bottom = 10.dp)) {
-            ModePicker(l.mode) { m -> e.setLayer(l.id, "Layer Mode") { it.copy(mode = m) } }
+            ModePicker(l.mode, group = l.isGroup) { m -> e.setLayer(l.id, "Layer Mode") { it.copy(mode = m) } }
             LabeledSlider("Opacity", opacity, 0f..1f, "${(opacity * 100).roundToInt()}", {
                 opacity = it; e.setLayer(l.id, "Layer Opacity", commit = false) { x -> x.copy(opacity = it) }
             }, onDone = { e.setLayer(l.id, "Layer Opacity", commit = true) { x -> x.copy(opacity = opacity) } })
             Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                 Chip("Lock alpha", l.lockAlpha, if (l.lockAlpha) Icons.Rounded.Lock else Icons.Rounded.LockOpen) { e.setLayer(l.id, "Lock Alpha") { it.copy(lockAlpha = !it.lockAlpha) } }
+                Chip("Lock position", l.lockPosition) { e.setLayer(l.id, "Lock Position") { it.copy(lockPosition = !it.lockPosition) } }
+                Chip("Link", l.linked) { e.setLayer(l.id, "Link Layer") { it.copy(linked = !it.linked) } }
                 IconButton(onClick = { e.moveLayer(l.id, +1) }) { Icon(Icons.Rounded.ArrowUpward, "Raise layer", tint = Ui.text) }
                 IconButton(onClick = { e.moveLayer(l.id, -1) }) { Icon(Icons.Rounded.ArrowDownward, "Lower layer", tint = Ui.text) }
                 IconButton(onClick = { renaming = true }) { Icon(Icons.Rounded.Edit, "Rename layer", tint = Ui.text) }
