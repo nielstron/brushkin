@@ -16,12 +16,12 @@ jobs:
           java-version: 21
       - uses: gradle/actions/setup-gradle@v6
       - name: Unit tests
-        run: ./gradlew :app:testFossDebugUnitTest :app:testFullDebugUnitTest
-      - name: Build both flavors
-        run: ./gradlew :app:assembleFossRelease :app:assembleFullRelease
-      - name: The FOSS build contains no Google Play services / ML Kit code
+        run: ./gradlew :app:testDebugUnitTest
+      - name: Build
+        run: ./gradlew :app:assembleRelease
+      - name: No Google Play services / ML Kit / Firebase code in the APK
         run: |
-          unzip -o -q app/build/outputs/apk/foss/release/*.apk 'classes*.dex' -d foss-dex
-          if strings foss-dex/*.dex | grep -qiE 'com/google/android/gms|com/google/mlkit|firebase'; then
-            echo "Non-free code found in the FOSS APK"; exit 1
+          unzip -o -q app/build/outputs/apk/release/*.apk 'classes*.dex' -d dex
+          if strings dex/*.dex | grep -qiE 'com/google/android/gms|com/google/android/play|com/google/mlkit|firebase'; then
+            echo "Non-free code found in the APK"; exit 1
           fi

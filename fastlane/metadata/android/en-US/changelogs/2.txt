@@ -1,0 +1,2 @@
+Object selection without Google Play services: tap an object (or use "Select foreground") and the open MobileSAM model selects it. The model (19 MB) is downloaded once on first use and kept in the app's cache.
+Emoji search, a color picker pipette, a pattern editor, and Google Play services are no longer used at all.

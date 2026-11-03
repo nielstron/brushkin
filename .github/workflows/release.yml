@@ -13,7 +13,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
-      # Keep JDK 21: F-Droid rebuilds the -foss APK with JDK 21 and only publishes our signed
+      # Keep JDK 21: F-Droid rebuilds the APK with JDK 21 and only publishes our signed
       # APK if its build is byte-identical (reproducible builds); another JDK changes classes.dex.
       - uses: actions/setup-java@v6
         with:
@@ -34,15 +34,14 @@ jobs:
           BRUSHKIN_KEYSTORE_PASSWORD: ${{ secrets.BRUSHKIN_KEYSTORE_PASSWORD }}
           BRUSHKIN_KEY_ALIAS: ${{ secrets.BRUSHKIN_KEY_ALIAS }}
           BRUSHKIN_KEY_PASSWORD: ${{ secrets.BRUSHKIN_KEY_PASSWORD }}
-        run: ./gradlew :app:assembleFullRelease :app:assembleFossRelease
+        run: ./gradlew :app:assembleRelease
       - name: Publish the GitHub release
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           v=${GITHUB_REF_NAME#v}
           code=$(sed -n 's/.*versionCode = \([0-9]*\).*/\1/p' app/build.gradle.kts)
-          cp app/build/outputs/apk/full/release/app-full-release.apk "brushkin-$v.apk"
-          cp app/build/outputs/apk/foss/release/app-foss-release.apk "brushkin-$v-foss.apk"
+          cp app/build/outputs/apk/release/app-release.apk "brushkin-$v.apk"
           notes=fastlane/metadata/android/en-US/changelogs/$code.txt
-          gh release create "$GITHUB_REF_NAME" "brushkin-$v.apk" "brushkin-$v-foss.apk" \
+          gh release create "$GITHUB_REF_NAME" "brushkin-$v.apk" \
             --title "Brushkin $v" --notes-file "$( [ -f "$notes" ] && echo "$notes" || echo /dev/null )"

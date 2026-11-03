@@ -28,16 +28,16 @@ Everything is composited in linear light on the GPU, like GIMP, and heavy work n
 
 ## Installation
 
-Install the APK from the [Releases page](https://github.com/nielstron/brushkin/releases). `brushkin-<version>.apk` includes object selection via Google Play services; `brushkin-<version>-foss.apk` contains only free software (this is also the version submitted to F-Droid).
+Install the APK from the [Releases page](https://github.com/nielstron/brushkin/releases) (F-Droid submission pending). Object selection downloads the open [MobileSAM](https://github.com/ChaoningZhang/MobileSAM) model (19 MB) on first use, after asking, and stores it in the app's cache.
 
 ## Build
 
 ```sh
-./gradlew :app:testFullDebugUnitTest :app:assembleFullDebug
+./gradlew :app:testDebugUnitTest :app:assembleDebug
 ```
 
-Use the `foss` flavor (`assembleFossDebug`) for a build without Google Play services. Device tests: `./gradlew :app:connectedFullDebugAndroidTest`.
+Device tests: `./gradlew :app:connectedDebugAndroidTest`. `tools/export_mobilesam.py` reproduces the model files.
 
 ## License
 
-GPL-3.0-or-later. Emoji names and keywords come from Unicode CLDR (Unicode License v3).
+GPL-3.0-or-later. Emoji names and keywords come from Unicode CLDR (Unicode License v3); the MobileSAM model is Apache-2.0.

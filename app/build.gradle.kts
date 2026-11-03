@@ -12,9 +12,11 @@ android {
         applicationId = "de.nielstron.brushkin"
         minSdk = 29
         targetSdk = 36
-        versionCode = 1
-        versionName = "0.1.0"
+        versionCode = 2
+        versionName = "0.2.0"
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
+        // LiteRT (object selection) ships native code: ARM only (phones), which keeps the APK small.
+        ndk { abiFilters += listOf("arm64-v8a", "armeabi-v7a") }
     }
 
     // Release signing comes from the environment (GitHub Actions secrets). Without it the
@@ -38,13 +40,8 @@ android {
         }
     }
 
-    // "full": with object selection (ML Kit via Google Play services, which isn't free software).
-    // "foss": only free dependencies; this is what F-Droid builds.
-    flavorDimensions += "distribution"
-    productFlavors {
-        create("full") { dimension = "distribution" }
-        create("foss") { dimension = "distribution" }
-    }
+    // Store native libraries (LiteRT) compressed so the APK stays small.
+    packaging { jniLibs { useLegacyPackaging = true } }
 
     // F-Droid and reproducible builds: no Google dependency-metadata blob in the APK.
     dependenciesInfo {
@@ -78,9 +75,9 @@ dependencies {
 
     // Full system emoji picker (categories, skin tones, recents).
     implementation("androidx.emoji2:emoji2-emojipicker:1.5.0")
-    // Object selection: ML Kit subject segmentation, model provided by Google Play services.
-    "fullImplementation"("com.google.android.gms:play-services-mlkit-subject-segmentation:16.0.0-beta1")
-    "fullImplementation"("org.jetbrains.kotlinx:kotlinx-coroutines-play-services:1.10.2")
+    // Object selection: MobileSAM (downloaded on first use) on LiteRT (Apache-2.0). LiteRT 1.x:
+    // 2.x pulls in Google Play's proprietary ai-delivery library.
+    implementation("com.google.ai.edge.litert:litert:1.4.2")
 
     testImplementation("junit:junit:4.13.2")
     androidTestImplementation("androidx.test:runner:1.6.2")
