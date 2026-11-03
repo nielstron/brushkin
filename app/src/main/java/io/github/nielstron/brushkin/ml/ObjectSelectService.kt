@@ -41,6 +41,7 @@ class ObjectSelectService : Service() {
         scope.launch {
             val res = Bundle()
             try {
+                segmenter.ensureModule(this@ObjectSelectService)
                 val bmp = BitmapFactory.decodeFile(input.path)
                 val mask = segmenter.select(bmp, x, y)
                 if (mask != null) {
