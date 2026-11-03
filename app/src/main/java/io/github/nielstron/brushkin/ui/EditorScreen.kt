@@ -141,14 +141,8 @@ fun EditorScreen(vm: EditorViewModel, files: FileActions) {
             IconButton(onClick = { vm.dialog = "export" }) { Icon(Icons.Rounded.IosShare, "Export", tint = Ui.text) }
         }
 
-        // With a selection, whatever the tool: × to deselect, top left (mirroring cut/copy on the right).
-        if (info.hasSelection && !info.floating) Box(
-            Modifier.align(Alignment.TopStart).statusBarsPadding().padding(top = if (vm.showRulers) 94.dp else 72.dp, start = 12.dp)
-                .clip(RoundedCornerShape(14.dp)).background(Ui.panel.copy(alpha = 0.94f)).border(1.dp, Ui.border, RoundedCornerShape(14.dp)),
-        ) { IconButton(onClick = { vm.engine.selectNone(); vm.objectNew(); holder.view?.invalidate() }) { Icon(Icons.Rounded.Close, "Deselect", tint = Ui.text) } }
-
-        // Clipboard actions, shown when there's something to act on. Deleting pixels stays on the
-        // Del key and Edit → Clear.
+        // Clipboard actions, shown when there's something to act on, and × to deselect (any tool).
+        // Deleting pixels stays on the Del key and Edit → Clear.
         if ((info.hasSelection || vm.clipHasImage) && !info.floating) {
             Row(
                 Modifier.align(Alignment.TopEnd).statusBarsPadding().padding(top = if (vm.showRulers) 94.dp else 72.dp, end = 12.dp)
@@ -160,6 +154,10 @@ fun EditorScreen(vm: EditorViewModel, files: FileActions) {
                     IconButton(onClick = { vm.copy() }) { Icon(Icons.Rounded.ContentCopy, "Copy", tint = Ui.text) }
                 }
                 if (vm.clipHasImage) IconButton(onClick = { vm.paste() }) { Icon(Icons.Rounded.ContentPaste, "Paste as new layer", tint = Ui.text) }
+                if (info.hasSelection) {
+                    Box(Modifier.align(Alignment.CenterVertically).size(1.dp, 24.dp).background(Ui.border))
+                    IconButton(onClick = { vm.engine.selectNone(); vm.objectNew(); holder.view?.invalidate() }) { Icon(Icons.Rounded.Close, "Deselect", tint = Ui.text) }
+                }
             }
         }
 
