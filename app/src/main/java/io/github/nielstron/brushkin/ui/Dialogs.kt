@@ -78,6 +78,7 @@ interface FileActions {
     fun saveXcf()
     fun export(format: String)
     fun share()
+    fun importResources()
 }
 
 data class TextStyleSpec(val typeface: Typeface, val preview: TextStyle, val outline: Boolean = false)
@@ -134,6 +135,8 @@ fun Dialogs(vm: EditorViewModel, info: DocInfo, files: FileActions) {
             val r = v.toIntOrNull()?.coerceIn(1, 500) ?: return@TextPrompt
             e.selectModify(d.replaceFirstChar { it.uppercase() } + " Selection", r, when (d) { "grow" -> 1; "shrink" -> -1; else -> 0 })
         }
+        d == "import" -> { close(); files.importResources() }
+        d == "gradient-edit" -> GradientEditor(vm, close)
         d == "grid" -> TextPrompt("Grid spacing (px)", vm.gridSize.toInt().toString(), KeyboardType.Number, close) { v ->
             close(); v.toIntOrNull()?.coerceIn(2, 4096)?.let { vm.gridSize = it.toFloat(); vm.showGrid = true }
         }
@@ -392,4 +395,61 @@ private fun CurvesEditor(curves: Map<Channel, Curve>, onChange: (Map<Channel, Cu
         Text("Tap to add a point · drag a point off the graph to remove it", color = Ui.muted, fontSize = 12.sp, modifier = Modifier.padding(top = 8.dp))
         TextButton(onClick = { onChange(curves - channel) }) { Text("Reset ${channel.label}", color = Ui.accent) }
     }
+}
+
+/**
+ * Gradient editor: a list of color stops (tap a stop's swatch to give it the current color).
+ * Saved as a GIMP .ggr with linear segments between the stops.
+ */
+@Composable
+fun GradientEditor(vm: EditorViewModel, close: () -> Unit) {
+    val g0 = vm.gradient
+    val stops = androidx.compose.runtime.remember {
+        // Start from the current gradient: each segment's left color, plus the final right color.
+        val list = g0.segments.map { it.left to io.github.nielstron.brushkin.engine.GradientRes.resolve(it.c0, it.k0, vm.fg, vm.bg) }.toMutableList()
+        g0.segments.lastOrNull()?.let { list.add(it.right to io.github.nielstron.brushkin.engine.GradientRes.resolve(it.c1, it.k1, vm.fg, vm.bg)) }
+        androidx.compose.runtime.mutableStateListOf(*list.toTypedArray())
+    }
+    var name by androidx.compose.runtime.remember { androidx.compose.runtime.mutableStateOf(if (g0.file != null) g0.name else "Custom ${vm.resources.gradients.value.size - 1}") }
+    fun sorted() = stops.sortedBy { it.first }
+    AlertDialog(
+        onDismissRequest = close,
+        containerColor = Ui.panel,
+        title = { Text("Edit gradient", color = Ui.text) },
+        text = {
+            Column(Modifier.verticalScroll(androidx.compose.foundation.rememberScrollState())) {
+                val s = sorted()
+                Canvas(Modifier.fillMaxWidth().height(28.dp)) {
+                    val n = 48
+                    for (k in 0 until n) drawRect(
+                        Color(sampleStops(s.map { it.second }.toIntArray(), s.map { it.first }.toFloatArray(), (k + 0.5f) / n)),
+                        topLeft = androidx.compose.ui.geometry.Offset(size.width * k / n, 0f), size = androidx.compose.ui.geometry.Size(size.width / n + 1, size.height),
+                    )
+                }
+                androidx.compose.material3.OutlinedTextField(name, { name = it }, singleLine = true, label = { Text("Name") }, modifier = Modifier.fillMaxWidth().padding(vertical = 8.dp))
+                for ((i, st) in stops.withIndex()) Row(verticalAlignment = Alignment.CenterVertically) {
+                    Box(Modifier.size(32.dp).clip(RoundedCornerShape(8.dp)).background(Color(st.second)).border(1.dp, Ui.border, RoundedCornerShape(8.dp)).clickable { stops[i] = st.first to vm.fg })
+                    androidx.compose.material3.Slider(st.first, { stops[i] = it to st.second }, Modifier.weight(1f).padding(horizontal = 8.dp))
+                    if (stops.size > 2) Text("✕", color = Ui.muted, modifier = Modifier.clickable { stops.removeAt(i) }.padding(8.dp))
+                }
+                Text("Tap a swatch to set it to the current color.", color = Ui.muted, fontSize = 12.sp)
+                Row(Modifier.padding(top = 8.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Chip("Add stop", false) { stops.add(0.5f to vm.fg) }
+                    Chip("Transparent stop", false) { stops.add(0.5f to (vm.fg and 0x00FFFFFF)) }
+                }
+            }
+        },
+        confirmButton = {
+            TextButton(onClick = {
+                val s = sorted()
+                val segs = s.zipWithNext { a, b -> io.github.nielstron.brushkin.engine.GradientRes.Segment(a.first, (a.first + b.first) / 2, b.first, a.second, b.second) }
+                if (segs.isNotEmpty()) {
+                    val g = io.github.nielstron.brushkin.engine.GradientRes(name.ifBlank { "Custom" }, segs)
+                    vm.gradient = vm.resources.saveGradient(g, g0.takeIf { it.file != null })
+                }
+                close()
+            }) { Text("Save") }
+        },
+        dismissButton = { TextButton(onClick = close) { Text("Cancel") } },
+    )
 }

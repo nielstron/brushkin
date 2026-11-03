@@ -67,6 +67,8 @@ data class BrushSettings(
     val tiltSize: Float = 0f,
     /** The tip follows the stylus' direction. */
     val tiltAngle: Boolean = false,
+    /** An imported/created image brush (by name) instead of the generated tip. */
+    val tipImage: String? = null,
 )
 
 /** [tilt] radians from vertical, [orient] radians (stylus direction), [time] ms. */
@@ -93,17 +95,31 @@ data class Symmetry(val kind: Kind, val cx: Float, val cy: Float, val segments: 
 
 /** Rasterized brush tips are cached by their quantized parameters. */
 object TipCache {
-    private data class Key(val d: Int, val hard: Int, val shape: TipShape, val aspect: Int, val angle: Int, val pencil: Boolean)
+    private data class Key(val d: Int, val hard: Int, val shape: TipShape, val aspect: Int, val angle: Int, val pencil: Boolean, val image: String? = null, val frame: Int = 0)
     private val cache = object : LinkedHashMap<Key, Bitmap>(16, 0.75f, true) {
         override fun removeEldestEntry(eldest: MutableMap.MutableEntry<Key, Bitmap>?) = size > 24
     }
 
-    fun get(diameter: Float, s: BrushSettings, pencil: Boolean): Bitmap {
+    fun get(diameter: Float, s: BrushSettings, pencil: Boolean, frame: Int = 0): Bitmap {
         // Generate at least 32px so small dabs stay smooth when scaled down.
         val d = max(if (pencil) 1 else 32, min(1024, diameter.roundToInt()))
-        val key = Key(d, (s.hardness * 20).roundToInt(), s.shape, (s.aspect * 20).roundToInt(), s.angle.roundToInt(), pencil)
-        return synchronized(cache) { cache.getOrPut(key) { render(d, s, pencil) } }
+        val img = s.tipImage?.let { Library.store?.brushByName?.get(it) }
+        val key = Key(d, (s.hardness * 20).roundToInt(), s.shape, (s.aspect * 20).roundToInt(), s.angle.roundToInt(), pencil, img?.name, frame)
+        return synchronized(cache) { cache.getOrPut(key) { if (img != null) renderImage(d, img.frames[frame % img.frames.size], s) else render(d, s, pencil) } }
     }
+
+    /** Image brushes: the mask scaled to fit a d×d square (aspect kept), rotated by the angle. */
+    private fun renderImage(d: Int, mask: Bitmap, s: BrushSettings): Bitmap {
+        val out = Bitmap.createBitmap(d, d, Bitmap.Config.ALPHA_8)
+        val k = d / max(mask.width, mask.height).toFloat()
+        val c = Canvas(out)
+        c.rotate(s.angle, d / 2f, d / 2f)
+        c.translate((d - mask.width * k) / 2f, (d - mask.height * k) / 2f); c.scale(k, k)
+        c.drawBitmap(mask, 0f, 0f, Paint().apply { isFilterBitmap = true })
+        return out
+    }
+
+    fun frames(s: BrushSettings) = s.tipImage?.let { Library.store?.brushByName?.get(it)?.frames?.size } ?: 1
 
     private fun render(d: Int, s: BrushSettings, pencil: Boolean): Bitmap {
         val bmp = Bitmap.createBitmap(d, d, Bitmap.Config.ALPHA_8)
@@ -163,6 +179,8 @@ class StrokeOp(
     /** Clone/Heal: source position minus destination position. */
     private val cloneOffset: android.graphics.Point? = null,
     private val symmetry: Symmetry? = null,
+    /** Perspective clone: maps a destination point to its source (a homography). */
+    private val perspective: android.graphics.Matrix? = null,
 ) {
     val session = TileEditSession(target)
     private val buf = HashMap<Int, Bitmap>()
@@ -172,7 +190,9 @@ class StrokeOp(
         PaintTool.PENCIL -> s.copy(hardness = 1f)
         else -> s
     }
-    private val tip = TipCache.get(s.size, effective, pencil)
+    private var tip = TipCache.get(s.size, effective, pencil)
+    /** Animated brushes (.gih) pick a random cell per dab. */
+    private val frameCount = TipCache.frames(s)
     private val tipRect = Rect(0, 0, tip.width, tip.height)
     private val dabPaint = Paint().apply { isFilterBitmap = !pencil; isAntiAlias = !pencil }
     private val canvas = Canvas()
@@ -292,6 +312,7 @@ class StrokeOp(
         changed.union(ir)
         if (tool == PaintTool.SMUDGE) { smudgeDab(dst, ir, alpha); return }
         dabPaint.alpha = (alpha * 255).roundToInt().coerceIn(1, 255)
+        if (frameCount > 1) tip = TipCache.get(s.size, effective, pencil, rnd.nextInt(frameCount))
         target.forTilesIn(ir) { i ->
             val b = buf.getOrPut(i) { Bitmap.createBitmap(TILE, TILE, Bitmap.Config.ALPHA_8) }
             canvas.setBitmap(b)
@@ -341,7 +362,7 @@ class StrokeOp(
     private fun effectTile(i: Int): Bitmap = effectTiles.getOrPut(i) {
         val tx = target.tileX(i); val ty = target.tileY(i)
         val px: IntArray = when (tool) {
-            PaintTool.CLONE -> { val o = cloneOffset!!; region(tx + o.x, ty + o.y, TILE, TILE) }
+            PaintTool.CLONE -> perspective?.let { perspectiveTile(it, tx, ty) } ?: run { val o = cloneOffset!!; region(tx + o.x, ty + o.y, TILE, TILE) }
             PaintTool.HEAL -> {
                 // Frequency-separation heal: source detail on top of destination's low frequencies.
                 val o = cloneOffset!!
@@ -376,6 +397,19 @@ class StrokeOp(
             else -> IntArray(TILE * TILE)
         }
         Bitmap.createBitmap(TILE, TILE, Bitmap.Config.ARGB_8888).apply { setPixels(px, 0, TILE, 0, 0, TILE, TILE) }
+    }
+
+    /** The pre-stroke layer, for perspective clone's arbitrary source lookups. */
+    private val original by lazy { Bitmap.createBitmap(region(0, 0, target.width, target.height), target.width, target.height, Bitmap.Config.ARGB_8888) }
+
+    private fun perspectiveTile(m: android.graphics.Matrix, tx: Int, ty: Int): IntArray {
+        // Destination p shows source m(p): draw the original through m⁻¹.
+        val inv = android.graphics.Matrix(); if (!m.invert(inv)) return IntArray(TILE * TILE)
+        val out = Bitmap.createBitmap(TILE, TILE, Bitmap.Config.ARGB_8888)
+        val c = Canvas(out)
+        c.translate(-tx.toFloat(), -ty.toFloat()); c.concat(inv)
+        c.drawBitmap(original, 0f, 0f, Paint().apply { isFilterBitmap = true })
+        return IntArray(TILE * TILE).also { out.getPixels(it, 0, TILE, 0, 0, TILE, TILE) }
     }
 
     private fun recompositeEffect(i: Int) {

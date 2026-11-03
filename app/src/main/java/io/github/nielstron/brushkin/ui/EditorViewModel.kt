@@ -47,6 +47,9 @@ enum class Tool(val label: String, val group: ToolGroup, val paint: PaintTool? =
     HEAL("Heal", ToolGroup.PAINT, PaintTool.HEAL),
     DODGE_BURN("Dodge / Burn", ToolGroup.PAINT, PaintTool.DODGE),
     BLUR_SHARPEN("Blur / Sharpen", ToolGroup.PAINT, PaintTool.BLUR),
+    INK("Ink", ToolGroup.PAINT, PaintTool.BRUSH),
+    MYPAINT("MyPaint Brush", ToolGroup.PAINT, PaintTool.BRUSH),
+    PERSPECTIVE_CLONE("Persp. Clone", ToolGroup.PAINT, PaintTool.CLONE),
     BUCKET("Bucket Fill", ToolGroup.PAINT),
     GRADIENT("Gradient", ToolGroup.PAINT),
     MOVE("Move", ToolGroup.TRANSFORM),
@@ -100,8 +103,51 @@ class EditorViewModel(app: Application) : AndroidViewModel(app) {
             Tool.HEAL to BrushSettings(size = 60f, hardness = 0.3f, pressureSize = false, pressureOpacity = false),
             Tool.DODGE_BURN to BrushSettings(size = 90f, hardness = 0f, opacity = 0.6f, rate = 0.5f, pressureSize = false),
             Tool.BLUR_SHARPEN to BrushSettings(size = 70f, hardness = 0.2f, rate = 0.5f, pressureSize = false),
+            // GIMP's Ink: a hard elliptical blob that thins with speed and follows the pen.
+            Tool.INK to BrushSettings(size = 10f, hardness = 1f, shape = io.github.nielstron.brushkin.engine.TipShape.FLAT, aspect = 0.55f, angle = 30f, spacing = 0.04f,
+                pressureOpacity = false, smoothing = 0.5f, velocitySize = -0.6f, tiltAngle = true),
+            Tool.MYPAINT to io.github.nielstron.brushkin.engine.GimpFormats.readMyb(io.github.nielstron.brushkin.engine.ResourceStore.BUILTIN_MYPAINT[0].second, "Pencil").settings,
+            Tool.PERSPECTIVE_CLONE to BrushSettings(size = 60f, hardness = 0.5f, pressureSize = false, pressureOpacity = false),
         )
     )
+
+    // Resources (GIMP brushes, gradients, palettes, patterns, MyPaint brushes), shared by all images.
+    val resources = io.github.nielstron.brushkin.engine.ResourceStore(File(app.filesDir, "resources")).also { io.github.nielstron.brushkin.engine.Library.store = it }
+    var gradient by mutableStateOf(io.github.nielstron.brushkin.engine.GradientRes.FG_BG)
+    var gradientReverse by mutableStateOf(false)
+    var palette by mutableStateOf<io.github.nielstron.brushkin.engine.PaletteRes?>(null)
+    var pattern by mutableStateOf<io.github.nielstron.brushkin.engine.PatternRes?>(null)
+    var fillWithPattern by mutableStateOf(false)
+    var myPaintBrush by mutableStateOf("Pencil")
+
+    fun importResource(name: String, bytes: ByteArray) {
+        viewModelScope.launch {
+            val r = withContext(Dispatchers.IO) { runCatching { resources.import(name, bytes) } }
+            messages.tryEmit(r.fold({ "Imported $it “${name.substringBeforeLast('.')}”" }, { it.message ?: "Couldn't import $name" }))
+        }
+    }
+
+    /** GIMP's "Paste as new brush / pattern": the selection (or layer) becomes a resource. */
+    fun selectionToResource(brush: Boolean) {
+        viewModelScope.launch {
+            val (bmp, _) = engine.copyRegion() ?: run { messages.tryEmit("Nothing to use"); return@launch }
+            val name = (if (brush) "Brush " else "Pattern ") + (if (brush) resources.brushes.value.size + 1 else resources.patterns.value.size + 1)
+            withContext(Dispatchers.IO) {
+                if (brush) {
+                    // Dark, opaque pixels paint (like GIMP brushes made from images).
+                    val w = bmp.width; val h = bmp.height
+                    val px = IntArray(w * h); bmp.getPixels(px, 0, w, 0, 0, w, h)
+                    val mask = ByteArray(w * h) { i -> val c = px[i]; val l = (Color.red(c) * 30 + Color.green(c) * 59 + Color.blue(c) * 11) / 100; ((255 - l) * Color.alpha(c) / 255).toByte() }
+                    val b = resources.saveBrush(name, mask, w, h)
+                    withContext(Dispatchers.Main) { settings = settings.copy(tipImage = b.name, spacing = b.spacing) }
+                } else {
+                    val p = resources.savePattern(name, bmp)
+                    withContext(Dispatchers.Main) { pattern = p; fillWithPattern = true }
+                }
+            }
+            messages.tryEmit("Created $name")
+        }
+    }
 
     /** Settings for the current paint tool (Erase chip maps a brush to the eraser). */
     val strokeTool: Tool get() = if (eraseToggle && tool.paint != null && tool.paint?.isEffect != true && tool != Tool.SMUDGE) Tool.ERASER else tool
@@ -118,6 +164,32 @@ class EditorViewModel(app: Application) : AndroidViewModel(app) {
     var settingSource by mutableStateOf(false)
     var cloneSource by mutableStateOf<android.graphics.PointF?>(null)
     var cloneOffset: android.graphics.Point? = null
+
+    // Perspective clone: the plane's corners (doc coordinates, clockwise from top-left), whether
+    // they're being edited, and the source offset measured in plane coordinates.
+    var perspPlane by mutableStateOf<FloatArray?>(null)
+    var perspEditing by mutableStateOf(false)
+    var perspOffset: android.graphics.PointF? = null
+
+    /** Plane → unit square (×1000) homography. */
+    fun planeMatrix(): android.graphics.Matrix? {
+        val p = perspPlane ?: return null
+        val m = android.graphics.Matrix()
+        return if (m.setPolyToPoly(p, 0, floatArrayOf(0f, 0f, 1000f, 0f, 1000f, 1000f, 0f, 1000f), 0, 4)) m else null
+    }
+
+    /** Destination → source map for a perspective-clone stroke starting at [start]. */
+    fun perspectiveMap(start: android.graphics.PointF): android.graphics.Matrix? {
+        if (tool != Tool.PERSPECTIVE_CLONE) return null
+        val h = planeMatrix() ?: return null
+        val src = cloneSource ?: return null
+        val off = perspOffset ?: run {
+            val a = floatArrayOf(src.x, src.y, start.x, start.y); h.mapPoints(a)
+            android.graphics.PointF(a[0] - a[2], a[1] - a[3]).also { perspOffset = it }
+        }
+        val inv = android.graphics.Matrix(); if (!h.invert(inv)) return null
+        return android.graphics.Matrix(h).apply { postTranslate(off.x, off.y); postConcat(inv) }
+    }
 
     var settings: BrushSettings
         get() = brushSettings.value[if (strokeTool.paint != null) strokeTool else lastPaintTool] ?: BrushSettings()
@@ -295,6 +367,7 @@ class EditorViewModel(app: Application) : AndroidViewModel(app) {
 
     init {
         engine.onMessage = { messages.tryEmit(it) }
+        viewModelScope.launch(Dispatchers.IO) { resources.load() }
         // Posted, not immediate: the clipboard property is declared further down.
         viewModelScope.launch(Dispatchers.Main) { clipboardManager.addPrimaryClipChangedListener { refreshClipboard() } }
         engine.newDocument(1600, 2400, Color.WHITE)
@@ -433,7 +506,13 @@ class EditorViewModel(app: Application) : AndroidViewModel(app) {
         if (t != Tool.CROP) cropRect = null
         if (t != Tool.SCISSORS) scissorsClear()
         if (t != Tool.TEXT) finishText()
-        settingSource = (t == Tool.CLONE || t == Tool.HEAL) && cloneSource == null
+        settingSource = (t == Tool.CLONE || t == Tool.HEAL || t == Tool.PERSPECTIVE_CLONE) && cloneSource == null
+        if (t == Tool.PERSPECTIVE_CLONE && perspPlane == null) {
+            // Start with a plane inset from the image corners; the user drags it onto a surface.
+            val i = engine.info.value; val w = i.width.toFloat(); val h = i.height.toFloat()
+            perspPlane = floatArrayOf(w * 0.25f, h * 0.3f, w * 0.75f, h * 0.3f, w * 0.9f, h * 0.7f, w * 0.1f, h * 0.7f)
+            perspEditing = true
+        }
     }
 
     fun pickColor(c: Int) {

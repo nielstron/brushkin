@@ -257,7 +257,7 @@ class Engine {
     private var strokeBefore: Stack? = null
     private var strokeTool: PaintTool = PaintTool.BRUSH
 
-    fun strokeBegin(tool: PaintTool, settings: BrushSettings, color: Int, cloneOffset: android.graphics.Point? = null, symmetry: Symmetry? = null) = post {
+    fun strokeBegin(tool: PaintTool, settings: BrushSettings, color: Int, cloneOffset: android.graphics.Point? = null, symmetry: Symmetry? = null, perspective: Matrix? = null) = post {
         val s = stack
         val layer = s.active ?: return@post
         if (floating != null) return@post
@@ -279,7 +279,7 @@ class Engine {
         // On a mask, colors become gray and the eraser paints black (hides).
         val t = if (onMask && tool == PaintTool.ERASER) PaintTool.BRUSH else tool
         val c = if (onMask) (if (tool == PaintTool.ERASER) MASK_BLACK else maskGray(color)) else color
-        stroke = StrokeOp(target, t, settings, c, layer.lockAlpha && !onMask, s.selection, cloneOffset, symmetry)
+        stroke = StrokeOp(target, t, settings, c, layer.lockAlpha && !onMask, s.selection, cloneOffset, symmetry, perspective)
         strokeTarget = target; strokeBefore = s; strokeTool = tool
         if (layer.text != null && !onMask) stack = dropText(s)
     }
@@ -375,18 +375,21 @@ class Engine {
         bmp to Rect(b)
     }
 
-    fun gradient(x0: Float, y0: Float, x1: Float, y1: Float, c0: Int, c1: Int, shape: GradientShape, opacity: Float, mode: LayerMode) = post {
+    fun gradient(x0: Float, y0: Float, x1: Float, y1: Float, colors: IntArray, positions: FloatArray, shape: GradientShape, opacity: Float, mode: LayerMode) = post {
         val shader = when (shape) {
-            GradientShape.LINEAR -> LinearGradient(x0, y0, x1, y1, c0, c1, Shader.TileMode.CLAMP)
-            GradientShape.RADIAL -> RadialGradient(x0, y0, hypot(x1 - x0, y1 - y0).coerceAtLeast(1f), c0, c1, Shader.TileMode.CLAMP)
+            GradientShape.LINEAR -> LinearGradient(x0, y0, x1, y1, colors, positions, Shader.TileMode.CLAMP)
+            GradientShape.RADIAL -> RadialGradient(x0, y0, hypot(x1 - x0, y1 - y0).coerceAtLeast(1f), colors, positions, Shader.TileMode.CLAMP)
         }
         val p = Paint().apply { this.shader = shader; isDither = true }
         paintRegion("Gradient", null, opacity, mode) { it.drawPaint(p) }
     }
 
-    fun bucketFill(x: Int, y: Int, color: Int, threshold: Int, wholeSelection: Boolean, sampleMerged: Boolean, opacity: Float, mode: LayerMode) = post {
+    fun bucketFill(x: Int, y: Int, color: Int, threshold: Int, wholeSelection: Boolean, sampleMerged: Boolean, opacity: Float, mode: LayerMode, pattern: Bitmap? = null) = post {
         val s = stack
-        if (wholeSelection) { paintRegion("Bucket Fill", null, opacity, mode) { it.drawColor(color) }; return@post }
+        // Pattern fills tile the pattern from the image origin, like GIMP.
+        val pp = pattern?.let { Paint().apply { shader = android.graphics.BitmapShader(it, Shader.TileMode.REPEAT, Shader.TileMode.REPEAT) } }
+        val fill = { c: Canvas -> if (pp != null) c.drawPaint(pp) else c.drawColor(color) }
+        if (wholeSelection) { paintRegion("Bucket Fill", null, opacity, mode) { fill(it) }; return@post }
         busy("Filling") {
             val src = if (sampleMerged) Compositor.flatten(s).let { b -> IntArray(s.width * s.height).also { b.getPixels(it, 0, s.width, 0, 0, s.width, s.height) } }
             else s.active?.drawable?.toPixels() ?: return@busy
@@ -396,7 +399,7 @@ class Engine {
             val bounds = Selection.fromMask(mb)?.bounds ?: return@busy
             val p = Paint().apply { this.color = color }
             paintRegion("Bucket Fill", bounds, opacity, mode) { c ->
-                c.drawColor(color)
+                fill(c)
                 MaskOps.apply(c, mb, 0f, 0f)
             }
             p.reset()

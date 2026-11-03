@@ -36,6 +36,12 @@ class MainActivity : ComponentActivity(), FileActions {
     private val pickOpen = registerForActivityResult(ActivityResultContracts.PickVisualMedia()) { uri -> uri?.let { open(it) } }
     private val pickProject = registerForActivityResult(ActivityResultContracts.OpenDocument()) { uri -> uri?.let { open(it) } }
     private val createProject = registerForActivityResult(ActivityResultContracts.CreateDocument("image/openraster")) { uri -> uri?.let { saveOra(it) } }
+    private val pickResources = registerForActivityResult(ActivityResultContracts.OpenMultipleDocuments()) { uris ->
+        for (u in uris) lifecycleScope.launch {
+            val bytes = withContext(Dispatchers.IO) { runCatching { contentResolver.openInputStream(u)?.use { it.readBytes() } }.getOrNull() } ?: return@launch
+            vm.importResource(displayName(u), bytes)
+        }
+    }
     private val createXcf = registerForActivityResult(ActivityResultContracts.CreateDocument("image/x-xcf")) { uri -> uri?.let { saveXcf(it) } }
 
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -110,6 +116,7 @@ class MainActivity : ComponentActivity(), FileActions {
     override fun pickImageLayerFile() = pickLayerFile.launch(arrayOf("image/*"))
     override fun openImage() = pickOpen.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly))
     override fun openProject() = pickProject.launch(arrayOf("image/openraster", "image/x-xcf", "application/zip", "application/octet-stream", "image/*"))
+    override fun importResources() = pickResources.launch(arrayOf("*/*"))
     override fun saveXcf() = createXcf.launch("${vm.engine.docName.substringBeforeLast('.')}.xcf")
     override fun saveProject() = createProject.launch("${vm.engine.docName.substringBeforeLast('.')}.ora")
 

@@ -323,6 +323,24 @@ class CanvasView(context: Context, private val vm: EditorViewModel) : View(conte
         canvas.restore()
     }
 
+    /** The perspective-clone plane with a 4×4 grid, so its perspective is visible. */
+    private fun drawPlane(canvas: Canvas) {
+        val p = vm.perspPlane ?: return
+        val h = vm.planeMatrix() ?: return
+        val inv = Matrix(); if (!h.invert(inv)) return
+        val path = Path()
+        for (k in 0..4) {
+            val t = k * 250f
+            val a = floatArrayOf(t, 0f, t, 1000f, 0f, t, 1000f, t); inv.mapPoints(a); viewMatrix.mapPoints(a)
+            path.moveTo(a[0], a[1]); path.lineTo(a[2], a[3]); path.moveTo(a[4], a[5]); path.lineTo(a[6], a[7])
+        }
+        canvas.drawPath(path, guideDark); canvas.drawPath(path, if (vm.perspEditing) accent else guide)
+        if (vm.perspEditing) for (k in 0 until 4) {
+            val v = toView(p[k * 2], p[k * 2 + 1])
+            canvas.drawCircle(v.x, v.y, 10 * density, handleFill); canvas.drawCircle(v.x, v.y, 10 * density, accent)
+        }
+    }
+
     // ------------------------------------------------------------------ scissors
 
     private fun drawScissors(canvas: Canvas) {
@@ -490,9 +508,10 @@ class CanvasView(context: Context, private val vm: EditorViewModel) : View(conte
         drawPath(canvas)
         if (vm.tool == Tool.SCISSORS) drawScissors(canvas)
         vm.symmetry()?.takeIf { vm.strokeTool.paint != null }?.let { drawSymmetry(canvas, it) }
-        if (vm.tool == Tool.CLONE || vm.tool == Tool.HEAL) {
+        if (vm.tool == Tool.PERSPECTIVE_CLONE) drawPlane(canvas)
+        if (vm.tool == Tool.CLONE || vm.tool == Tool.HEAL || vm.tool == Tool.PERSPECTIVE_CLONE) {
             val src = vm.cloneSource
-            val o = vm.cloneOffset
+            val o = vm.cloneOffset.takeIf { vm.tool != Tool.PERSPECTIVE_CLONE }
             val c = cursor
             // While painting, the crosshair follows the sampled spot.
             val p = if (o != null && c != null && mode == Mode.STROKE) { val d = toDoc(c.x, c.y); toView(d.x + o.x, d.y + o.y) } else src?.let { toView(it.x, it.y) }
@@ -576,7 +595,7 @@ class CanvasView(context: Context, private val vm: EditorViewModel) : View(conte
     // ------------------------------------------------------------------ input
 
     private enum class Mode { NONE, STROKE, VIEW, SHAPE, PICK, FLOAT_MOVE, FLOAT_SCALE, FLOAT_ROTATE, CROP, IGNORE, PATH_POINT, PATH_HANDLE, PATH_NEW,
-        FLOAT_SHEAR, FLOAT_CORNER, FLOAT_3D, FLOAT_HANDLE, WARP_PUSH, CAGE_DRAG, GUIDE }
+        FLOAT_SHEAR, FLOAT_CORNER, FLOAT_3D, FLOAT_HANDLE, WARP_PUSH, CAGE_DRAG, GUIDE, PLANE_CORNER }
 
     private var mode = Mode.NONE
     private var downTime = 0L
@@ -719,10 +738,20 @@ class CanvasView(context: Context, private val vm: EditorViewModel) : View(conte
         if (tool == Tool.CROP) { mode = Mode.CROP; vm.cropRect = RectF(downDoc.x, downDoc.y, downDoc.x, downDoc.y); return }
         if (vm.pickMode || tool == Tool.PICKER) { mode = Mode.PICK; pick(e.x, e.y); return }
         val st = vm.strokeTool
-        val cloneLike = tool == Tool.CLONE || tool == Tool.HEAL
+        val cloneLike = tool == Tool.CLONE || tool == Tool.HEAL || tool == Tool.PERSPECTIVE_CLONE
+        if (tool == Tool.PERSPECTIVE_CLONE && vm.perspEditing) {
+            // Drag the plane's corners onto the surface to clone along.
+            val p = vm.perspPlane
+            if (p != null) {
+                var best = -1; var bd = 32 * density
+                for (k in 0 until 4) { val v = toView(p[k * 2], p[k * 2 + 1]); val dd = hypot(v.x - e.x, v.y - e.y); if (dd < bd) { bd = dd; best = k } }
+                if (best >= 0) { cornerIndex = best; mode = Mode.PLANE_CORNER; return }
+            }
+            mode = Mode.IGNORE; return
+        }
         if (cloneLike && vm.settingSource) {
             mode = Mode.IGNORE
-            vm.cloneSource = PointF(downDoc.x, downDoc.y); vm.cloneOffset = null; vm.settingSource = false
+            vm.cloneSource = PointF(downDoc.x, downDoc.y); vm.cloneOffset = null; vm.perspOffset = null; vm.settingSource = false
             invalidate(); return
         }
         val pt = vm.paintTool
@@ -735,7 +764,7 @@ class CanvasView(context: Context, private val vm: EditorViewModel) : View(conte
             }
             mode = Mode.STROKE
             strokePoints = 1
-            engine.strokeBegin(pt, vm.settings, vm.fg, cloneOffsetFor(downDoc), vm.symmetry())
+            engine.strokeBegin(pt, vm.settings, vm.fg, cloneOffsetFor(downDoc), vm.symmetry(), vm.perspectiveMap(downDoc))
             engine.strokeAdd(listOf(StrokePoint(downDoc.x, downDoc.y, pressure(e), axis(e, MotionEvent.AXIS_TILT, -1), orientation(e, -1), e.eventTime)))
             cursor = PointF(e.x, e.y)
             if (e.getToolType(0) != MotionEvent.TOOL_TYPE_STYLUS) postDelayed(longPress, 450)
@@ -752,6 +781,7 @@ class CanvasView(context: Context, private val vm: EditorViewModel) : View(conte
     private fun moveSingle(e: MotionEvent) {
         val d = docPoint(e.x, e.y)
         when (mode) {
+            Mode.PLANE_CORNER -> vm.perspPlane = vm.perspPlane?.copyOf()?.also { it[cornerIndex * 2] = d.x; it[cornerIndex * 2 + 1] = d.y }
             Mode.GUIDE -> guideDrag = guideDrag?.let { (i, g) -> i to g.copy(pos = (if (g.vertical) d.x else d.y).roundToInt()) }
             Mode.WARP_PUSH -> { cursor = PointF(e.x, e.y); dragFloating(e) }
             Mode.STROKE -> {
@@ -830,7 +860,7 @@ class CanvasView(context: Context, private val vm: EditorViewModel) : View(conte
                 when {
                     st.paint != null && vm.lineMode -> {
                         val from = lastLineEnd ?: downDoc
-                        engine.strokeBegin(vm.paintTool ?: st.paint, vm.settings.copy(smoothing = 0f), vm.fg, cloneOffsetFor(from), vm.symmetry())
+                        engine.strokeBegin(vm.paintTool ?: st.paint, vm.settings.copy(smoothing = 0f), vm.fg, cloneOffsetFor(from), vm.symmetry(), vm.perspectiveMap(from))
                         engine.strokeAdd(listOf(StrokePoint(from.x, from.y, 1f), StrokePoint(d.x, d.y, 1f)))
                         engine.strokeEnd()
                         lastLineEnd = d
@@ -852,11 +882,12 @@ class CanvasView(context: Context, private val vm: EditorViewModel) : View(conte
                     vm.tool == Tool.FUZZY_SELECT || vm.tool == Tool.COLOR_SELECT -> if (isTap)
                         engine.fuzzySelect(d.x.toInt(), d.y.toInt(), vm.threshold.toInt(), vm.selectMode, vm.tool == Tool.COLOR_SELECT, vm.sampleMerged)
                     vm.tool == Tool.BUCKET -> if (isTap) {
-                        engine.bucketFill(d.x.toInt(), d.y.toInt(), vm.fg, vm.threshold.toInt(), vm.fillWholeSelection, vm.sampleMerged, vm.settings.opacity, vm.settings.mode)
+                        engine.bucketFill(d.x.toInt(), d.y.toInt(), vm.fg, vm.threshold.toInt(), vm.fillWholeSelection, vm.sampleMerged, vm.settings.opacity, vm.settings.mode,
+                            vm.pattern?.bitmap?.takeIf { vm.fillWithPattern })
                     }
                     vm.tool == Tool.GRADIENT -> if (!isTap) {
-                        val c1 = if (vm.fgToTransparent) vm.fg and 0x00FFFFFF else vm.bg
-                        engine.gradient(downDoc.x, downDoc.y, d.x, d.y, vm.fg, c1, vm.gradientShape, vm.settings.opacity, vm.settings.mode)
+                        val (cols, pos) = vm.gradient.stops(vm.fg, vm.bg, vm.gradientReverse)
+                        engine.gradient(downDoc.x, downDoc.y, d.x, d.y, cols, pos, vm.gradientShape, vm.settings.opacity, vm.settings.mode)
                     }
                     vm.tool == Tool.TEXT -> if (isTap) vm.textToolTap(d.x, d.y)
                 }
@@ -874,8 +905,9 @@ class CanvasView(context: Context, private val vm: EditorViewModel) : View(conte
 
     /** Aligned clone: the offset is fixed by the first stroke after choosing a source. */
     private fun cloneOffsetFor(start: PointF): android.graphics.Point? {
-        if (vm.tool != Tool.CLONE && vm.tool != Tool.HEAL) return null
+        if (vm.tool != Tool.CLONE && vm.tool != Tool.HEAL && vm.tool != Tool.PERSPECTIVE_CLONE) return null
         val src = vm.cloneSource ?: return null
+        if (vm.tool == Tool.PERSPECTIVE_CLONE) return android.graphics.Point(0, 0)
         val o = vm.cloneOffset ?: android.graphics.Point((src.x - start.x).toInt(), (src.y - start.y).toInt()).also { vm.cloneOffset = it }
         return o
     }
@@ -948,10 +980,10 @@ class CanvasView(context: Context, private val vm: EditorViewModel) : View(conte
     private fun onLongPress() {
         if (mode != Mode.STROKE || moved) return
         engine.strokeCancel()
-        if (vm.tool == Tool.CLONE || vm.tool == Tool.HEAL) {
+        if (vm.tool == Tool.CLONE || vm.tool == Tool.HEAL || vm.tool == Tool.PERSPECTIVE_CLONE) {
             // Long-press = GIMP's Ctrl-click: set the clone source.
             mode = Mode.IGNORE
-            vm.cloneSource = PointF(downDoc.x, downDoc.y); vm.cloneOffset = null
+            vm.cloneSource = PointF(downDoc.x, downDoc.y); vm.cloneOffset = null; vm.perspOffset = null
             performHapticFeedback(android.view.HapticFeedbackConstants.LONG_PRESS)
             invalidate(); return
         }

@@ -59,13 +59,16 @@ object ToolIcons {
     val angle get() = stroke("M4 20h16M4 20L16 6")
     val layers get() = stroke("M12 3l9 5-9 5-9-5zM3 13l9 5 9-5")
     val sliders get() = stroke("M4 7h10M18 7h2M4 17h4M12 17h8M16 5v4M10 15v4")
+    val ink get() = stroke("M12 2l4 7-4 13-4-13zM12 9v5M5 22h14")
+    val mypaint get() = stroke("M4 20c4 0 5-3 5-5 0-3 3-4 5-2M14 13l6-9M8 20c2-1 4-1 6 0")
+    val perspClone get() = stroke("M3 8l6-3v14l-6-3zM12 6l9-3v18l-9-3zM9 12h3")
     val mirror get() = stroke("M12 3v18M8 7L3 17h5zM16 7l5 10h-5z")
 
     fun of(t: Tool): ImageVector = when (t) {
         Tool.RECT_SELECT -> rect; Tool.ELLIPSE_SELECT -> ellipse; Tool.FREE_SELECT -> lasso
         Tool.FUZZY_SELECT -> fuzzy; Tool.COLOR_SELECT -> byColor; Tool.OBJECT_SELECT -> objectSel; Tool.SCISSORS -> scissors; Tool.FOREGROUND_SELECT -> foreground
         Tool.BRUSH -> brush; Tool.PENCIL -> pencil; Tool.AIRBRUSH -> airbrush; Tool.ERASER -> eraser
-        Tool.SMUDGE -> smudge; Tool.CLONE -> clone; Tool.HEAL -> heal; Tool.DODGE_BURN -> dodge; Tool.BLUR_SHARPEN -> blur; Tool.BUCKET -> bucket; Tool.GRADIENT -> gradient
+        Tool.SMUDGE -> smudge; Tool.CLONE -> clone; Tool.HEAL -> heal; Tool.DODGE_BURN -> dodge; Tool.BLUR_SHARPEN -> blur; Tool.INK -> ink; Tool.MYPAINT -> mypaint; Tool.PERSPECTIVE_CLONE -> perspClone; Tool.BUCKET -> bucket; Tool.GRADIENT -> gradient
         Tool.MOVE -> move; Tool.SCALE -> transform; Tool.ROTATE -> rotate; Tool.FLIP -> mirror; Tool.SHEAR -> shear; Tool.PERSPECTIVE -> perspective; Tool.TRANSFORM_3D -> cube; Tool.HANDLE -> handle; Tool.WARP -> warp; Tool.CAGE -> cage; Tool.ALIGN -> align; Tool.CROP -> crop; Tool.PICKER -> picker; Tool.TEXT -> text; Tool.PATHS -> paths
     }
 }
