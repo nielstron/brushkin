@@ -53,9 +53,43 @@ data class BrushSettings(
     val mode: LayerMode = LayerMode.NORMAL,
     /** Smudge: paint carried per dab. Dodge/Burn: exposure. Blur/Sharpen: strength. */
     val rate: Float = 0.6f,
+    // Paint dynamics (GIMP's dynamics editor): how speed, stylus tilt and randomness change dabs.
+    /** −1…1: fast strokes get thinner (−) or thicker (+). */
+    val velocitySize: Float = 0f,
+    /** −1…1: fast strokes get lighter (−) or stronger (+). */
+    val velocityOpacity: Float = 0f,
+    /** 0…1: random size jitter per dab. */
+    val randomSize: Float = 0f,
+    val randomOpacity: Float = 0f,
+    /** 0…1: random tip rotation (up to ±180°). */
+    val randomAngle: Float = 0f,
+    /** 0…1: a tilted stylus paints wider (pencil shading). */
+    val tiltSize: Float = 0f,
+    /** The tip follows the stylus' direction. */
+    val tiltAngle: Boolean = false,
 )
 
-data class StrokePoint(val x: Float, val y: Float, val pressure: Float)
+/** [tilt] radians from vertical, [orient] radians (stylus direction), [time] ms. */
+data class StrokePoint(val x: Float, val y: Float, val pressure: Float, val tilt: Float = 0f, val orient: Float = 0f, val time: Long = 0L)
+
+/** Symmetry painting: every dab is repeated mirrored and/or rotated around ([cx], [cy]). */
+data class Symmetry(val kind: Kind, val cx: Float, val cy: Float, val segments: Int = 6) {
+    enum class Kind(val label: String) { MIRROR_H("Mirror ↔"), MIRROR_V("Mirror ↕"), MIRROR_BOTH("Both"), MANDALA("Mandala") }
+
+    /** Copies of point ([x], [y]) as (x, y, extra rotation°, mirrored), including the original. */
+    fun copies(x: Float, y: Float): List<FloatArray> {
+        val dx = x - cx; val dy = y - cy
+        return when (kind) {
+            Kind.MIRROR_H -> listOf(floatArrayOf(x, y, 0f, 0f), floatArrayOf(cx - dx, y, 0f, 1f))
+            Kind.MIRROR_V -> listOf(floatArrayOf(x, y, 0f, 0f), floatArrayOf(x, cy - dy, 0f, 1f))
+            Kind.MIRROR_BOTH -> listOf(floatArrayOf(x, y, 0f, 0f), floatArrayOf(cx - dx, y, 0f, 1f), floatArrayOf(x, cy - dy, 0f, 1f), floatArrayOf(cx - dx, cy - dy, 180f, 0f))
+            Kind.MANDALA -> List(segments.coerceIn(2, 64)) { k ->
+                val a = (2 * Math.PI * k / segments.coerceIn(2, 64)); val c = kotlin.math.cos(a).toFloat(); val sn = kotlin.math.sin(a).toFloat()
+                floatArrayOf(cx + dx * c - dy * sn, cy + dx * sn + dy * c, Math.toDegrees(a).toFloat(), 0f)
+            }
+        }
+    }
+}
 
 /** Rasterized brush tips are cached by their quantized parameters. */
 object TipCache {
@@ -128,6 +162,7 @@ class StrokeOp(
     private val selection: Selection?,
     /** Clone/Heal: source position minus destination position. */
     private val cloneOffset: android.graphics.Point? = null,
+    private val symmetry: Symmetry? = null,
 ) {
     val session = TileEditSession(target)
     private val buf = HashMap<Int, Bitmap>()
@@ -186,7 +221,7 @@ class StrokeOp(
                 travelled += need
                 residual = 0f
                 val t = travelled / max(dist, 1e-3f)
-                dab(StrokePoint(l.x + (p.x - l.x) * t, l.y + (p.y - l.y) * t, l.pressure + (p.pressure - l.pressure) * t), changed)
+                dab(p.copy(x = l.x + (p.x - l.x) * t, y = l.y + (p.y - l.y) * t, pressure = l.pressure + (p.pressure - l.pressure) * t), changed)
             }
             last = p
         }
@@ -206,13 +241,17 @@ class StrokeOp(
         noSmooth = false
     }
 
+    /** Smoothed stroke speed in doc px per ms (0 when the input has no timestamps). */
+    private var speed = 0f
+
     private fun smooth(p: StrokePoint): StrokePoint {
+        lastRaw?.let { l -> if (p.time > l.time && l.time > 0) speed = speed * 0.7f + 0.3f * (hypot(p.x - l.x, p.y - l.y) / (p.time - l.time)) }
         lastRaw = p
         if (noSmooth) { smoothed = p; return p }
         val prev = smoothed
         val k = s.smoothing.coerceIn(0f, 0.95f)
-        val out = if (prev == null || k == 0f) p else StrokePoint(
-            prev.x + (p.x - prev.x) * (1 - k), prev.y + (p.y - prev.y) * (1 - k), prev.pressure + (p.pressure - prev.pressure) * (1 - k)
+        val out = if (prev == null || k == 0f) p else p.copy(
+            x = prev.x + (p.x - prev.x) * (1 - k), y = prev.y + (p.y - prev.y) * (1 - k), pressure = prev.pressure + (p.pressure - prev.pressure) * (1 - k)
         )
         smoothed = out
         return out
@@ -221,18 +260,36 @@ class StrokeOp(
     private fun sizeFactor(p: Float) = if (s.pressureSize) 0.15f + 0.85f * p.coerceIn(0f, 1f) else 1f
 
     private fun dab(p: StrokePoint, changed: Rect) {
-        val r = max(0.5f, s.size * sizeFactor(p.pressure) / 2f)
+        // Dynamics: speed (0…1 at ~2 px/ms), stylus tilt (0…1 at 60°) and per-dab randomness.
+        val v = (speed / 2f).coerceIn(0f, 1f)
+        val tiltN = (p.tilt / 1.05f).coerceIn(0f, 1f)
+        var f = sizeFactor(p.pressure) * (1 + s.velocitySize * v) * (1 + s.tiltSize * tiltN * 2f)
+        if (s.randomSize > 0f) f *= 1 - s.randomSize * rnd.nextFloat()
+        var alpha = effective.flow * (if (s.pressureOpacity) p.pressure.coerceIn(0.05f, 1f) else 1f) * (1 + s.velocityOpacity * v)
+        if (s.randomOpacity > 0f) alpha *= 1 - s.randomOpacity * rnd.nextFloat()
+        alpha = alpha.coerceIn(0f, 1f)
+        var angle = 0f
+        if (s.tiltAngle && p.tilt > 0.05f) angle += Math.toDegrees(p.orient.toDouble()).toFloat() - s.angle
+        if (s.randomAngle > 0f) angle += (rnd.nextFloat() - 0.5f) * 360f * s.randomAngle
+        val r = max(0.5f, s.size * max(0.05f, f) / 2f)
         val jx = if (s.shape == TipShape.SPLATTER) (rnd.nextFloat() - 0.5f) * r else 0f
         val jy = if (s.shape == TipShape.SPLATTER) (rnd.nextFloat() - 0.5f) * r else 0f
-        val cx = p.x + jx; val cy = p.y + jy
+        val sym = symmetry
+        if (sym == null || tool == PaintTool.SMUDGE) { stamp(p.x + jx, p.y + jy, r, alpha, angle, false, changed); return }
+        for (c in sym.copies(p.x + jx, p.y + jy)) stamp(c[0], c[1], r, alpha, angle + c[2], c[3] != 0f, changed)
+    }
+
+    private fun stamp(cx: Float, cy: Float, r: Float, alpha: Float, angle: Float, mirrored: Boolean, changed: Rect) {
         val dst = if (pencil) RectF(
             (cx - r).roundToInt().toFloat(), (cy - r).roundToInt().toFloat(),
             (cx - r).roundToInt() + max(1, (2 * r).roundToInt()).toFloat(), (cy - r).roundToInt() + max(1, (2 * r).roundToInt()).toFloat()
         ) else RectF(cx - r, cy - r, cx + r, cy + r)
-        val ir = Rect(); dst.roundOut(ir)
+        val ir = Rect()
+        // A rotated tip needs the rect's circumcircle.
+        val turned = !pencil && (angle != 0f || mirrored)
+        if (turned) RectF(cx - r * 1.42f, cy - r * 1.42f, cx + r * 1.42f, cy + r * 1.42f).roundOut(ir) else dst.roundOut(ir)
         if (!ir.intersect(0, 0, target.width, target.height)) return
         changed.union(ir)
-        val alpha = effective.flow * (if (s.pressureOpacity) p.pressure.coerceIn(0.05f, 1f) else 1f)
         if (tool == PaintTool.SMUDGE) { smudgeDab(dst, ir, alpha); return }
         dabPaint.alpha = (alpha * 255).roundToInt().coerceIn(1, 255)
         target.forTilesIn(ir) { i ->
@@ -240,6 +297,7 @@ class StrokeOp(
             canvas.setBitmap(b)
             canvas.save()
             canvas.translate(-target.tileX(i).toFloat(), -target.tileY(i).toFloat())
+            if (turned) { canvas.rotate(angle, cx, cy); if (mirrored) canvas.scale(-1f, 1f, cx, cy) }
             canvas.drawBitmap(tip, tipRect, dst, dabPaint)
             canvas.restore()
             dirty.add(i)

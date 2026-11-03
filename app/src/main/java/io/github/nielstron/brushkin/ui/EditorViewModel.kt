@@ -132,6 +132,10 @@ class EditorViewModel(app: Application) : AndroidViewModel(app) {
     var eraseToggle by mutableStateOf(false)
     var fromCenter by mutableStateOf(false)
     var fixedRatio by mutableStateOf(false)
+    /** Symmetry painting (null: off) around the image center. */
+    var symmetryKind by mutableStateOf<io.github.nielstron.brushkin.engine.Symmetry.Kind?>(null)
+    var symmetrySegments by mutableStateOf(6)
+    fun symmetry() = symmetryKind?.let { k -> val i = engine.info.value; io.github.nielstron.brushkin.engine.Symmetry(k, i.width / 2f, i.height / 2f, symmetrySegments) }
     // View aids (GIMP's View menu): grid, rulers and snapping.
     var showGrid by mutableStateOf(false)
     var gridSize by mutableStateOf(64f)
@@ -284,7 +288,7 @@ class EditorViewModel(app: Application) : AndroidViewModel(app) {
         if (pts.size < 2) { messages.tryEmit("Add at least two points"); return }
         val pt = (if (lastPaintTool.paint != null) lastPaintTool.paint else null) ?: io.github.nielstron.brushkin.engine.PaintTool.BRUSH
         val s = brushSettings.value[lastPaintTool] ?: BrushSettings()
-        engine.strokeBegin(pt, s.copy(smoothing = 0f, pressureSize = false, pressureOpacity = false), fg)
+        engine.strokeBegin(pt, s.copy(smoothing = 0f, pressureSize = false, pressureOpacity = false), fg, symmetry = symmetry())
         pts.chunked(256).forEach { engine.strokeAdd(it) }
         engine.strokeEnd()
     }

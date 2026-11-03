@@ -179,4 +179,25 @@ class EngineTest {
         assertEquals(0, m[110 * w + 210].toInt())         // corner of the outline: background
         assertEquals(0, m[200 * w + 390].toInt())         // just outside the disc
     }
+
+    @Test fun symmetryMirrorsDabs() {
+        val t = TiledBitmap(w, h)
+        val sym = io.github.nielstron.brushkin.engine.Symmetry(io.github.nielstron.brushkin.engine.Symmetry.Kind.MANDALA, 300f, 200f, 4)
+        val op = StrokeOp(t, PaintTool.BRUSH, BrushSettings(size = 20f, hardness = 1f, smoothing = 0f), Color.BLACK, false, null, null, sym)
+        op.add(listOf(StrokePoint(400f, 200f, 1f))); op.finish()
+        val px = t.toPixels()
+        // 4-fold rotation around (300,200): dabs at (400,200), (300,300), (200,200), (300,100).
+        for ((x, y) in listOf(400 to 200, 300 to 300, 200 to 200, 300 to 100)) assertTrue("no dab at $x,$y", Color.alpha(px[y * w + x]) > 200)
+        assertEquals(0, Color.alpha(px[200 * w + 300]))
+    }
+
+    @Test fun dynamicsVaryDabs() {
+        // Random size: dabs along a line differ in coverage width.
+        val t = TiledBitmap(w, h)
+        val op = StrokeOp(t, PaintTool.BRUSH, BrushSettings(size = 30f, hardness = 1f, spacing = 2f, smoothing = 0f, randomSize = 0.9f, pressureSize = false), Color.BLACK, false, null)
+        op.add((0..8).map { StrokePoint(40f + it * 60f, 200f, 1f) }); op.finish()
+        val px = t.toPixels()
+        val heights = (0..8).map { k -> val x = 40 + k * 60; (170..230).count { y -> Color.alpha(px[y * w + x]) > 128 } }
+        assertTrue(heights.toString(), heights.toSet().size > 2)
+    }
 }

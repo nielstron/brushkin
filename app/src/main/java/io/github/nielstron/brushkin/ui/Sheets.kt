@@ -186,6 +186,23 @@ private fun OptionsSheet(vm: EditorViewModel) {
             if (rateLabel != null) LabeledSlider(rateLabel, s.rate, 0f..1f, "${(s.rate * 100).roundToInt()}", { vm.settings = vm.settings.copy(rate = it) })
             Toggle("Pressure → size", s.pressureSize) { vm.settings = vm.settings.copy(pressureSize = it) }
             Toggle("Pressure → opacity", s.pressureOpacity) { vm.settings = vm.settings.copy(pressureOpacity = it) }
+            SectionLabel("Dynamics")
+            LabeledSlider("Speed → size", s.velocitySize, -1f..1f, signed(s.velocitySize), { vm.settings = vm.settings.copy(velocitySize = it) })
+            LabeledSlider("Speed → opacity", s.velocityOpacity, -1f..1f, signed(s.velocityOpacity), { vm.settings = vm.settings.copy(velocityOpacity = it) })
+            LabeledSlider("Random size", s.randomSize, 0f..1f, "${(s.randomSize * 100).roundToInt()}%", { vm.settings = vm.settings.copy(randomSize = it) })
+            LabeledSlider("Random opacity", s.randomOpacity, 0f..1f, "${(s.randomOpacity * 100).roundToInt()}%", { vm.settings = vm.settings.copy(randomOpacity = it) })
+            LabeledSlider("Random angle", s.randomAngle, 0f..1f, "±${(s.randomAngle * 180).roundToInt()}°", { vm.settings = vm.settings.copy(randomAngle = it) })
+            LabeledSlider("Stylus tilt → size", s.tiltSize, 0f..1f, "${(s.tiltSize * 100).roundToInt()}%", { vm.settings = vm.settings.copy(tiltSize = it) })
+            Toggle("Tip follows stylus direction", s.tiltAngle) { vm.settings = vm.settings.copy(tiltAngle = it) }
+            if (t != Tool.SMUDGE) {
+                SectionLabel("Symmetry")
+                Row(Modifier.horizontalScroll(rememberScrollState()).padding(vertical = 6.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Chip("Off", vm.symmetryKind == null) { vm.symmetryKind = null }
+                    for (k in io.github.nielstron.brushkin.engine.Symmetry.Kind.entries) Chip(k.label, vm.symmetryKind == k) { vm.symmetryKind = k }
+                }
+                if (vm.symmetryKind == io.github.nielstron.brushkin.engine.Symmetry.Kind.MANDALA)
+                    LabeledSlider("Segments", vm.symmetrySegments.toFloat(), 2f..24f, "${vm.symmetrySegments}", { vm.symmetrySegments = it.roundToInt() })
+            }
         }
         if (paintLike && t != Tool.ERASER && t.paint?.isEffect != true && t != Tool.SMUDGE && !vm.eraseToggle) {
             if (t.paint == null) LabeledSlider("Opacity", vm.settings.opacity, 0.01f..1f, "${(vm.settings.opacity * 100).roundToInt()}%", { vm.settings = vm.settings.copy(opacity = it) })
@@ -630,4 +647,11 @@ fun renderSticker(s: Sticker, size: Int, accent: Int): Bitmap {
     c.drawPath(path, Paint(Paint.ANTI_ALIAS_FLAG).apply { color = fill })
     c.drawPath(path, Paint(Paint.ANTI_ALIAS_FLAG).apply { color = stroke; style = Paint.Style.STROKE; strokeWidth = 1.2f; strokeJoin = Paint.Join.ROUND })
     return bmp
+}
+
+private fun signed(v: Float) = (if (v > 0.005f) "+" else "") + "${(v * 100).roundToInt()}%"
+
+@Composable
+private fun SectionLabel(text: String) {
+    Text(text.uppercase(), color = Ui.muted, fontSize = 12.sp, fontWeight = FontWeight.SemiBold, letterSpacing = 1.sp, modifier = Modifier.padding(top = 14.dp, bottom = 2.dp))
 }

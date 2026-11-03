@@ -154,7 +154,7 @@ fun EditorScreen(vm: EditorViewModel, files: FileActions) {
             }
         }
 
-        androidx.compose.runtime.LaunchedEffect(vm.showGrid, vm.gridSize, vm.showRulers) { holder.view?.invalidate() }
+        androidx.compose.runtime.LaunchedEffect(vm.showGrid, vm.gridSize, vm.showRulers, vm.symmetryKind, vm.symmetrySegments) { holder.view?.invalidate() }
 
         // Side sliders for size and opacity, within reach of the holding thumb.
         if (vm.strokeTool.paint != null && info.floating.not()) {

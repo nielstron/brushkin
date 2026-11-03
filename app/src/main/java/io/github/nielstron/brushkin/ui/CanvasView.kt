@@ -301,6 +301,28 @@ class CanvasView(context: Context, private val vm: EditorViewModel) : View(conte
         lastTouch?.let { t -> canvas.drawLine(t.x, top, t.x, top + rs, guideActive); canvas.drawLine(0f, t.y, rs, t.y, guideActive) }
     }
 
+    private fun drawSymmetry(canvas: Canvas, sym: io.github.nielstron.brushkin.engine.Symmetry) {
+        val big = 4f * maxOf(engine.stack.width, engine.stack.height)
+        val axes = when (sym.kind) {
+            io.github.nielstron.brushkin.engine.Symmetry.Kind.MIRROR_H -> listOf(90f)
+            io.github.nielstron.brushkin.engine.Symmetry.Kind.MIRROR_V -> listOf(0f)
+            io.github.nielstron.brushkin.engine.Symmetry.Kind.MIRROR_BOTH -> listOf(0f, 90f)
+            io.github.nielstron.brushkin.engine.Symmetry.Kind.MANDALA -> List(sym.segments) { 360f * it / sym.segments - 90f }
+        }
+        canvas.save()
+        val docR = RectF(0f, 0f, engine.stack.width.toFloat(), engine.stack.height.toFloat())
+        canvas.clipPath(Path().apply { addRect(docR, Path.Direction.CW); transform(viewMatrix) })
+        for (a in axes) {
+            val rad = Math.toRadians(a.toDouble())
+            val full = sym.kind != io.github.nielstron.brushkin.engine.Symmetry.Kind.MANDALA
+            val pts = floatArrayOf(if (full) sym.cx - big * kotlin.math.cos(rad).toFloat() else sym.cx, if (full) sym.cy - big * kotlin.math.sin(rad).toFloat() else sym.cy,
+                sym.cx + big * kotlin.math.cos(rad).toFloat(), sym.cy + big * kotlin.math.sin(rad).toFloat())
+            viewMatrix.mapPoints(pts)
+            canvas.drawLine(pts[0], pts[1], pts[2], pts[3], guideDark); canvas.drawLine(pts[0], pts[1], pts[2], pts[3], guide)
+        }
+        canvas.restore()
+    }
+
     // ------------------------------------------------------------------ scissors
 
     private fun drawScissors(canvas: Canvas) {
@@ -467,6 +489,7 @@ class CanvasView(context: Context, private val vm: EditorViewModel) : View(conte
         engine.floating?.let { drawFloatingHandles(canvas, it) }
         drawPath(canvas)
         if (vm.tool == Tool.SCISSORS) drawScissors(canvas)
+        vm.symmetry()?.takeIf { vm.strokeTool.paint != null }?.let { drawSymmetry(canvas, it) }
         if (vm.tool == Tool.CLONE || vm.tool == Tool.HEAL) {
             val src = vm.cloneSource
             val o = vm.cloneOffset
@@ -677,6 +700,16 @@ class CanvasView(context: Context, private val vm: EditorViewModel) : View(conte
         return if (i < 0) e.pressure else e.getHistoricalPressure(i)
     }
 
+    private fun axis(e: MotionEvent, a: Int, i: Int): Float =
+        if (e.getToolType(0) != MotionEvent.TOOL_TYPE_STYLUS) 0f else if (i < 0) e.getAxisValue(a) else e.getHistoricalAxisValue(a, i)
+
+    /** Stylus direction in doc space (the view may be rotated). */
+    private fun orientation(e: MotionEvent, i: Int): Float {
+        // Android: 0 = pointing up, clockwise positive; convert to an angle from +x.
+        val o = axis(e, MotionEvent.AXIS_ORIENTATION, i)
+        return o - Math.PI.toFloat() / 2 - Math.toRadians(viewRotation.toDouble()).toFloat()
+    }
+
     private fun startSingle(e: MotionEvent) {
         val f = engine.floating
         val tool = vm.tool
@@ -702,8 +735,8 @@ class CanvasView(context: Context, private val vm: EditorViewModel) : View(conte
             }
             mode = Mode.STROKE
             strokePoints = 1
-            engine.strokeBegin(pt, vm.settings, vm.fg, cloneOffsetFor(downDoc))
-            engine.strokeAdd(listOf(StrokePoint(downDoc.x, downDoc.y, pressure(e))))
+            engine.strokeBegin(pt, vm.settings, vm.fg, cloneOffsetFor(downDoc), vm.symmetry())
+            engine.strokeAdd(listOf(StrokePoint(downDoc.x, downDoc.y, pressure(e), axis(e, MotionEvent.AXIS_TILT, -1), orientation(e, -1), e.eventTime)))
             cursor = PointF(e.x, e.y)
             if (e.getToolType(0) != MotionEvent.TOOL_TYPE_STYLUS) postDelayed(longPress, 450)
             invalidate()
@@ -725,9 +758,9 @@ class CanvasView(context: Context, private val vm: EditorViewModel) : View(conte
                 val pts = ArrayList<StrokePoint>(e.historySize + 1)
                 for (i in 0 until e.historySize) {
                     val p = toDoc(e.getHistoricalX(i), e.getHistoricalY(i))
-                    pts.add(StrokePoint(p.x, p.y, pressure(e, i)))
+                    pts.add(StrokePoint(p.x, p.y, pressure(e, i), axis(e, MotionEvent.AXIS_TILT, i), orientation(e, i), e.getHistoricalEventTime(i)))
                 }
-                pts.add(StrokePoint(d.x, d.y, pressure(e)))
+                pts.add(StrokePoint(d.x, d.y, pressure(e), axis(e, MotionEvent.AXIS_TILT, -1), orientation(e, -1), e.eventTime))
                 strokePoints += pts.size
                 engine.strokeAdd(pts)
                 cursor = PointF(e.x, e.y)
@@ -797,7 +830,7 @@ class CanvasView(context: Context, private val vm: EditorViewModel) : View(conte
                 when {
                     st.paint != null && vm.lineMode -> {
                         val from = lastLineEnd ?: downDoc
-                        engine.strokeBegin(vm.paintTool ?: st.paint, vm.settings.copy(smoothing = 0f), vm.fg, cloneOffsetFor(from))
+                        engine.strokeBegin(vm.paintTool ?: st.paint, vm.settings.copy(smoothing = 0f), vm.fg, cloneOffsetFor(from), vm.symmetry())
                         engine.strokeAdd(listOf(StrokePoint(from.x, from.y, 1f), StrokePoint(d.x, d.y, 1f)))
                         engine.strokeEnd()
                         lastLineEnd = d
