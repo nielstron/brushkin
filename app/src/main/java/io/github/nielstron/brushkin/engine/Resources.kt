@@ -334,6 +334,16 @@ class ResourceStore(private val dir: File) {
         return PatternRes(name, bmp, file).also { patterns.value = patterns.value + it }
     }
 
+    /** Replaces a pattern's pixels and/or name (its file is rewritten). */
+    fun updatePattern(old: PatternRes, name: String, bmp: Bitmap): PatternRes {
+        old.file?.let { File(dir, it).delete() }
+        val file = uniqueFile(name, "pat")
+        File(dir, file).writeBytes(GimpFormats.writePat(name, bmp))
+        val p = PatternRes(name, bmp, file)
+        patterns.value = patterns.value.map { if (it === old) p else it }
+        return p
+    }
+
     fun delete(file: String?) {
         if (file == null) return
         File(dir, file).delete()
@@ -360,6 +370,61 @@ class ResourceStore(private val dir: File) {
             "Ink pen" to """{"version":3,"settings":{"radius_logarithmic":{"base_value":1.0,"inputs":{"pressure":[[0,0],[1,0.6]],"speed1":[[0,0],[1,-0.5]]}},"opaque":{"base_value":1},"hardness":{"base_value":0.95},"dabs_per_actual_radius":{"base_value":6},"slow_tracking":{"base_value":3}}}""",
             "Calligraphy" to """{"version":3,"settings":{"radius_logarithmic":{"base_value":2.0,"inputs":{"pressure":[[0,0],[1,0.4]]}},"opaque":{"base_value":1},"hardness":{"base_value":0.9},"dabs_per_actual_radius":{"base_value":5},"elliptical_dab_ratio":{"base_value":5},"elliptical_dab_angle":{"base_value":45}}}""",
         )
+    }
+}
+
+/** Pattern editing operations (GIMP has these spread over filters; here they're one editor). */
+object PatternOps {
+    fun scale(b: Bitmap, k: Float): Bitmap =
+        Bitmap.createScaledBitmap(b, (b.width * k).roundToInt().coerceIn(2, 2048), (b.height * k).roundToInt().coerceIn(2, 2048), true)
+
+    /** Shifts by half the size, wrapping around: shows how the tile's edges meet. */
+    fun offsetHalf(b: Bitmap): Bitmap {
+        val w = b.width; val h = b.height
+        val out = Bitmap.createBitmap(w, h, Bitmap.Config.ARGB_8888)
+        val c = android.graphics.Canvas(out)
+        for (dy in listOf(0, -h)) for (dx in listOf(0, -w)) c.drawBitmap(b, (w / 2 + dx).toFloat(), (h / 2 + dy).toFloat(), null)
+        return out
+    }
+
+    /**
+     * GIMP's Tile Seamless: blend with a half-width-shifted copy (weighted away from the left/right
+     * seam), then the same vertically.
+     */
+    fun seamless(b: Bitmap): Bitmap {
+        val w = b.width; val h = b.height
+        var a = IntArray(w * h); b.getPixels(a, 0, w, 0, 0, w, h)
+        fun pass(src: IntArray, horizontal: Boolean): IntArray {
+            val out = IntArray(w * h)
+            for (y in 0 until h) for (x in 0 until w) {
+                val ox = if (horizontal) (x + w / 2) % w else x; val oy = if (horizontal) y else (y + h / 2) % h
+                val t = if (horizontal) 1f - kotlin.math.abs(2f * (x + 0.5f) / w - 1f) else 1f - kotlin.math.abs(2f * (y + 0.5f) / h - 1f)
+                out[y * w + x] = GradientRes.lerpColor(src[oy * w + ox], src[y * w + x], t)
+            }
+            return out
+        }
+        a = pass(pass(a, true), false)
+        return Bitmap.createBitmap(a, w, h, Bitmap.Config.ARGB_8888)
+    }
+
+    /** Generated patterns in two colors: 0 checker, 1 stripes, 2 dots, 3 diagonal stripes. */
+    fun generate(kind: Int, cell: Int, fg: Int, bg: Int): Bitmap {
+        val n = cell.coerceIn(2, 512); val s = n * 2
+        val out = Bitmap.createBitmap(s, s, Bitmap.Config.ARGB_8888)
+        val c = android.graphics.Canvas(out); c.drawColor(bg)
+        val p = android.graphics.Paint().apply { color = fg; isAntiAlias = true }
+        when (kind) {
+            0 -> { c.drawRect(0f, 0f, n.toFloat(), n.toFloat(), p); c.drawRect(n.toFloat(), n.toFloat(), s.toFloat(), s.toFloat(), p) }
+            1 -> c.drawRect(0f, 0f, n.toFloat(), s.toFloat(), p)
+            2 -> { c.drawCircle(n / 2f, n / 2f, n * 0.3f, p); c.drawCircle(n * 1.5f, n * 1.5f, n * 0.3f, p) }
+            else -> {
+                // Diagonal bands that wrap seamlessly.
+                val path = android.graphics.Path()
+                for (k in -2..2) { val o = k * s.toFloat(); path.moveTo(o, 0f); path.lineTo(o + n, 0f); path.lineTo(o + n + s, s.toFloat()); path.lineTo(o + s, s.toFloat()); path.close() }
+                c.drawPath(path, p)
+            }
+        }
+        return out
     }
 }
 

@@ -796,8 +796,10 @@ private fun PatternPicker(vm: EditorViewModel) {
             )
         }
         Chip("From selection", false) { vm.selectionToResource(brush = false) }
+        Chip("Edit…", false) { vm.dialog = "pattern-edit" }
         Chip("Import…", false) { vm.dialog = "import" }
     }
+    if (vm.fillWithPattern && list.isEmpty()) Chip("Create a pattern…", false) { vm.dialog = "pattern-edit" }
 }
 
 /** Palette swatches; user palettes can be edited (+ adds the FG color, long-press removes). */
