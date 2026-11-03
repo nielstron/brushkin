@@ -448,6 +448,37 @@ class Engine {
         record(name, s)
     }
 
+    private var mergedCache: Pair<Long, IntArray>? = null
+
+    /** The visible image as sRGB pixels, cached per document version (scissors, foreground select). */
+    private fun mergedPixels(s: Stack): IntArray {
+        mergedCache?.let { (v, px) -> if (v == version && px.size == s.width * s.height) return px }
+        val b = Compositor.flatten(s)
+        val px = IntArray(s.width * s.height).also { b.getPixels(it, 0, s.width, 0, 0, s.width, s.height) }
+        mergedCache = version to px
+        return px
+    }
+
+    /** Intelligent Scissors: the edge-following path between two points (x,y pairs). */
+    suspend fun scissorsSegment(ax: Float, ay: Float, bx: Float, by: Float): FloatArray = withContext(dispatcher) {
+        val s = stack
+        Scissors.liveWire(mergedPixels(s), s.width, s.height, ax.toInt(), ay.toInt(), bx.toInt(), by.toInt())
+    }
+
+    /** Foreground select: refine a rough outline into the object's edge using color models. */
+    fun foregroundSelect(rough: Path, band: Int, mode: SelectMode) = post {
+        val s = stack
+        busy("Selecting foreground") {
+            val m = Bitmap.createBitmap(s.width, s.height, Bitmap.Config.ALPHA_8)
+            Canvas(m).drawPath(rough, Paint().apply { color = Color.BLACK; isAntiAlias = false })
+            val out = ForegroundSelect.extract(mergedPixels(s), s.width, s.height, Selection.maskBytes(m, s.width, s.height), band)
+            val mb = Bitmap.createBitmap(s.width, s.height, Bitmap.Config.ALPHA_8)
+            Selection.writeMaskBytes(mb, out, s.width, s.height)
+            stack = s.copy(selection = Selection.combineMask(s.selection, mb, mode))
+            record("Foreground Select", s)
+        }
+    }
+
     /** Toggle quick mask: the selection becomes a paintable channel (shown as a red overlay) and back. */
     fun quickMaskToggle() = post {
         val s = stack

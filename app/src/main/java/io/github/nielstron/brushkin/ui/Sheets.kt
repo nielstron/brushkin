@@ -194,6 +194,7 @@ private fun OptionsSheet(vm: EditorViewModel) {
         if (t.isSelect) {
             LabeledSlider("Feather", vm.feather, 0f..100f, "${vm.feather.roundToInt()} px", { vm.feather = it })
             Toggle("Antialiasing", vm.antialias) { vm.antialias = it }
+            if (t == Tool.FOREGROUND_SELECT) LabeledSlider("Edge band", vm.fgBand, 4f..200f, "${vm.fgBand.roundToInt()} px", { vm.fgBand = it })
             if (t == Tool.RECT_SELECT) LabeledSlider("Rounded corners", vm.cornerRadius, 0f..300f, "${vm.cornerRadius.roundToInt()} px", { vm.cornerRadius = it })
         }
         if (t == Tool.FUZZY_SELECT || t == Tool.COLOR_SELECT || t == Tool.BUCKET) {

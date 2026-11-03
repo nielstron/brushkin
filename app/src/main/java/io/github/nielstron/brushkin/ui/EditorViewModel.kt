@@ -36,6 +36,8 @@ enum class Tool(val label: String, val group: ToolGroup, val paint: PaintTool? =
     FUZZY_SELECT("Fuzzy", ToolGroup.SELECT),
     COLOR_SELECT("By Color", ToolGroup.SELECT),
     OBJECT_SELECT("Object", ToolGroup.SELECT),
+    SCISSORS("Scissors", ToolGroup.SELECT),
+    FOREGROUND_SELECT("Foreground", ToolGroup.SELECT),
     BRUSH("Paintbrush", ToolGroup.PAINT, PaintTool.BRUSH),
     PENCIL("Pencil", ToolGroup.PAINT, PaintTool.PENCIL),
     AIRBRUSH("Airbrush", ToolGroup.PAINT, PaintTool.AIRBRUSH),
@@ -210,6 +212,61 @@ class EditorViewModel(app: Application) : AndroidViewModel(app) {
     /** Bumped when [path] changes so Compose and the canvas redraw. */
     var pathVersion by mutableStateOf(0)
 
+    // Intelligent Scissors: anchors and the edge-following segment after each one (null while computing).
+    val scissorsAnchors = ArrayList<android.graphics.PointF>()
+    val scissorsSegs = ArrayList<FloatArray?>()
+    var scissorsVersion by mutableStateOf(0)
+    /** Foreground select: width of the band around the rough outline that gets refined (px). */
+    var fgBand by mutableStateOf(24f)
+
+    fun scissorsTap(p: android.graphics.PointF, closeRadius: Float) {
+        val first = scissorsAnchors.firstOrNull()
+        if (first != null && scissorsAnchors.size >= 3 && kotlin.math.hypot(p.x - first.x, p.y - first.y) < closeRadius) { scissorsClose(); return }
+        scissorsAnchors.add(p)
+        if (scissorsAnchors.size >= 2) addScissorsSeg(scissorsAnchors[scissorsAnchors.size - 2], p)
+        scissorsVersion++
+    }
+
+    private fun addScissorsSeg(a: android.graphics.PointF, b: android.graphics.PointF) {
+        val idx = scissorsSegs.size
+        scissorsSegs.add(null)
+        val gen = scissorsGen
+        viewModelScope.launch {
+            val seg = engine.scissorsSegment(a.x, a.y, b.x, b.y)
+            if (gen == scissorsGen && idx < scissorsSegs.size) { scissorsSegs[idx] = seg; scissorsVersion++ }
+        }
+    }
+    private var scissorsGen = 0
+
+    fun scissorsUndo() {
+        if (scissorsAnchors.isEmpty()) return
+        scissorsAnchors.removeAt(scissorsAnchors.size - 1)
+        if (scissorsSegs.size > maxOf(0, scissorsAnchors.size - 1)) scissorsSegs.removeAt(scissorsSegs.size - 1)
+        scissorsVersion++
+    }
+
+    fun scissorsClear() { scissorsAnchors.clear(); scissorsSegs.clear(); scissorsGen++; scissorsVersion++ }
+
+    fun scissorsClose() {
+        if (scissorsAnchors.size < 3) { messages.tryEmit("Add at least three points"); return }
+        val anchors = scissorsAnchors.toList()
+        val segs = scissorsSegs.toList()
+        val mode = selectMode; val aa = antialias; val f = feather
+        scissorsClear()
+        viewModelScope.launch {
+            val closing = engine.scissorsSegment(anchors.last().x, anchors.last().y, anchors[0].x, anchors[0].y)
+            val path = android.graphics.Path()
+            path.moveTo(anchors[0].x, anchors[0].y)
+            for ((i, seg) in (segs + listOf(closing)).withIndex()) {
+                val s = seg ?: engine.scissorsSegment(anchors[i].x, anchors[i].y, anchors[(i + 1) % anchors.size].x, anchors[(i + 1) % anchors.size].y)
+                var k = 0
+                while (k < s.size) { path.lineTo(s[k], s[k + 1]); k += 2 }
+            }
+            path.close()
+            engine.select(path, mode, aa, f, "Intelligent Scissors")
+        }
+    }
+
     fun pathToSelection() {
         if (path.anchors.size < 3) { messages.tryEmit("Add at least three points"); return }
         val p = PathEdit().also { it.anchors.addAll(path.anchors); it.closed = true }.toPath()
@@ -364,6 +421,7 @@ class EditorViewModel(app: Application) : AndroidViewModel(app) {
             if (t == Tool.WARP || t == Tool.CAGE) engine.meshBegin(cage = t == Tool.CAGE) else engine.liftActive()
         }
         if (t != Tool.CROP) cropRect = null
+        if (t != Tool.SCISSORS) scissorsClear()
         if (t != Tool.TEXT) finishText()
         settingSource = (t == Tool.CLONE || t == Tool.HEAL) && cloneSource == null
     }

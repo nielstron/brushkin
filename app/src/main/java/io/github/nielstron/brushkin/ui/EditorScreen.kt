@@ -272,6 +272,12 @@ private fun ContextChips(vm: EditorViewModel, hasSelection: Boolean, holder: Can
                     Chip("Fixed 1:1", vm.fixedRatio) { vm.fixedRatio = !vm.fixedRatio }
                 }
                 if (t == Tool.OBJECT_SELECT) Chip("Whole foreground", false) { vm.objectSelect(-1f, -1f) }
+                if (t == Tool.SCISSORS) {
+                    androidx.compose.runtime.LaunchedEffect(vm.scissorsVersion) { holder?.view?.invalidate() }
+                    Chip("Close & select", false) { vm.scissorsClose() }
+                    Chip("Undo point", false) { vm.scissorsUndo(); holder?.view?.invalidate() }
+                    Chip("Clear", false) { vm.scissorsClear(); holder?.view?.invalidate() }
+                }
                 if (!quickMask) Chip("Quick mask", false) { vm.engine.quickMaskToggle() }
             }
             t == Tool.BUCKET || t == Tool.GRADIENT -> {

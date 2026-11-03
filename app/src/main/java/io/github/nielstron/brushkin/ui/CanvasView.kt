@@ -159,6 +159,26 @@ class CanvasView(context: Context, private val vm: EditorViewModel) : View(conte
         drawLoupe(canvas, s)
     }
 
+    // ------------------------------------------------------------------ scissors
+
+    private fun drawScissors(canvas: Canvas) {
+        val anchors = vm.scissorsAnchors
+        if (anchors.isEmpty()) return
+        val p = Path()
+        for ((i, a) in anchors.withIndex()) {
+            if (i == 0) { p.moveTo(a.x, a.y); continue }
+            val seg = vm.scissorsSegs.getOrNull(i - 1)
+            if (seg == null) p.lineTo(a.x, a.y) else { var k = 0; while (k < seg.size) { p.lineTo(seg[k], seg[k + 1]); k += 2 } }
+        }
+        p.transform(viewMatrix)
+        canvas.drawPath(p, guideDark); canvas.drawPath(p, guide)
+        for ((i, a) in anchors.withIndex()) {
+            val v = toView(a.x, a.y)
+            canvas.drawCircle(v.x, v.y, (if (i == 0) 9 else 6) * density, guideDark)
+            canvas.drawCircle(v.x, v.y, (if (i == 0) 9 else 6) * density, guide)
+        }
+    }
+
     // ------------------------------------------------------------------ quick mask
 
     /** Gray mask tile → red tint, half opaque where unselected (like GIMP's quick mask). */
@@ -304,6 +324,7 @@ class CanvasView(context: Context, private val vm: EditorViewModel) : View(conte
         }
         engine.floating?.let { drawFloatingHandles(canvas, it) }
         drawPath(canvas)
+        if (vm.tool == Tool.SCISSORS) drawScissors(canvas)
         if (vm.tool == Tool.CLONE || vm.tool == Tool.HEAL) {
             val src = vm.cloneSource
             val o = vm.cloneOffset
@@ -548,7 +569,7 @@ class CanvasView(context: Context, private val vm: EditorViewModel) : View(conte
         }
         when (tool) {
             Tool.RECT_SELECT, Tool.ELLIPSE_SELECT, Tool.GRADIENT -> { mode = Mode.SHAPE; preview = Path() }
-            Tool.FREE_SELECT -> { mode = Mode.SHAPE; lasso = Path().apply { moveTo(downDoc.x, downDoc.y) }; preview = lasso }
+            Tool.FREE_SELECT, Tool.FOREGROUND_SELECT -> { mode = Mode.SHAPE; lasso = Path().apply { moveTo(downDoc.x, downDoc.y) }; preview = lasso }
             else -> mode = Mode.SHAPE // taps
         }
     }
@@ -635,6 +656,11 @@ class CanvasView(context: Context, private val vm: EditorViewModel) : View(conte
                         else if (isTap) engine.selectNone()
                     }
                     vm.tool == Tool.OBJECT_SELECT -> if (isTap) vm.objectSelect(d.x, d.y)
+                    vm.tool == Tool.SCISSORS -> if (isTap) { vm.scissorsTap(PointF(d.x, d.y), 24 * density / scale); invalidate() }
+                    vm.tool == Tool.FOREGROUND_SELECT -> {
+                        val l = lasso
+                        if (l != null && !isTap) { l.close(); engine.foregroundSelect(Path(l), vm.fgBand.toInt(), vm.selectMode) }
+                    }
                     vm.tool == Tool.FUZZY_SELECT || vm.tool == Tool.COLOR_SELECT -> if (isTap)
                         engine.fuzzySelect(d.x.toInt(), d.y.toInt(), vm.threshold.toInt(), vm.selectMode, vm.tool == Tool.COLOR_SELECT, vm.sampleMerged)
                     vm.tool == Tool.BUCKET -> if (isTap) {
