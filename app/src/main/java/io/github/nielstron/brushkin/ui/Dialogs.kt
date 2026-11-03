@@ -49,6 +49,7 @@ import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import io.github.nielstron.brushkin.engine.Channel
+import io.github.nielstron.brushkin.engine.*
 import io.github.nielstron.brushkin.engine.ColorBalanceFilter
 import io.github.nielstron.brushkin.engine.Curve
 import io.github.nielstron.brushkin.engine.DocInfo
@@ -257,7 +258,42 @@ private data class Param(val label: String, val range: ClosedFloatingPointRange<
 
 private class FilterSpec(val params: List<Param>, val build: (List<Float>) -> Filter)
 
-private val SPECS: Map<String, FilterSpec> = mapOf(
+/** Filters with parameters; colors come from the current foreground/background. */
+private fun specs(vm: EditorViewModel): Map<String, FilterSpec> = BASE_SPECS + mapOf(
+    "Drop Shadow" to FilterSpec(listOf(
+        Param("Offset X", -100f..100f, 16f) { "${it.roundToInt()} px" }, Param("Offset Y", -100f..100f, 16f) { "${it.roundToInt()} px" },
+        Param("Blur", 0f..100f, 12f) { "${it.roundToInt()} px" }, Param("Opacity", 0f..1f, 0.6f),
+    )) { DropShadowFilter(it[0], it[1], it[2], it[3], android.graphics.Color.BLACK) },
+    "Vignette" to FilterSpec(listOf(Param("Radius", 0.2f..1.5f, 0.9f), Param("Softness", 0.05f..1f, 0.6f), Param("Strength", 0f..1f, 0.7f))) {
+        VignetteFilter(it[0], it[1], it[2], android.graphics.Color.BLACK)
+    },
+    "Motion Blur" to FilterSpec(listOf(Param("Length", 1f..200f, 30f) { "${it.roundToInt()} px" }, Param("Angle", -180f..180f, 0f) { "${it.roundToInt()}°" })) { MotionBlurFilter(it[0], it[1]) },
+    "Color to Alpha" to FilterSpec(emptyList()) { ColorToAlphaFilter(vm.bg) },
+    "Shadows-Highlights" to FilterSpec(listOf(Param("Shadows", 0f..1f, 0.4f), Param("Highlights", 0f..1f, 0.2f), Param("Radius", 2f..200f, 40f) { "${it.roundToInt()} px" })) {
+        ShadowsHighlightsFilter(it[0], it[1], it[2])
+    },
+    "Exposure" to FilterSpec(listOf(Param("Exposure", -3f..3f, 0.5f) { "%+.2f EV".format(it) }, Param("Black level", -0.1f..0.1f, 0f) { "%.3f".format(it) })) { ExposureFilter(it[0], it[1]) },
+    "Colorize" to FilterSpec(listOf(Param("Hue", 0f..360f, 200f) { "${it.roundToInt()}°" }, Param("Saturation", 0f..1f, 0.5f), Param("Lightness", -1f..1f, 0f))) {
+        ColorizeFilter(it[0], it[1], it[2])
+    },
+    "Channel Mixer" to FilterSpec(listOf(
+        Param("Red ← red", -2f..2f, 1f), Param("Red ← green", -2f..2f, 0f), Param("Red ← blue", -2f..2f, 0f),
+        Param("Green ← red", -2f..2f, 0f), Param("Green ← green", -2f..2f, 1f), Param("Green ← blue", -2f..2f, 0f),
+        Param("Blue ← red", -2f..2f, 0f), Param("Blue ← green", -2f..2f, 0f), Param("Blue ← blue", -2f..2f, 1f),
+    )) { ChannelMixerFilter(it.toFloatArray(), false) },
+    "Noise Reduction" to FilterSpec(listOf(Param("Strength", 1f..8f, 3f) { "${it.roundToInt()}" })) { NoiseReductionFilter(it[0].roundToInt()) },
+    "Ripple" to FilterSpec(listOf(Param("Amplitude", 0f..100f, 10f) { "${it.roundToInt()} px" }, Param("Period", 4f..400f, 60f) { "${it.roundToInt()} px" }, Param("Vertical", 0f..1f, 0f) { if (it > 0.5f) "yes" else "no" })) {
+        RippleFilter(it[0], it[1], it[2] > 0.5f)
+    },
+    "Whirl and Pinch" to FilterSpec(listOf(Param("Whirl", -720f..720f, 90f) { "${it.roundToInt()}°" }, Param("Pinch", -1f..1f, 0f), Param("Radius", 0.05f..2f, 1f))) {
+        WhirlPinchFilter(it[0], it[1], it[2])
+    },
+    "Lens Distortion" to FilterSpec(listOf(Param("Main", -1f..1f, 0.2f), Param("Edge", -1f..1f, 0f), Param("Zoom", -0.5f..1f, 0f))) {
+        LensDistortionFilter(it[0], it[1], it[2])
+    },
+)
+
+private val BASE_SPECS: Map<String, FilterSpec> = mapOf(
     "Brightness-Contrast" to FilterSpec(listOf(Param("Brightness", -1f..1f, 0f), Param("Contrast", -1f..1f, 0f))) { LutFilter.brightnessContrast(it[0], it[1]) },
     "Levels" to FilterSpec(
         listOf(
@@ -281,7 +317,7 @@ private val SPECS: Map<String, FilterSpec> = mapOf(
 @Composable
 private fun FilterPanel(vm: EditorViewModel, name: String, close: () -> Unit) {
     val e = vm.engine
-    val spec = SPECS[name]
+    val spec = specs(vm)[name]
     val values = remember { mutableStateMapOf<Int, Float>() }
     var curves by remember { mutableStateOf(mapOf<Channel, Curve>()) }
     fun build(): Filter = spec?.build(spec.params.indices.map { values[it] ?: spec.params[it].default }) ?: LutFilter.curves(curves)

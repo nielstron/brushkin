@@ -95,11 +95,25 @@ class EngineTest {
             LutFilter.curves(mapOf()), LutFilter.brightnessContrast(0.3f, 0.2f), LutFilter.levels(20f, 230f, 1.2f, 30f, 200f),
             LutFilter.invert(), LutFilter.posterize(4), HueSaturationFilter(90f, 0.2f, 0f), ColorBalanceFilter(0.2f, 0f, -0.1f),
             ThresholdFilter(100, 255), DesaturateFilter(), GaussianBlurFilter(12f), UnsharpMaskFilter(3f, 1f), PixelizeFilter(16), NoiseFilter(0.2f),
+            io.github.nielstron.brushkin.engine.DropShadowFilter(10f, 10f, 6f, 0.6f, Color.BLACK),
+            io.github.nielstron.brushkin.engine.VignetteFilter(0.8f, 0.5f, 0.8f, Color.BLACK),
+            io.github.nielstron.brushkin.engine.MotionBlurFilter(20f, 30f),
+            io.github.nielstron.brushkin.engine.ColorToAlphaFilter(Color.WHITE),
+            io.github.nielstron.brushkin.engine.ShadowsHighlightsFilter(0.5f, 0.3f, 20f),
+            io.github.nielstron.brushkin.engine.ExposureFilter(0.7f, 0f),
+            io.github.nielstron.brushkin.engine.ColorizeFilter(200f, 0.5f, 0f),
+            io.github.nielstron.brushkin.engine.ChannelMixerFilter(floatArrayOf(0f, 1f, 0f, 1f, 0f, 0f, 0f, 0f, 1f), false),
+            io.github.nielstron.brushkin.engine.AutoLevelsFilter("White Balance", true, 0.01f),
+            io.github.nielstron.brushkin.engine.AutoLevelsFilter("Stretch Contrast", false, 0f),
+            io.github.nielstron.brushkin.engine.NoiseReductionFilter(2),
+            io.github.nielstron.brushkin.engine.RippleFilter(8f, 40f, false),
+            io.github.nielstron.brushkin.engine.WhirlPinchFilter(120f, 0.3f, 1f),
+            io.github.nielstron.brushkin.engine.LensDistortionFilter(0.4f, 0f, 0f),
         )
         for (f in filters) {
             val out = f.apply(src, w, h)
             assertEquals(f.name, src.size, out.size)
-            if (f.name != "Curves") assertTrue("${f.name} had no effect", src.indices.any { src[it] != out[it] })
+            if (f.name !in setOf("Curves", "Drop Shadow", "Noise Reduction")) assertTrue("${f.name} had no effect", src.indices.any { src[it] != out[it] })
         }
     }
 
@@ -113,6 +127,24 @@ class EngineTest {
             val diff = src.indices.maxOf { i -> maxOf(abs(Color.red(whole[i]) - Color.red(banded[i])), abs(Color.blue(whole[i]) - Color.blue(banded[i]))) }
             assertTrue("${f.name} banded differs by $diff", diff <= 1)
         }
+    }
+
+    @Test fun dropShadowAppearsBesideContent() {
+        // A small opaque square on transparency: the shadow shows up below-right of it.
+        val px = IntArray(w * h) { i -> val x = i % w; val y = i / w; if (x in 100..199 && y in 100..199) Color.RED else 0 }
+        val out = io.github.nielstron.brushkin.engine.DropShadowFilter(20f, 20f, 0f, 1f, Color.BLACK).apply(px, w, h)
+        assertEquals(Color.RED, out[150 * w + 150])
+        assertEquals(255, Color.alpha(out[210 * w + 210]))
+        assertEquals(0, Color.red(out[210 * w + 210]))
+        assertEquals(0, Color.alpha(out[50 * w + 50]))
+    }
+
+    @Test fun noiseReductionSmoothsNoise() {
+        val flat = IntArray(w * h) { 0xFF808080.toInt() }
+        val noisy = NoiseFilter(0.15f).apply(flat, w, h)
+        val clean = io.github.nielstron.brushkin.engine.NoiseReductionFilter(3).apply(noisy, w, h)
+        fun spread(p: IntArray) = p.map { Color.red(it) }.let { v -> val m = v.average(); v.sumOf { (it - m) * (it - m) } / v.size }
+        assertTrue("${spread(clean)} vs ${spread(noisy)}", spread(clean) < spread(noisy) * 0.5)
     }
 
     @Test fun floodFillStopsAtEdges() {
