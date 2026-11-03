@@ -65,17 +65,13 @@ class Selection private constructor(
             if (mode == SelectMode.REPLACE) return fromMask(shapeMask)
             if (old == null) return if (mode == SelectMode.ADD) fromMask(shapeMask) else null
             val out = old.mask.copy(Bitmap.Config.ALPHA_8, true)
-            val paint = Paint().apply {
-                xfermode = PorterDuffXfermode(
-                    when (mode) {
-                        SelectMode.ADD -> PorterDuff.Mode.SRC_OVER
-                        SelectMode.SUBTRACT -> PorterDuff.Mode.DST_OUT
-                        SelectMode.INTERSECT -> PorterDuff.Mode.DST_IN
-                        SelectMode.REPLACE -> PorterDuff.Mode.SRC
-                    }
-                )
+            val c = Canvas(out)
+            when (mode) {
+                SelectMode.ADD -> c.drawBitmap(shapeMask, 0f, 0f, Paint())
+                SelectMode.SUBTRACT -> MaskOps.apply(c, shapeMask, 0f, 0f, PorterDuff.Mode.DST_OUT)
+                SelectMode.INTERSECT -> MaskOps.apply(c, shapeMask, 0f, 0f, PorterDuff.Mode.DST_IN)
+                SelectMode.REPLACE -> {}
             }
-            Canvas(out).drawBitmap(shapeMask, 0f, 0f, paint)
             return fromMask(out)
         }
 

@@ -291,7 +291,6 @@ class Engine {
         val session = TileEditSession(target)
         val scratch = Bitmap.createBitmap(TILE, TILE, Bitmap.Config.ARGB_8888)
         val sc = Canvas(scratch)
-        val maskPaint = Paint().apply { xfermode = PorterDuffXfermode(PorterDuff.Mode.DST_IN) }
         val comp = Paint().apply {
             alpha = (opacity * 255).roundToInt()
             when {
@@ -308,7 +307,7 @@ class Engine {
             val tx = target.tileX(i).toFloat(); val ty = target.tileY(i).toFloat()
             scratch.eraseColor(0)
             sc.save(); sc.translate(-tx, -ty); draw(sc); sc.restore()
-            if (sel != null) sc.drawBitmap(sel.mask, -tx, -ty, maskPaint)
+            if (sel != null) MaskOps.apply(sc, sel.mask, -tx, -ty)
             c.setBitmap(session.writable(i))
             c.drawBitmap(scratch, 0f, 0f, comp)
         }
@@ -345,10 +344,9 @@ class Engine {
             Selection.writeMaskBytes(mb, mask, s.width, s.height)
             val bounds = Selection.fromMask(mb)?.bounds ?: return@busy
             val p = Paint().apply { this.color = color }
-            val dst = Paint().apply { xfermode = PorterDuffXfermode(PorterDuff.Mode.DST_IN) }
             paintRegion("Bucket Fill", bounds, opacity, mode) { c ->
                 c.drawColor(color)
-                c.drawBitmap(mb, 0f, 0f, dst)
+                MaskOps.apply(c, mb, 0f, 0f)
             }
             p.reset()
         }
@@ -757,8 +755,8 @@ class Engine {
             val lifted = Bitmap.createBitmap(b.width(), b.height(), Bitmap.Config.ARGB_8888)
             val c = Canvas(lifted)
             c.drawBitmap(full, -b.left.toFloat(), -b.top.toFloat(), null)
-            c.drawBitmap(sel.mask, -b.left.toFloat(), -b.top.toFloat(), Paint().apply { xfermode = PorterDuffXfermode(PorterDuff.Mode.DST_IN) })
-            Canvas(full).drawBitmap(sel.mask, 0f, 0f, Paint().apply { xfermode = PorterDuffXfermode(PorterDuff.Mode.DST_OUT) })
+            MaskOps.apply(c, sel.mask, -b.left.toFloat(), -b.top.toFloat())
+            MaskOps.apply(Canvas(full), sel.mask, 0f, 0f, PorterDuff.Mode.DST_OUT)
             floating = Floating(lifted, Matrix().apply { setTranslate(b.left.toFloat(), b.top.toFloat()) }, l.id, l.name, remainder = TiledBitmap.fromBitmap(full))
         }
         publish(); invalidate()
@@ -821,7 +819,7 @@ class Engine {
         val c = Canvas(bmp)
         c.translate(-b.left.toFloat(), -b.top.toFloat())
         if (merged) Compositor.draw(c, s) else Compositor.drawTiles(c, l.pixels, null, null)
-        s.selection?.let { c.drawBitmap(it.mask, 0f, 0f, Paint().apply { xfermode = PorterDuffXfermode(PorterDuff.Mode.DST_IN) }) }
+        s.selection?.let { MaskOps.apply(c, it.mask, 0f, 0f) }
         clipboard = bmp; clipOffset = Rect(b)
         if (cut) paintRegion("Cut", null, 1f, LayerMode.NORMAL, eraser = true) { it.drawColor(Color.BLACK) }
         else onMessage?.invoke("Copied")
