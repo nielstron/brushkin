@@ -121,6 +121,17 @@ class CanvasView(context: Context, private val vm: EditorViewModel) : View(conte
         val s = engine.stack
         val key = (s.width.toLong() shl 32) or s.height.toLong()
         if (key != fittedFor && width > 0 && s.width > 1) { fittedFor = key; fit() }
+        val g = gl
+        if (g != null) {
+            // The GL view underneath renders the document in linear light; this view only adds overlays.
+            loupeFrame = null
+            s.selection?.let { sel -> drawAnts(canvas, sel) }
+            drawOverlays(canvas)
+            drawLoupe(canvas, s)
+            g.renderer.frame = Frame(Matrix(viewMatrix), scale < 2f, loupeFrame)
+            g.view.requestRender()
+            return
+        }
         canvas.drawColor(0xFF111113.toInt())
         docRect.set(0f, 0f, s.width.toFloat(), s.height.toFloat())
         visible.set(0f, 0f, width.toFloat(), height.toFloat())
@@ -154,6 +165,11 @@ class CanvasView(context: Context, private val vm: EditorViewModel) : View(conte
     private val hairWhite = Paint().apply { style = Paint.Style.STROKE; color = Color.WHITE; strokeWidth = 0f }
     private val hairBlack = Paint().apply { style = Paint.Style.STROKE; color = Color.BLACK; strokeWidth = 0f }
     private val loupeVisible = RectF()
+    private var loupeFrame: Pair<RectF, Matrix>? = null
+
+    /** GL renderer underneath (null: fall back to drawing the document here). */
+    class Gl(val view: android.opengl.GLSurfaceView, val renderer: GlRenderer)
+    var gl: Gl? = null
 
     /** Magnified view of the area under the finger, shown in the top corner away from it. */
     private fun drawLoupe(canvas: Canvas, s: io.github.nielstron.brushkin.engine.Stack) {
@@ -171,6 +187,16 @@ class CanvasView(context: Context, private val vm: EditorViewModel) : View(conte
         val k = (3f).coerceAtMost(48f / scale.coerceAtLeast(1e-3f)).coerceAtLeast(1f)
         val clip = Path().apply { addRoundRect(box, 16 * density, 16 * density, Path.Direction.CW) }
 
+        val total = scale * k
+        if (gl != null) {
+            loupeFrame = box to Matrix(viewMatrix).apply { postTranslate(-touch.x, -touch.y); postScale(k, k); postTranslate(box.centerX(), box.centerY()) }
+            canvas.save(); canvas.clipPath(clip)
+            canvas.translate(box.centerX(), box.centerY()); canvas.scale(k, k); canvas.translate(-touch.x, -touch.y); canvas.concat(viewMatrix)
+            s.selection?.let { canvas.drawPath(it.outline, hairBlack) }
+            preview?.let { canvas.drawPath(it, hairBlack) }
+            vm.cropRect?.let { canvas.drawRect(it, hairWhite) }
+            canvas.restore()
+        } else {
         canvas.save()
         canvas.clipPath(clip)
         canvas.drawRect(box, loupeBg)
@@ -178,7 +204,6 @@ class CanvasView(context: Context, private val vm: EditorViewModel) : View(conte
         canvas.scale(k, k)
         canvas.translate(-touch.x, -touch.y)
         canvas.concat(viewMatrix)
-        val total = scale * k
         // Doc-space region visible in the loupe.
         val half = size / 2f / total * 1.5f
         val d = toDoc(touch.x, touch.y)
@@ -194,6 +219,7 @@ class CanvasView(context: Context, private val vm: EditorViewModel) : View(conte
         vm.cropRect?.let { canvas.drawRect(it, hairWhite) }
         canvas.restore()
         checker.shader.setLocalMatrix(Matrix().apply { setScale(1 / scale, 1 / scale) })
+        }
 
         // Crosshair and brush outline at the center.
         val cx = box.centerX(); val cy = box.centerY()

@@ -72,7 +72,28 @@ fun EditorScreen(vm: EditorViewModel, files: FileActions) {
 
     Box(Modifier.fillMaxSize().background(Ui.ground)) {
         AndroidView(
-            factory = { ctx -> CanvasView(ctx, vm).also { v -> holder.view = v } },
+            factory = { ctx ->
+                val canvasView = CanvasView(ctx, vm).also { holder.view = it }
+                android.widget.FrameLayout(ctx).apply {
+                    // Linear-light GPU rendering when OpenGL ES 3 is available; the canvas view on
+                    // top handles input and overlays. Without GLES3 it draws the document itself.
+                    val es3 = (ctx.getSystemService(android.content.Context.ACTIVITY_SERVICE) as android.app.ActivityManager)
+                        .deviceConfigurationInfo.reqGlEsVersion >= 0x30000
+                    if (es3) {
+                        val renderer = GlRenderer(vm.engine)
+                        val glView = android.opengl.GLSurfaceView(ctx).apply {
+                            setEGLContextClientVersion(3)
+                            setEGLConfigChooser(8, 8, 8, 8, 0, 0)
+                            preserveEGLContextOnPause = true
+                            setRenderer(renderer)
+                            renderMode = android.opengl.GLSurfaceView.RENDERMODE_WHEN_DIRTY
+                        }
+                        addView(glView)
+                        canvasView.gl = CanvasView.Gl(glView, renderer)
+                    }
+                    addView(canvasView)
+                }
+            },
             modifier = Modifier.fillMaxSize(),
         )
 

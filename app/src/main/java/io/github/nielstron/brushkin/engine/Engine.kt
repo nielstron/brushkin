@@ -380,9 +380,8 @@ class Engine {
         val bmp = Bitmap.createBitmap(1, 1, Bitmap.Config.ARGB_8888)
         val c = Canvas(bmp)
         c.translate(-x.toFloat(), -y.toFloat())
-        if (merged) Compositor.draw(c, s, RectF(x.toFloat(), y.toFloat(), x + 1f, y + 1f), filter = false)
-        else s.active?.let { Compositor.drawTiles(c, it.pixels, null, null) }
-        val px = bmp.getPixel(0, 0)
+        val px = if (merged) Compositor.flatten(s, region = Rect(x, y, x + 1, y + 1)).getPixel(0, 0)
+        else { s.active?.let { Compositor.drawTiles(c, it.pixels, null, null) }; bmp.getPixel(0, 0) }
         if (Color.alpha(px) > 0) withContext(Dispatchers.Main) { cb(px or 0xFF000000.toInt()) }
     }
 
@@ -916,7 +915,7 @@ class Engine {
         val bmp = Bitmap.createBitmap(b.width(), b.height(), Bitmap.Config.ARGB_8888)
         val c = Canvas(bmp)
         c.translate(-b.left.toFloat(), -b.top.toFloat())
-        if (merged) Compositor.draw(c, s) else Compositor.drawTiles(c, l.pixels, null, null)
+        if (merged) c.drawBitmap(Compositor.flatten(s), 0f, 0f, null) else Compositor.drawTiles(c, l.pixels, null, null)
         s.selection?.let { MaskOps.apply(c, it.mask, 0f, 0f) }
         clipboard = bmp; clipOffset = Rect(b)
         if (cut) paintRegion("Cut", null, 1f, LayerMode.NORMAL, eraser = true) { it.drawColor(Color.BLACK) }

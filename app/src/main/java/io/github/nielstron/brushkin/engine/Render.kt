@@ -142,12 +142,58 @@ object Compositor {
         canvas.drawBitmap(f.bitmap, f.matrix, floatPaint)
     }
 
-    /** Flattened image on a software canvas. */
-    fun flatten(stack: Stack, background: Int? = null): Bitmap {
-        val out = Bitmap.createBitmap(stack.width, stack.height, Bitmap.Config.ARGB_8888)
-        val c = Canvas(out)
+    /**
+     * Flattened image, composited in **linear light** like the GPU display and GIMP 2.10+: layers
+     * are drawn into a half-float linear-sRGB bitmap (Skia blends in the destination's color
+     * space), then converted back to 8-bit sRGB. [region] limits the work to part of the image.
+     */
+    fun flatten(stack: Stack, background: Int? = null, region: android.graphics.Rect? = null): Bitmap {
+        val r = region ?: android.graphics.Rect(0, 0, stack.width, stack.height)
+        val lin = Bitmap.createBitmap(r.width(), r.height(), Bitmap.Config.RGBA_F16, true, android.graphics.ColorSpace.get(android.graphics.ColorSpace.Named.LINEAR_EXTENDED_SRGB))
+        val c = Canvas(lin)
         if (background != null) c.drawColor(background)
-        draw(c, stack)
+        c.translate(-r.left.toFloat(), -r.top.toFloat())
+        drawLinear(c, stack, stack.layers, RectF(r))
+        val out = Bitmap.createBitmap(r.width(), r.height(), Bitmap.Config.ARGB_8888)
+        Canvas(out).drawBitmap(lin, 0f, 0f, null)
         return out
+    }
+
+    private fun drawLinear(canvas: Canvas, stack: Stack, list: List<Layer>, visible: RectF) {
+        val w = stack.width.toFloat(); val h = stack.height.toFloat()
+        val tp = Paint().apply { isFilterBitmap = false }
+        for (layer in list) {
+            if (!layer.visible) continue
+            val mask = if (layer.masked) layer.mask else null
+            val needsLayer = layer.isGroup || layer.opacity < 1f || layer.mode.blend != null || mask != null
+            if (needsLayer) {
+                val lp = Paint()
+                lp.alpha = (layer.opacity * 255).toInt()
+                layer.mode.blend?.let { lp.blendMode = it }
+                canvas.saveLayer(0f, 0f, w, h, lp)
+            }
+            if (layer.isGroup) drawLinear(canvas, stack, layer.children!!, visible)
+            else drawTiles(canvas, layer.pixels, visible, tp)
+            if (mask != null) {
+                // Mask values are coverage, not color: turn each tile into an alpha mask first so
+                // no color conversion touches them.
+                for (i in mask.tiles.indices) {
+                    val t = mask.tiles[i] ?: continue
+                    val x = mask.tileX(i).toFloat(); val y = mask.tileY(i).toFloat()
+                    if (x > visible.right || y > visible.bottom || x + TILE < visible.left || y + TILE < visible.top) continue
+                    MaskOps.multiply(canvas, toAlpha(t), x, y)
+                }
+            }
+            if (needsLayer) canvas.restore()
+        }
+    }
+
+    private fun toAlpha(t: Bitmap): Bitmap {
+        val px = IntArray(TILE * TILE); t.getPixels(px, 0, TILE, 0, 0, TILE, TILE)
+        val a = Bitmap.createBitmap(TILE, TILE, Bitmap.Config.ALPHA_8)
+        val bytes = ByteArray(a.rowBytes * TILE)
+        for (y in 0 until TILE) for (x in 0 until TILE) bytes[y * a.rowBytes + x] = luma(px[y * TILE + x]).toByte()
+        a.copyPixelsFromBuffer(java.nio.ByteBuffer.wrap(bytes))
+        return a
     }
 }
