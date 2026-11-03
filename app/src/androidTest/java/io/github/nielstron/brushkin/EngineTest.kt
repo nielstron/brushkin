@@ -93,6 +93,18 @@ class EngineTest {
         }
     }
 
+    @Test fun bandedFiltersMatchWholeImage() {
+        val t = canvas()
+        val src = t.toPixels()
+        // Blur ends early only at true image edges; inner band seams must be invisible.
+        for (f in listOf(GaussianBlurFilter(9f), UnsharpMaskFilter(4f, 1.5f), PixelizeFilter(16), LutFilter.levels(20f, 230f, 1.2f, 30f, 200f))) {
+            val whole = f.apply(src, w, h)
+            val banded = io.github.nielstron.brushkin.engine.applyFilterBanded(t, f, null, bandPixels = w * 37).toPixels()
+            val diff = src.indices.maxOf { i -> maxOf(abs(Color.red(whole[i]) - Color.red(banded[i])), abs(Color.blue(whole[i]) - Color.blue(banded[i]))) }
+            assertTrue("${f.name} banded differs by $diff", diff <= 1)
+        }
+    }
+
     @Test fun floodFillStopsAtEdges() {
         val px = canvas().toPixels()
         val m = floodFill(px, w, h, 10, 10, 15)

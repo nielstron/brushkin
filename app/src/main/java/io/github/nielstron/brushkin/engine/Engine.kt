@@ -809,12 +809,11 @@ class Engine {
         val l = s.find(filterLayer) ?: return@post
         val target = if (filterOnMask && l.mask != null) l.mask else l.pixels
         busy(f.name) {
-            val out = withContext(Dispatchers.Default) {
-                val src = target.toPixels()
-                maskBlend(src, f.apply(src, s.width, s.height), s.selection?.bytes(), s.width, s.height)
-            }
+            // Process in horizontal bands (overlapping by the filter's reach) so even very large
+            // images never need more than a few band-sized arrays on the Java heap.
+            val out = withContext(Dispatchers.Default) { applyFilterBanded(target, f, s.selection?.mask) }
             preview = null
-            replaceTiles(s, target, TiledBitmap.fromPixels(out, s.width, s.height, target.fill), f.name)
+            replaceTiles(s, target, out, f.name)
         }
     }
 

@@ -54,7 +54,10 @@ reachable from a searchable menu; search ranks with BM25 over plain-language des
   (`ui/GlRenderer.kt`): tiles are linearized in the shader and layers composited in half-float
   buffers with the W3C blend formulas; masks, groups and the loupe go through the same pipeline.
   Export, color picking and merging do the same math on the CPU in a half-float linear bitmap
-  (`engine/Render.kt`). The instrumentation tests check both against files rendered by GIMP 3.2.
+  (`engine/Render.kt`), and paint is blended onto layers in linear light too. The
+  instrumentation tests check the output against files rendered by GIMP 3.2.
+- **Large images.** Filters are applied in overlapping horizontal bands, so a 6000×4000 photo is
+  processed without holding several full-size copies in memory.
 - **Isolated ML.** Object selection runs in a separate `:ml` process; a crash in the native model
   only shows a message.
 
@@ -66,15 +69,16 @@ Requires the Android SDK (compile SDK 36) and JDK 17+.
 ./gradlew :app:assembleDebug           # build
 ./gradlew :app:installDebug            # install on a connected device
 ./gradlew :app:testDebugUnitTest       # JVM tests (command search)
-./gradlew :app:connectedDebugAndroidTest   # device tests (XCF/ORA vs. GIMP reference renders)
+./gradlew :app:connectedDebugAndroidTest   # device tests: XCF/ORA vs. GIMP renders, every tool and filter
 ```
 
 ## Known limitations
 
-- Painting itself (dabs within one layer) blends in sRGB; only layer compositing is linear.
-- 64-bit (double) precision XCF files and fractal-compressed XCF tiles aren't supported; XCF files
-  are always written as 8-bit sRGB.
+- Pixels are stored at 8 bits per channel (GIMP's default precision). Higher-precision XCF files
+  are read and converted; XCF files are written as 8-bit sRGB, which is lossless for Brushkin's
+  data.
+- 64-bit (double) precision and fractal-compressed XCF files aren't supported.
+- Images larger than 8192 px or 40 megapixels are scaled down on import (with a message).
 - Masks are stored in .ora files with Brushkin-specific attributes that other apps ignore.
 - Object selection needs Google Play services. ML Kit's per-subject masks crash in the current
   beta, so the tapped object is isolated from the foreground mask instead.
-- Imported images are limited to 4096 px on the long side.
