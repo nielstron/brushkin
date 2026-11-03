@@ -141,6 +141,12 @@ fun EditorScreen(vm: EditorViewModel, files: FileActions) {
             IconButton(onClick = { vm.dialog = "export" }) { Icon(Icons.Rounded.IosShare, "Export", tint = Ui.text) }
         }
 
+        // With a selection, whatever the tool: × to deselect, top left (mirroring cut/copy on the right).
+        if (info.hasSelection && !info.floating) Box(
+            Modifier.align(Alignment.TopStart).statusBarsPadding().padding(top = if (vm.showRulers) 94.dp else 72.dp, start = 12.dp)
+                .clip(RoundedCornerShape(14.dp)).background(Ui.panel.copy(alpha = 0.94f)).border(1.dp, Ui.border, RoundedCornerShape(14.dp)),
+        ) { IconButton(onClick = { vm.engine.selectNone(); vm.objectNew(); holder.view?.invalidate() }) { Icon(Icons.Rounded.Close, "Deselect", tint = Ui.text) } }
+
         // Clipboard actions, shown when there's something to act on. Deleting pixels stays on the
         // Del key and Edit → Clear.
         if ((info.hasSelection || vm.clipHasImage) && !info.floating) {
@@ -263,12 +269,6 @@ private fun ContextChips(vm: EditorViewModel, hasSelection: Boolean, holder: Can
     Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
         val t = vm.tool
         val quickMask = vm.engine.info.collectAsState().value.quickMask
-        // With a selection, whatever the tool: a round × to deselect, always first.
-        if (hasSelection && !vm.pipette) Box(
-            Modifier.size(40.dp).clip(CircleShape).background(Ui.panel.copy(alpha = 0.94f)).border(1.dp, Ui.border, CircleShape)
-                .clickable(onClickLabel = "Deselect") { vm.engine.selectNone(); vm.objectNew(); holder?.view?.invalidate() },
-            contentAlignment = Alignment.Center,
-        ) { Icon(Icons.Rounded.Close, "Deselect", tint = Ui.text, modifier = Modifier.size(20.dp)) }
         if (quickMask) Chip("Quick mask", true) { vm.engine.quickMaskToggle() }
         if (vm.pipette) {
             Text("Touch the image to pick a color", color = Ui.text, fontSize = 13.sp, modifier = Modifier.align(Alignment.CenterVertically).padding(horizontal = 4.dp))
