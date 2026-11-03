@@ -70,6 +70,16 @@ class EngineTest {
         }
     }
 
+    @Test fun strokesAreContinuousAcrossTiles() {
+        val t = canvas()
+        // Several input batches, like real touch events, crossing the tile border at x = 256.
+        val op = StrokeOp(t, PaintTool.BRUSH, BrushSettings(size = 20f, hardness = 1f), Color.BLACK, false, null)
+        for (x in 150..350 step 13) op.add(listOf(StrokePoint(x.toFloat(), 120f, 1f)))
+        op.catchUp(); op.finish()
+        val px = t.toPixels()
+        for (x in 160..340) assertTrue("gap at x=$x: %08X".format(px[120 * w + x]), Color.red(px[120 * w + x]) < 60)
+    }
+
     @Test fun selectionClipsStrokes() {
         val t = canvas()
         val sel = Selection.combine(null, Path().apply { addRect(0f, 0f, 200f, 400f, Path.Direction.CW) }, w, h, SelectMode.REPLACE, false, 0f)

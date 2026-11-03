@@ -207,7 +207,8 @@ private fun OptionsSheet(vm: EditorViewModel) {
             }
             Toggle("FG to transparent", vm.fgToTransparent) { vm.fgToTransparent = it }
         }
-        if (t == Tool.TRANSFORM) Toggle("Snap rotation to 15°", vm.fixedRatio) { vm.fixedRatio = it }
+        if (t == Tool.ROTATE) Toggle("Snap rotation to 15°", vm.snapRotation) { vm.snapRotation = it }
+        if (t == Tool.SCALE) Toggle("Keep aspect ratio", vm.keepRatio) { vm.keepRatio = it }
     }
 }
 
@@ -454,6 +455,12 @@ private fun LayerRow(vm: EditorViewModel, l: LayerInfo, active: Boolean, info: D
             }
             Spacer(Modifier.height(6.dp))
             Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                if (!l.isGroup) {
+                    // Act on the whole layer, or just the selected part of it.
+                    Chip("Move", false, ToolIcons.move) { vm.sheet = Sheet.NONE; vm.selectTool(Tool.MOVE) }
+                    Chip("Scale", false, ToolIcons.transform) { vm.sheet = Sheet.NONE; vm.selectTool(Tool.SCALE) }
+                    Chip("Rotate", false, ToolIcons.rotate) { vm.sheet = Sheet.NONE; vm.selectTool(Tool.ROTATE) }
+                }
                 if (l.depth > 0) Chip("Move out of group", false) { e.moveOutOfGroup(l.id) }
                 Chip("Into group above", false) { e.moveIntoGroupAbove(l.id) }
                 if (!l.isGroup) Chip("Put in new group", false) { e.groupActive() }
@@ -554,8 +561,10 @@ private fun InsertSheet(vm: EditorViewModel, files: FileActions) {
             }
         }
         Spacer(Modifier.height(18.dp))
-        SectionLabel("Emoji")
-        Spacer(Modifier.height(8.dp))
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            SectionLabel("Emoji", Modifier.weight(1f))
+            Text("All emoji…", color = Ui.accent, fontSize = 13.sp, modifier = Modifier.clickable { vm.sheet = Sheet.NONE; vm.dialog = "emoji" }.padding(8.dp))
+        }
         FlowRow(maxItemsInEachRow = 8, horizontalArrangement = Arrangement.SpaceBetween) {
             for (em in EMOJI) Box(
                 Modifier.size(44.dp).clip(RoundedCornerShape(10.dp)).clickable { vm.sheet = Sheet.NONE; vm.engine.placeFloating(renderText(em, 400f, Typeface.DEFAULT, android.graphics.Color.BLACK), "Emoji $em") },

@@ -303,6 +303,19 @@ class CanvasView(context: Context, private val vm: EditorViewModel) : View(conte
         val path = Path().apply { moveTo(pts[0], pts[1]); lineTo(pts[2], pts[3]); lineTo(pts[4], pts[5]); lineTo(pts[6], pts[7]); close() }
         canvas.drawPath(path, guideDark); canvas.drawPath(path, accent)
         val hr = 7 * density
+        if (f.targetLayerId != null) when (vm.tool) {
+            Tool.MOVE -> return
+            Tool.ROTATE -> {
+                val cx = (pts[0] + pts[4]) / 2; val cy = (pts[1] + pts[5]) / 2; val r = 10 * density
+                for (p in listOf(guideDark, accent)) { canvas.drawLine(cx - r, cy, cx + r, cy, p); canvas.drawLine(cx, cy - r, cx, cy + r, p) }
+                return
+            }
+            Tool.SCALE -> {
+                for (i in 0 until 4) { canvas.drawCircle(pts[i * 2], pts[i * 2 + 1], hr, handleFill); canvas.drawCircle(pts[i * 2], pts[i * 2 + 1], hr, accent) }
+                return
+            }
+            else -> {}
+        }
         for (i in 0 until 4) {
             canvas.drawCircle(pts[i * 2], pts[i * 2 + 1], hr, handleFill)
             canvas.drawCircle(pts[i * 2], pts[i * 2 + 1], hr, accent)
@@ -452,6 +465,7 @@ class CanvasView(context: Context, private val vm: EditorViewModel) : View(conte
         val f = engine.floating
         val tool = vm.tool
         if (f != null) { startFloating(e, f); return }
+        if (tool == Tool.MOVE) { engine.liftActive(); mode = Mode.FLOAT_MOVE; moving = true; return }
         if (tool == Tool.PATHS) { startPath(); return }
         if (tool == Tool.CROP) { mode = Mode.CROP; vm.cropRect = RectF(downDoc.x, downDoc.y, downDoc.x, downDoc.y); return }
         if (vm.pickMode || tool == Tool.PICKER) { mode = Mode.PICK; pick(e.x, e.y); return }
@@ -573,6 +587,7 @@ class CanvasView(context: Context, private val vm: EditorViewModel) : View(conte
                 preview = null; lasso = null
             }
             Mode.PICK -> vm.pushRecent(vm.fg)
+            Mode.FLOAT_MOVE -> if (moving || vm.tool == Tool.MOVE) { moving = false; engine.commitMove(d.x - downDoc.x, d.y - downDoc.y) }
             else -> {}
         }
     }
@@ -680,6 +695,22 @@ class CanvasView(context: Context, private val vm: EditorViewModel) : View(conte
         val pts = f.corners(); viewMatrix.mapPoints(pts)
         val hit = 24 * density
         fStart.set(f.matrix)
+        val centerDoc = toDoc((pts[0] + pts[4]) / 2, (pts[1] + pts[5]) / 2)
+        if (f.targetLayerId != null) when (vm.tool) {
+            // Dedicated tools: Rotate turns around the center from anywhere; Move only moves.
+            Tool.ROTATE -> { mode = Mode.FLOAT_ROTATE; fPivotDoc = centerDoc; return }
+            Tool.MOVE -> { mode = Mode.FLOAT_MOVE; return }
+            Tool.SCALE -> {
+                for (i in 0 until 4) if (hypot(e.x - pts[i * 2], e.y - pts[i * 2 + 1]) < hit) {
+                    mode = Mode.FLOAT_SCALE
+                    val opp = (i + 2) % 4
+                    fPivotDoc = toDoc(pts[opp * 2], pts[opp * 2 + 1]); fAnchorDoc = toDoc(pts[i * 2], pts[i * 2 + 1])
+                    return
+                }
+                mode = Mode.FLOAT_MOVE; return
+            }
+            else -> {}
+        }
         val rh = rotateHandle(pts)
         val centerView = PointF((pts[0] + pts[4]) / 2, (pts[1] + pts[5]) / 2)
         val cDoc = toDoc(centerView.x, centerView.y)
@@ -698,23 +729,33 @@ class CanvasView(context: Context, private val vm: EditorViewModel) : View(conte
         mode = Mode.FLOAT_MOVE
     }
 
+    /** Move tool drag in progress (the layer is lifted on touch and applied on release). */
+    private var moving = false
+
     private fun dragFloating(e: MotionEvent) {
         val f = engine.floating ?: return
         val d = toDoc(e.x, e.y)
+        if (moving) { f.matrix.set(f.initial); f.matrix.postTranslate(d.x - downDoc.x, d.y - downDoc.y); return }
         f.matrix.set(fStart)
         when (mode) {
             Mode.FLOAT_MOVE -> f.matrix.postTranslate(d.x - downDoc.x, d.y - downDoc.y)
             Mode.FLOAT_SCALE -> {
-                val s0 = hypot(fAnchorDoc.x - fPivotDoc.x, fAnchorDoc.y - fPivotDoc.y).coerceAtLeast(1f)
-                val s1 = hypot(d.x - fPivotDoc.x, d.y - fPivotDoc.y)
-                val k = (s1 / s0).coerceAtLeast(0.01f)
-                f.matrix.postScale(k, k, fPivotDoc.x, fPivotDoc.y)
+                if (vm.tool == Tool.SCALE && !vm.keepRatio) {
+                    // Free scale: each axis follows the finger independently.
+                    fun k(a: Float, p: Float, x: Float) = if (kotlin.math.abs(a - p) < 1f) 1f else ((x - p) / (a - p)).coerceIn(-100f, 100f).let { if (kotlin.math.abs(it) < 0.01f) 0.01f else it }
+                    f.matrix.postScale(k(fAnchorDoc.x, fPivotDoc.x, d.x), k(fAnchorDoc.y, fPivotDoc.y, d.y), fPivotDoc.x, fPivotDoc.y)
+                } else {
+                    val s0 = hypot(fAnchorDoc.x - fPivotDoc.x, fAnchorDoc.y - fPivotDoc.y).coerceAtLeast(1f)
+                    val s1 = hypot(d.x - fPivotDoc.x, d.y - fPivotDoc.y)
+                    val k = (s1 / s0).coerceAtLeast(0.01f)
+                    f.matrix.postScale(k, k, fPivotDoc.x, fPivotDoc.y)
+                }
             }
             Mode.FLOAT_ROTATE -> {
                 val a0 = atan2(downDoc.y - fPivotDoc.y, downDoc.x - fPivotDoc.x)
                 val a1 = atan2(d.y - fPivotDoc.y, d.x - fPivotDoc.x)
                 var deg = Math.toDegrees((a1 - a0).toDouble()).toFloat()
-                if (vm.fixedRatio) deg = Math.round(deg / 15f) * 15f
+                if (vm.snapRotation) deg = Math.round(deg / 15f) * 15f
                 f.matrix.postRotate(deg, fPivotDoc.x, fPivotDoc.y)
             }
             else -> {}

@@ -330,6 +330,7 @@ class StrokeOp(
         MaskOps.apply(c2, buf[i]!!, 0f, 0f)
         if (selection != null) MaskOps.apply(c2, selection.mask, -target.tileX(i).toFloat(), -target.tileY(i).toFloat())
         LinearTile.composite(tile, orig, target.fill) { c -> c.drawBitmap(sc, 0f, 0f, effectPaint) }
+        target.touched(i)
     }
 
     private fun recomposite(i: Int) {
@@ -347,6 +348,7 @@ class StrokeOp(
         }
         val stroke = src
         LinearTile.composite(tile, orig, target.fill) { c -> c.drawBitmap(stroke, 0f, 0f, compPaint) }
+        target.touched(i)
     }
 
     private fun smudgeDab(dst: RectF, ir: Rect, alpha: Float) {
@@ -384,6 +386,7 @@ class StrokeOp(
             val t = session.writable(i)
             canvas.setBitmap(t)
             canvas.drawBitmap(stamp, (ir.left - target.tileX(i)).toFloat(), (ir.top - target.tileY(i)).toFloat(), p)
+            target.touched(i)
         }
         canvas.setBitmap(null)
     }
@@ -407,20 +410,26 @@ object LinearTile {
         Bitmap.createBitmap(TILE, TILE, Bitmap.Config.RGBA_F16, true, android.graphics.ColorSpace.get(android.graphics.ColorSpace.Named.LINEAR_EXTENDED_SRGB))
     }
     private val copy = Paint().apply { xfermode = PorterDuffXfermode(PorterDuff.Mode.SRC) }
+    private val tileCanvas = ThreadLocal.withInitial { Canvas() }
 
     fun composite(tile: Bitmap, orig: Bitmap?, fill: Int, draw: (Canvas) -> Unit) {
-        if (fill != 0) {
-            val c = Canvas(tile)
-            tile.eraseColor(fill)
-            if (orig != null) c.drawBitmap(orig, 0f, 0f, null)
-            draw(c)
-            return
-        }
-        val l = lin.get()!!
-        l.eraseColor(0)
-        val lc = Canvas(l)
-        if (orig != null) lc.drawBitmap(orig, 0f, 0f, null)
-        draw(lc)
-        Canvas(tile).drawBitmap(l, 0f, 0f, copy)
+        // Unbinding the canvas afterwards (setBitmap(null)) is what bumps the bitmap's generation
+        // ID; the GPU renderer relies on it to re-upload changed tiles.
+        val c = tileCanvas.get()!!
+        c.setBitmap(tile)
+        try {
+            if (fill != 0) {
+                tile.eraseColor(fill)
+                if (orig != null) c.drawBitmap(orig, 0f, 0f, null)
+                draw(c)
+                return
+            }
+            val l = lin.get()!!
+            l.eraseColor(0)
+            val lc = Canvas(l)
+            if (orig != null) lc.drawBitmap(orig, 0f, 0f, null)
+            draw(lc)
+            c.drawBitmap(l, 0f, 0f, copy)
+        } finally { c.setBitmap(null) }
     }
 }

@@ -140,9 +140,17 @@ fun EditorScreen(vm: EditorViewModel, files: FileActions) {
         }
 
         Column(Modifier.align(Alignment.BottomCenter).navigationBarsPadding().padding(horizontal = 12.dp).padding(bottom = 12.dp)) {
-            if (info.floating) ConfirmBar("Place", onCancel = { vm.engine.cancelFloating(); if (vm.tool == Tool.TRANSFORM) vm.selectTool(vm.lastPaintTool) }) {
-                vm.engine.floating?.let { f -> vm.engine.commitFloating(android.graphics.Matrix(f.matrix)) }
-                if (vm.tool == Tool.TRANSFORM) vm.selectTool(vm.lastPaintTool)
+            if (info.floating && vm.tool != Tool.MOVE) {
+                val lifted = vm.tool == Tool.SCALE || vm.tool == Tool.ROTATE
+                if (lifted) Row(Modifier.padding(bottom = 8.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    if (vm.tool == Tool.SCALE) Chip("Keep ratio", vm.keepRatio) { vm.keepRatio = !vm.keepRatio }
+                    if (vm.tool == Tool.ROTATE) Chip("Snap 15°", vm.snapRotation) { vm.snapRotation = !vm.snapRotation }
+                }
+                ConfirmBar(if (lifted) "Apply" else "Place", onCancel = { vm.engine.cancelFloating(); if (lifted) vm.engine.liftActive() }) {
+                    vm.engine.floating?.let { f -> vm.engine.commitFloating(android.graphics.Matrix(f.matrix), vm.tool.label) }
+                    // Stay in the tool, ready for the next adjustment.
+                    if (lifted) vm.engine.liftActive()
+                }
             }
             else if (vm.tool == Tool.CROP && vm.cropRect != null) ConfirmBar("Crop", onCancel = { vm.cropRect = null; holder.view?.invalidate() }) {
                 vm.cropRect?.let { r -> vm.engine.crop(android.graphics.Rect(r.left.roundToInt(), r.top.roundToInt(), r.right.roundToInt(), r.bottom.roundToInt())) }
@@ -237,6 +245,18 @@ private fun ContextChips(vm: EditorViewModel, hasSelection: Boolean, holder: Can
                 Chip("Stroke with ${vm.lastPaintTool.label.lowercase()}", false) { vm.strokePath() }
                 Chip(if (vm.path.closed) "Open" else "Close", vm.path.closed) { vm.path.closed = !vm.path.closed; vm.pathVersion++; holder?.view?.invalidate() }
                 Chip("Clear", false) { vm.path.clear(); vm.pathVersion++; holder?.view?.invalidate() }
+            }
+            t == Tool.MOVE || t == Tool.SCALE || t == Tool.ROTATE -> {
+                val name = vm.engine.info.collectAsState().value.let { i -> i.layers.firstOrNull { it.id == i.activeId }?.name ?: "" }
+                val what = if (hasSelection) "the selection on “$name”" else "“$name”"
+                Text(
+                    when (t) { Tool.MOVE -> "Drag to move $what"; Tool.SCALE -> "Scaling $what"; else -> "Drag to rotate $what" },
+                    color = Ui.muted, fontSize = 13.sp, modifier = Modifier.padding(8.dp), maxLines = 1,
+                )
+            }
+            t == Tool.FLIP -> {
+                Chip("Flip horizontally", false, ToolIcons.mirror) { vm.engine.flipLayer(true) }
+                Chip("Flip vertically", false) { vm.engine.flipLayer(false) }
             }
             t == Tool.CROP -> Text("Drag to choose the area to keep", color = Ui.muted, fontSize = 13.sp, modifier = Modifier.padding(8.dp))
             t == Tool.TEXT -> Text("Tap the canvas to add text", color = Ui.muted, fontSize = 13.sp, modifier = Modifier.padding(8.dp))

@@ -120,6 +120,7 @@ fun Dialogs(vm: EditorViewModel, info: DocInfo, files: FileActions) {
             confirmButton = { TextButton(onClick = close) { Text("Close") } },
         )
         d == "new" -> NewImageDialog(vm, close)
+        d == "emoji" -> EmojiDialog(vm, close)
         d == "text" -> TextDialog(vm, close)
         d == "scale" -> SizeDialog("Scale image", info.width, info.height, true, close) { w, h -> e.scaleImage(w, h) }
         d == "canvas" -> SizeDialog("Canvas size", info.width, info.height, false, close) { w, h -> e.canvasSize(w, h, (w - info.width) / 2, (h - info.height) / 2) }
@@ -129,6 +130,28 @@ fun Dialogs(vm: EditorViewModel, info: DocInfo, files: FileActions) {
             e.selectModify(d.replaceFirstChar { it.uppercase() } + " Selection", r, when (d) { "grow" -> 1; "shrink" -> -1; else -> 0 })
         }
         d.startsWith("filter:") -> FilterPanel(vm, d.removePrefix("filter:"), close)
+    }
+}
+
+/** Every system emoji, via AndroidX's emoji picker; the chosen one is placed as a layer. */
+@Composable
+private fun EmojiDialog(vm: EditorViewModel, close: () -> Unit) {
+    androidx.compose.ui.window.Dialog(onDismissRequest = close) {
+        Column(Modifier.fillMaxWidth().clip(RoundedCornerShape(20.dp)).background(Ui.panel).padding(8.dp)) {
+            Text("Emoji", color = Ui.text, fontSize = 18.sp, fontWeight = FontWeight.Bold, modifier = Modifier.padding(8.dp))
+            androidx.compose.ui.viewinterop.AndroidView(
+                factory = { ctx ->
+                    androidx.emoji2.emojipicker.EmojiPickerView(ctx).apply {
+                        emojiGridColumns = 8
+                        setOnEmojiPickedListener { item ->
+                            close()
+                            vm.engine.placeFloating(renderText(item.emoji, 400f, Typeface.DEFAULT, android.graphics.Color.BLACK), "Emoji ${item.emoji}")
+                        }
+                    }
+                },
+                modifier = Modifier.fillMaxWidth().height(460.dp),
+            )
+        }
     }
 }
 

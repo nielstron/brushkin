@@ -47,13 +47,18 @@ enum class Tool(val label: String, val group: ToolGroup, val paint: PaintTool? =
     BLUR_SHARPEN("Blur / Sharpen", ToolGroup.PAINT, PaintTool.BLUR),
     BUCKET("Bucket Fill", ToolGroup.PAINT),
     GRADIENT("Gradient", ToolGroup.PAINT),
-    TRANSFORM("Transform", ToolGroup.TRANSFORM),
+    MOVE("Move", ToolGroup.TRANSFORM),
+    SCALE("Scale", ToolGroup.TRANSFORM),
+    ROTATE("Rotate", ToolGroup.TRANSFORM),
+    FLIP("Flip", ToolGroup.TRANSFORM),
     CROP("Crop", ToolGroup.TRANSFORM),
     PATHS("Paths", ToolGroup.OTHER),
     PICKER("Color Picker", ToolGroup.OTHER),
     TEXT("Text", ToolGroup.OTHER);
 
     val isSelect get() = group == ToolGroup.SELECT
+    /** Tools that work on a lifted copy of the layer (applied or cancelled as a whole). */
+    val liftsLayer get() = this == MOVE || this == SCALE || this == ROTATE
 }
 
 enum class Sheet { NONE, TOOLS, OPTIONS, COLOR, LAYERS, INSERT, HISTORY }
@@ -115,6 +120,8 @@ class EditorViewModel(app: Application) : AndroidViewModel(app) {
     var eraseToggle by mutableStateOf(false)
     var fromCenter by mutableStateOf(false)
     var fixedRatio by mutableStateOf(false)
+    var keepRatio by mutableStateOf(true)
+    var snapRotation by mutableStateOf(false)
 
     var selectMode by mutableStateOf(SelectMode.REPLACE)
     var feather by mutableStateOf(0f)
@@ -214,11 +221,13 @@ class EditorViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     fun selectTool(t: Tool) {
-        if (tool == Tool.TRANSFORM && t != Tool.TRANSFORM) engine.cancelFloating()
+        // Leaving a transform tool discards an unapplied transform (like GIMP).
+        if (tool.liftsLayer && t != tool) engine.cancelFloating()
         if (t != tool) altEffect = false
         tool = t
         if (t.paint != null) lastPaintTool = t
-        if (t == Tool.TRANSFORM) engine.liftActive()
+        // Scale and Rotate show handles right away; Move lifts on touch.
+        if (t == Tool.SCALE || t == Tool.ROTATE) engine.liftActive()
         if (t != Tool.CROP) cropRect = null
         settingSource = (t == Tool.CLONE || t == Tool.HEAL) && cloneSource == null
     }

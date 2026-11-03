@@ -20,6 +20,8 @@ class Floating(
     /** For Transform: the layer content outside the lifted selection. */
     val remainder: TiledBitmap? = null,
 ) {
+    /** The placement when lifted, so Move can apply an offset to it. */
+    val initial = Matrix(matrix)
     fun corners(): FloatArray {
         val pts = floatArrayOf(0f, 0f, bitmap.width.toFloat(), 0f, bitmap.width.toFloat(), bitmap.height.toFloat(), 0f, bitmap.height.toFloat())
         matrix.mapPoints(pts)

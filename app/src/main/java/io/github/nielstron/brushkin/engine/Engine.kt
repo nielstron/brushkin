@@ -331,6 +331,7 @@ class Engine {
             sc.save(); sc.translate(-tx, -ty); draw(sc); sc.restore()
             if (sel != null) MaskOps.apply(sc, sel.mask, -tx, -ty)
             LinearTile.composite(session.writable(i), session.original(i), target.fill) { lc -> lc.drawBitmap(scratch, 0f, 0f, comp) }
+            target.touched(i)
         }
         c.setBitmap(null)
         val changes = session.finish()
@@ -843,11 +844,16 @@ class Engine {
         val s = stack
         val l = s.active ?: return@post
         if (l.isGroup) { onMessage?.invoke("Transform a layer, not a group"); return@post }
-        val full = l.pixels.toBitmap()
         val sel = s.selection
         if (sel == null) {
-            floating = Floating(full, Matrix(), l.id, l.name, remainder = null)
+            // Lift just the layer's content, so the handles hug what's actually on it.
+            val b = l.pixels.contentBounds() ?: run { onMessage?.invoke("“${l.name}” is empty"); return@post }
+            val lifted = Bitmap.createBitmap(b.width(), b.height(), Bitmap.Config.ARGB_8888)
+            val c = Canvas(lifted); c.translate(-b.left.toFloat(), -b.top.toFloat())
+            Compositor.drawTiles(c, l.pixels, null, null)
+            floating = Floating(lifted, Matrix().apply { setTranslate(b.left.toFloat(), b.top.toFloat()) }, l.id, l.name, remainder = null)
         } else {
+            val full = l.pixels.toBitmap()
             val b = sel.bounds
             val lifted = Bitmap.createBitmap(b.width(), b.height(), Bitmap.Config.ARGB_8888)
             val c = Canvas(lifted)
@@ -859,12 +865,20 @@ class Engine {
         publish(); invalidate()
     }
 
-    fun commitFloating(matrix: Matrix) = post {
+    fun commitFloating(matrix: Matrix, name: String = "Transform") = post {
         floating?.matrix?.set(matrix)
-        commitFloatingNow()
+        commitFloatingNow(name)
     }
 
-    private suspend fun commitFloatingNow() {
+    /** Move tool: apply [dx], [dy] to the lifted layer and commit — one undo step. */
+    fun commitMove(dx: Float, dy: Float) = post {
+        val f = floating ?: return@post
+        f.matrix.set(f.initial); f.matrix.postTranslate(dx, dy)
+        if (dx == 0f && dy == 0f) { floating = null; publish(); invalidate(); return@post }
+        commitFloatingNow("Move Layer")
+    }
+
+    private suspend fun commitFloatingNow(name: String = "Transform") {
         val f = floating ?: return
         val s = stack
         busy("Applying") {
@@ -877,7 +891,7 @@ class Engine {
                 floating = null
                 val moved = f.selectionMoved(s)
                 stack = s.copy(selection = moved)
-                replaceLayerPixels(s, target, TiledBitmap.fromBitmap(out), "Transform")
+                replaceLayerPixels(s, target, TiledBitmap.fromBitmap(out), name)
             } else {
                 c.drawBitmap(f.bitmap, f.matrix, Paint().apply { isFilterBitmap = true; isAntiAlias = true })
                 floating = null
