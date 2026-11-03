@@ -245,7 +245,8 @@ class EditorViewModel(app: Application) : AndroidViewModel(app) {
     var pipette by mutableStateOf(false)
     var eraseToggle by mutableStateOf(false)
     var fromCenter by mutableStateOf(false)
-    var fixedRatio by mutableStateOf(false)
+    /** Width ÷ height that rectangle/ellipse selections and the crop keep; null = free. */
+    var aspect by mutableStateOf<Float?>(null)
     /** Symmetry painting (null: off) around the image center. */
     var symmetryKind by mutableStateOf<io.github.nielstron.brushkin.engine.Symmetry.Kind?>(null)
     var symmetrySegments by mutableStateOf(6)

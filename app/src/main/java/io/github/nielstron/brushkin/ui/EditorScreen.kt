@@ -313,7 +313,6 @@ private fun ContextChips(vm: EditorViewModel, hasSelection: Boolean, holder: Can
                     for (m in SelectMode.entries) Chip(m.name.lowercase().replaceFirstChar { it.uppercase() }, vm.selectMode == m) { vm.selectMode = m }
                 if (t == Tool.RECT_SELECT || t == Tool.ELLIPSE_SELECT) {
                     Chip("From center", vm.fromCenter) { vm.fromCenter = !vm.fromCenter }
-                    Chip("Fixed 1:1", vm.fixedRatio) { vm.fixedRatio = !vm.fixedRatio }
                 }
                 if (t == Tool.SCISSORS) {
                     androidx.compose.runtime.LaunchedEffect(vm.scissorsVersion) { holder?.view?.invalidate() }

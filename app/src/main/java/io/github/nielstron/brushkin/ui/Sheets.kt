@@ -185,6 +185,40 @@ private fun ToolGrid(vm: EditorViewModel, tools: List<Tool>) {
     }
 }
 
+/** Fixed width : height for rectangle and ellipse selections and the crop. */
+@OptIn(ExperimentalLayoutApi::class)
+@Composable
+private fun AspectPicker(vm: EditorViewModel) {
+    SectionLabel("Aspect ratio", Modifier.padding(top = 12.dp, bottom = 6.dp))
+    val presets = listOf(null to "Free", 1 to 1, 4 to 3, 3 to 4, 3 to 2, 2 to 3, 16 to 9, 9 to 16)
+    var w by remember { mutableStateOf("") }; var h by remember { mutableStateOf("") }
+    FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+        for ((a, b) in presets) {
+            val r = if (a == null) null else a / (b as Int).toFloat()
+            val label = if (a == null) "Free" else "$a:$b"
+            Chip(label, vm.aspect == r && (r != null || w.isEmpty())) { vm.aspect = r; w = ""; h = "" }
+        }
+    }
+    // Any other ratio, e.g. a print size.
+    Row(Modifier.padding(top = 8.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+        @Composable
+        fun Field(value: String, hint: String, onChange: (String) -> Unit) = Box(
+            Modifier.width(72.dp).height(40.dp).clip(RoundedCornerShape(12.dp)).background(Ui.panel2).border(1.dp, Ui.border, RoundedCornerShape(12.dp)).padding(horizontal = 10.dp),
+            contentAlignment = Alignment.CenterStart,
+        ) {
+            if (value.isEmpty()) Text(hint, color = Ui.muted, fontSize = 14.sp)
+            BasicTextField(value, onChange, singleLine = true, textStyle = TextStyle(color = Ui.text, fontSize = 14.sp),
+                keyboardOptions = androidx.compose.foundation.text.KeyboardOptions(keyboardType = androidx.compose.ui.text.input.KeyboardType.Decimal),
+                cursorBrush = androidx.compose.ui.graphics.SolidColor(Ui.accent))
+        }
+        fun apply() { val a = w.toFloatOrNull(); val b = h.toFloatOrNull(); if (a != null && b != null && a > 0 && b > 0) vm.aspect = a / b }
+        Text("Custom", color = Ui.text, fontSize = 14.sp)
+        Field(w, "Width") { w = it.filter { c -> c.isDigit() || c == '.' }.take(6); apply() }
+        Text(":", color = Ui.muted)
+        Field(h, "Height") { h = it.filter { c -> c.isDigit() || c == '.' }.take(6); apply() }
+    }
+}
+
 // ---------------------------------------------------------------------------- options
 
 @Composable
@@ -266,6 +300,7 @@ private fun OptionsSheet(vm: EditorViewModel) {
             Toggle("Antialiasing", vm.antialias) { vm.antialias = it }
             if (t == Tool.RECT_SELECT) LabeledSlider("Rounded corners", vm.cornerRadius, 0f..300f, "${vm.cornerRadius.roundToInt()} px", { vm.cornerRadius = it })
         }
+        if (t == Tool.RECT_SELECT || t == Tool.ELLIPSE_SELECT || t == Tool.CROP) AspectPicker(vm)
         if (t == Tool.FUZZY_SELECT || t == Tool.COLOR_SELECT || t == Tool.BUCKET) {
             LabeledSlider("Threshold", vm.threshold, 0f..255f, "${vm.threshold.roundToInt()}", { vm.threshold = it })
             Toggle("Sample merged", vm.sampleMerged) { vm.sampleMerged = it }
