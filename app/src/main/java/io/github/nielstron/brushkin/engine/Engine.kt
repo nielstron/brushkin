@@ -47,6 +47,7 @@ data class DocInfo(
     val undoNames: List<String> = emptyList(),
     val redoNames: List<String> = emptyList(),
     val hasSelection: Boolean = false,
+    val channels: List<Triple<Long, String, Boolean>> = emptyList(),
     val floating: Boolean = false,
     val quickMask: Boolean = false,
     val name: String = "Untitled",
@@ -167,6 +168,7 @@ class Engine {
             canUndo = history.canUndo, canRedo = history.canRedo,
             undoNames = history.undoNames, redoNames = history.redoNames,
             hasSelection = s.selection != null,
+            channels = s.channels.map { Triple(it.id, it.name, it.visible) },
             floating = floating != null,
             quickMask = s.quickMask != null,
             name = docName,
@@ -573,6 +575,38 @@ class Engine {
         publish()
     }
 
+    // ---------------------------------------------------------------- saved channels
+
+    /** Select ▸ Save to Channel. */
+    fun saveSelectionToChannel() = post {
+        val s = stack
+        val sel = s.selection ?: run { onMessage?.invoke("Make a selection first"); return@post }
+        val b = sel.bytes()
+        val px = IntArray(b.size) { val v = b[it].toInt() and 0xFF; (0xFF shl 24) or (v * 0x010101) }
+        val names = s.channels.map { it.name }.toSet()
+        var n = 1; while ("Selection mask copy${if (n > 1) " #$n" else ""}" in names) n++
+        val ch = SavedChannel(name = "Selection mask copy${if (n > 1) " #$n" else ""}", mask = TiledBitmap.fromPixels(px, s.width, s.height, MASK_BLACK))
+        stack = s.copy(channels = listOf(ch) + s.channels)
+        record("Save to Channel", s)
+    }
+
+    /** Channel to selection, combined with the current one like any selection tool. */
+    fun channelToSelection(id: Long, mode: SelectMode) = post {
+        val s = stack
+        val ch = s.channels.firstOrNull { it.id == id } ?: return@post
+        val px = ch.mask.toPixels()
+        val mb = Bitmap.createBitmap(s.width, s.height, Bitmap.Config.ALPHA_8)
+        Selection.writeMaskBytes(mb, ByteArray(px.size) { (px[it] and 0xFF).toByte() }, s.width, s.height)
+        stack = s.copy(selection = Selection.combineMask(s.selection, mb, mode))
+        record("Channel to Selection", s)
+    }
+
+    fun updateChannel(id: Long, name: String, f: (SavedChannel) -> SavedChannel?) = post {
+        val s = stack
+        stack = s.copy(channels = s.channels.mapNotNull { if (it.id == id) f(it) else it })
+        record(name, s)
+    }
+
     // ---------------------------------------------------------------- guides
 
     fun addGuide(g: Guide) = post { val s = stack; stack = s.copy(guides = s.guides + g); record("Add Guide", s) }
@@ -771,7 +805,8 @@ class Engine {
             val pos = (if (vertical) pts[0] else pts[1]).roundToInt()
             if (pos < 0 || pos > (if (vertical) newW else newH)) null else Guide(vertical, pos)
         }
-        stack = Stack(newW, newH, layers, s.activeId, sel, guides = guides)
+        val channels = s.channels.map { c -> c.copy(mask = transformMask(c.mask, m, newW, newH)) }
+        stack = Stack(newW, newH, layers, s.activeId, sel, guides = guides, channels = channels)
         thumbs.clear()
         record(name, s, extraBytes = newW.toLong() * newH * 4 * layers.size)
     }

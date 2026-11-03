@@ -30,7 +30,9 @@ object Xcf {
     private const val PROP_ACTIVE_LAYER = 2
     private const val PROP_OFFSETS = 15
     private const val PROP_COMPRESSION = 17
-    private const val PROP_GUIDES = 16
+    private const val PROP_GUIDES = 18
+    private const val PROP_SELECTION = 4
+    private const val PROP_COLOR = 16
     private const val PROP_GROUP_ITEM = 29
     private const val PROP_ITEM_PATH = 30
     private const val PROP_FLOAT_OPACITY = 33
@@ -106,6 +108,8 @@ object Xcf {
         if (compression == 3) error("This XCF file uses an unknown compression")
         val layerPtrs = ArrayList<Long>()
         while (true) { val p = r.ptr(); if (p == 0L) break; layerPtrs.add(p) }
+        val channelPtrs = ArrayList<Long>()
+        while (true) { val p = r.ptr(); if (p == 0L) break; channelPtrs.add(p) }
 
         val xl = layerPtrs.map { p ->
             r.seek(p)
@@ -183,7 +187,30 @@ object Xcf {
         val activeIdx = xl.indexOfFirst { it.active }
         val activeName = if (activeIdx >= 0) xl[activeIdx].name else null
         val active = flatten(layers).firstOrNull { it.name == activeName && it.children == null } ?: flatten(layers).last { it.children == null }
-        return Stack(w, h, layers, active.id, guides = guides)
+        // Channels: saved selections, plus the selection itself (marked PROP_SELECTION).
+        var selection: Selection? = null
+        val channels = ArrayList<SavedChannel>()
+        for (p in channelPtrs) runCatching {
+            r.seek(p)
+            val cw = r.u32(); val ch = r.u32(); val name = r.str()
+            var opacity = 0.5f; var visible = false; var color = 0xFFE5484D.toInt(); var isSel = false
+            while (true) {
+                val t = r.u32(); val len = r.u32(); val start = b.position()
+                when (t) {
+                    PROP_END -> break
+                    PROP_OPACITY -> opacity = r.u32() / 255f
+                    PROP_VISIBLE -> visible = r.u32() != 0
+                    PROP_SELECTION -> isSel = true
+                    PROP_COLOR -> color = (0xFF shl 24) or ((b.get().toInt() and 0xFF) shl 16) or ((b.get().toInt() and 0xFF) shl 8) or (b.get().toInt() and 0xFF)
+                }
+                b.position(start + len)
+            }
+            if (cw != w || ch != h) return@runCatching
+            val gray = readHierarchy(r, r.ptr(), compression, prec, 2, null, 1)
+            if (isSel) selection = Selection.fromBytes(ByteArray(gray.size) { (gray[it] and 0xFF).toByte() }, w, h)
+            else channels.add(SavedChannel(name = name.ifEmpty { "Channel" }, mask = TiledBitmap.fromPixels(IntArray(gray.size) { (gray[it] and 0xFF) * 0x010101 or (0xFF shl 24) }, w, h, MASK_BLACK), color = color, opacity = opacity, visible = visible))
+        }
+        return Stack(w, h, layers, active.id, selection = selection, guides = guides, channels = channels)
     }
 
     private fun flatten(l: List<Layer>): List<Layer> = l.flatMap { listOf(it) + flatten(it.children ?: emptyList()) }
@@ -340,10 +367,28 @@ object Xcf {
         val layerPtrPos = IntArray(items.size)
         for (i in items.indices) { layerPtrPos[i] = out.size; out.u64(0) }
         out.u64(0) // end of layers
-        out.u64(0) // no channels
+        // Saved channels, then the selection as GIMP's selection channel.
+        val chans: List<Triple<String, IntArray, SavedChannel?>> = stack.channels.map { Triple(it.name, it.mask.toPixels(), it) } +
+            listOfNotNull(stack.selection?.let { sel -> val bb = sel.bytes(); Triple("Selection Mask", IntArray(bb.size) { (bb[it].toInt() and 0xFF) * 0x010101 or (0xFF shl 24) }, null) })
+        val chanPtrPos = IntArray(chans.size)
+        for (i in chans.indices) { chanPtrPos[i] = out.size; out.u64(0) }
+        out.u64(0) // end of channels
         items.forEachIndexed { i, it ->
             out.patch64(layerPtrPos[i], out.size.toLong())
             writeLayer(out, it.layer, it.path, stack, it.layer.id == stack.activeId)
+        }
+        chans.forEachIndexed { i, (name, px, c) ->
+            out.patch64(chanPtrPos[i], out.size.toLong())
+            out.u32(stack.width); out.u32(stack.height); out.xstr(name)
+            out.prop(PROP_OPACITY) { u32(((c?.opacity ?: 0.5f) * 255).roundToInt()) }
+            out.prop(PROP_VISIBLE) { u32(if (c?.visible == true) 1 else 0) }
+            val col = c?.color ?: 0xFF000000.toInt()
+            out.prop(PROP_COLOR) { u8((col shr 16) and 0xFF); u8((col shr 8) and 0xFF); u8(col and 0xFF) }
+            if (c == null) out.prop(PROP_SELECTION) {}
+            out.u32(PROP_END); out.u32(0)
+            val hp = out.size; out.u64(0)
+            out.patch64(hp, out.size.toLong())
+            writeHierarchy(out, px, stack.width, stack.height, 1)
         }
         os.write(out.toByteArray())
     }

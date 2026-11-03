@@ -73,6 +73,29 @@ class FileFormatTest {
         }
     }
 
+    @Test fun readsGimpGuides() {
+        // Written by GIMP 3: a vertical guide at x=20 and a horizontal one at y=30.
+        val st = Xcf.read(assets.open("gimp-guides.xcf").readBytes())
+        assertEquals(setOf(io.github.nielstron.brushkin.engine.Guide(true, 20), io.github.nielstron.brushkin.engine.Guide(false, 30)), st.guides.toSet())
+    }
+
+    @Test fun channelsAndSelectionRoundTrip() {
+        val base = Xcf.read(assets.open("test8.xcf").readBytes())
+        val sel = io.github.nielstron.brushkin.engine.Selection.combine(null, android.graphics.Path().apply { addRect(10f, 10f, 110f, 60f, android.graphics.Path.Direction.CW) }, base.width, base.height, io.github.nielstron.brushkin.engine.SelectMode.REPLACE, false, 0f)
+        val px = IntArray(base.width * base.height) { i -> if (i % base.width < 200) Color.WHITE else Color.BLACK }
+        val ch = io.github.nielstron.brushkin.engine.SavedChannel(name = "Left half", mask = io.github.nielstron.brushkin.engine.TiledBitmap.fromPixels(px, base.width, base.height, io.github.nielstron.brushkin.engine.MASK_BLACK), color = 0xFF3366CC.toInt(), opacity = 0.4f, visible = true)
+        val stack = base.copy(selection = sel, channels = listOf(ch))
+        for (fmt in listOf("xcf", "ora")) {
+            val out = ByteArrayOutputStream()
+            if (fmt == "xcf") Xcf.write(stack, out) else Ora.write(stack, out)
+            val back: Stack = if (fmt == "xcf") Xcf.read(out.toByteArray()) else Ora.read(out.toByteArray().inputStream())
+            val c = back.channels.single()
+            assertEquals(fmt, "Left half", c.name); assertEquals(fmt, 0xFF3366CC.toInt(), c.color); assertTrue(fmt, c.visible)
+            assertEquals(fmt, Color.WHITE, c.mask.toPixels()[50 * base.width + 100]); assertEquals(fmt, Color.BLACK, c.mask.toPixels()[50 * base.width + 300])
+            if (fmt == "xcf") assertEquals(android.graphics.Rect(10, 10, 110, 60), back.selection?.bounds)
+        }
+    }
+
     @Test fun gimp8bit() = check("test8")
     @Test fun gimp16bitLinear() = check("test16")
     @Test fun gimp64bitDouble() = check("test64")
