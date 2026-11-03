@@ -25,7 +25,12 @@ object ToolIcons {
     val pencil get() = stroke("M4 20l1-5L16 4l4 4L9 19zM14 6l4 4")
     val airbrush get() = stroke("M4 20l7-7M11 13l4-4 3 3-4 4zM17 4h.01M20 6h.01M19 2h.01")
     val eraser get() = stroke("M7 21h13M5 15l9-9 5 5-9 9H8z")
-    val smudge get() = stroke("M12 3c3 4 6 7.5 6 11a6 6 0 0 1-12 0c0-3.5 3-7 6-11z")
+    val smudge get() = stroke("M8 13V5a2 2 0 0 1 4 0v6M12 10a2 2 0 0 1 4 0v2M16 11a2 2 0 0 1 4 0v4a7 7 0 0 1-7 7h-1a7 7 0 0 1-6-4l-2-4a2 2 0 0 1 3-2l1 2")
+    val clone get() = stroke("M9 3h6v5l3 3v3H6v-3l3-3zM4 18h16M7 21h10")
+    val heal get() = stroke("M4 15L15 4a3 3 0 0 1 5 5L9 20a3 3 0 0 1-5-5zM10 10l4 4")
+    val dodge get() = stroke("M12 3a5 5 0 1 0 0 10a5 5 0 1 0 0-10M12 13v8")
+    val blur get() = stroke("M12 3c3 4 6 7.5 6 11a6 6 0 0 1-12 0c0-3.5 3-7 6-11z")
+    val target get() = stroke("M12 3v6M12 15v6M3 12h6M15 12h6")
     val bucket get() = stroke("M4 12l7-7 7 7-7 7zM19.5 15c1 1.5 1.8 2.5 1.8 3.4a1.8 1.8 0 0 1-3.6 0c0-.9.8-1.9 1.8-3.4z")
     val gradient get() = stroke("M4 4h16v16H4zM4 14L14 4M4 20L20 4M10 20L20 10")
     val rect get() = stroke("M4 6h16v12H4z")
@@ -47,7 +52,7 @@ object ToolIcons {
         Tool.RECT_SELECT -> rect; Tool.ELLIPSE_SELECT -> ellipse; Tool.FREE_SELECT -> lasso
         Tool.FUZZY_SELECT -> fuzzy; Tool.COLOR_SELECT -> byColor
         Tool.BRUSH -> brush; Tool.PENCIL -> pencil; Tool.AIRBRUSH -> airbrush; Tool.ERASER -> eraser
-        Tool.SMUDGE -> smudge; Tool.BUCKET -> bucket; Tool.GRADIENT -> gradient
+        Tool.SMUDGE -> smudge; Tool.CLONE -> clone; Tool.HEAL -> heal; Tool.DODGE_BURN -> dodge; Tool.BLUR_SHARPEN -> blur; Tool.BUCKET -> bucket; Tool.GRADIENT -> gradient
         Tool.TRANSFORM -> transform; Tool.CROP -> crop; Tool.PICKER -> picker; Tool.TEXT -> text
     }
 }

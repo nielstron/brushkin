@@ -180,11 +180,12 @@ private fun OptionsSheet(vm: EditorViewModel) {
                 LabeledSlider("Aspect", s.aspect, 0.05f..1f, "%.2f".format(s.aspect), { vm.settings = vm.settings.copy(aspect = it) })
             }
             LabeledSlider("Smoothing", s.smoothing, 0f..0.95f, "${(s.smoothing * 100).roundToInt()}", { vm.settings = vm.settings.copy(smoothing = it) })
-            if (t == Tool.SMUDGE) LabeledSlider("Rate", s.smudgeRate, 0f..1f, "${(s.smudgeRate * 100).roundToInt()}", { vm.settings = vm.settings.copy(smudgeRate = it) })
+            val rateLabel = when (t) { Tool.SMUDGE -> "Rate"; Tool.DODGE_BURN -> "Exposure"; Tool.BLUR_SHARPEN -> "Strength"; else -> null }
+            if (rateLabel != null) LabeledSlider(rateLabel, s.rate, 0f..1f, "${(s.rate * 100).roundToInt()}", { vm.settings = vm.settings.copy(rate = it) })
             Toggle("Pressure → size", s.pressureSize) { vm.settings = vm.settings.copy(pressureSize = it) }
             Toggle("Pressure → opacity", s.pressureOpacity) { vm.settings = vm.settings.copy(pressureOpacity = it) }
         }
-        if (paintLike && t != Tool.ERASER && t != Tool.SMUDGE && !vm.eraseToggle) {
+        if (paintLike && t != Tool.ERASER && t.paint?.isEffect != true && t != Tool.SMUDGE && !vm.eraseToggle) {
             if (t.paint == null) LabeledSlider("Opacity", vm.settings.opacity, 0.01f..1f, "${(vm.settings.opacity * 100).roundToInt()}%", { vm.settings = vm.settings.copy(opacity = it) })
             ModePicker(vm.settings.mode) { vm.settings = vm.settings.copy(mode = it) }
         }
