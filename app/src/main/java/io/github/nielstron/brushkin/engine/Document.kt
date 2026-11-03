@@ -79,6 +79,8 @@ data class Stack(
     val layers: List<Layer>,
     val activeId: Long,
     val selection: Selection? = null,
+    /** Quick mask: while set, the selection is this grayscale channel and paint tools edit it. */
+    val quickMask: TiledBitmap? = null,
 ) {
     /** Every layer and group, depth-first, bottom-most first. */
     val all: List<Layer> get() = flatten(layers)

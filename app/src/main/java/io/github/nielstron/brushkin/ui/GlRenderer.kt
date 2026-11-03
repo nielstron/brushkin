@@ -36,7 +36,7 @@ class GlRenderer(private val engine: Engine) : GLSurfaceView.Renderer {
     @Volatile var frame: Frame? = null
 
     private var w = 1; private var h = 1
-    private var tileProg = 0; private var maskProg = 0; private var blendProg = 0; private var outProg = 0
+    private var tileProg = 0; private var maskProg = 0; private var blendProg = 0; private var outProg = 0; private var quickMaskProg = 0
     private var quad = 0
     private var halfFloat = true
 
@@ -53,7 +53,9 @@ class GlRenderer(private val engine: Engine) : GLSurfaceView.Renderer {
     private val atlases = java.util.IdentityHashMap<TiledBitmap, Atlas>()
     private var maxTex = 4096
     private val clearTile by lazy { Bitmap.createBitmap(TILE, TILE, Bitmap.Config.ARGB_8888) }
-    private val whiteTile by lazy { Bitmap.createBitmap(TILE, TILE, Bitmap.Config.ARGB_8888).apply { eraseColor(-1) } }
+    /** Solid tiles standing in for missing tiles of a given fill color (white/black masks). */
+    private val fillTiles = HashMap<Int, Bitmap>()
+    private fun fillTile(color: Int) = if (color == 0) clearTile else fillTiles.getOrPut(color) { Bitmap.createBitmap(TILE, TILE, Bitmap.Config.ARGB_8888).apply { eraseColor(color) } }
 
     // Render targets: pairs of accumulation buffers per group depth plus a layer buffer.
     private class Target(val fbo: Int, val tex: Int)
@@ -65,6 +67,7 @@ class GlRenderer(private val engine: Engine) : GLSurfaceView.Renderer {
         halfFloat = "GL_EXT_color_buffer_half_float" in ext || "GL_EXT_color_buffer_float" in ext
         tileProg = program(VS_TILE, FS_TILE)
         maskProg = program(VS_TILE, FS_MASK)
+        quickMaskProg = program(VS_TILE, FS_QUICK_MASK)
         blendProg = program(VS_FULL, FS_BLEND)
         outProg = program(VS_FULL, FS_OUT)
         val b = ByteBuffer.allocateDirect(8 * 4).order(ByteOrder.nativeOrder()).asFloatBuffer().put(floatArrayOf(0f, 0f, 1f, 0f, 0f, 1f, 1f, 1f)).also { it.position(0) }
@@ -163,6 +166,14 @@ class GlRenderer(private val engine: Engine) : GLSurfaceView.Renderer {
             glBindFramebuffer(GL_FRAMEBUFFER, acc.fbo)
             glEnable(GL_BLEND); glBlendFunc(GL_ONE, GL_ONE_MINUS_SRC_ALPHA)
             drawFloating(f, m, filter, 1f)
+        }
+        val qm = s.quickMask
+        if (depth == 0 && qm != null) {
+            // Quick mask: translucent red over everything that isn't selected.
+            glBindFramebuffer(GL_FRAMEBUFFER, acc.fbo)
+            glEnable(GL_BLEND); glBlendFunc(GL_ONE, GL_ONE_MINUS_SRC_ALPHA)
+            glUseProgram(quickMaskProg)
+            drawTiles(quickMaskProg, qm, m, filter, 1f)
         }
         return acc
     }
@@ -263,7 +274,7 @@ class GlRenderer(private val engine: Engine) : GLSurfaceView.Renderer {
             // Read the version before the pixels: a write finishing mid-upload bumps it again.
             val gen = t.versions.get(i)
             if (a.bmps[i] === b && a.gens[i] == gen) continue
-            GLUtils.texSubImage2D(GL_TEXTURE_2D, 0, t.tileX(i), t.tileY(i), b ?: if (t.fill != 0) whiteTile else clearTile)
+            GLUtils.texSubImage2D(GL_TEXTURE_2D, 0, t.tileX(i), t.tileY(i), b ?: fillTile(t.fill))
             a.bmps[i] = b; a.gens[i] = gen
         }
         glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR)
@@ -414,6 +425,16 @@ out vec4 o;
 void main() {
     vec3 c = texture(uTex, vUv).rgb;
     o = vec4(0.0, 0.0, 0.0, dot(c, vec3(0.299, 0.587, 0.114)));
+}"""
+
+        private const val FS_QUICK_MASK = """#version 300 es
+precision highp float;
+in vec2 vUv;
+uniform sampler2D uTex;
+out vec4 o;
+void main() {
+    float a = (1.0 - dot(texture(uTex, vUv).rgb, vec3(0.299, 0.587, 0.114))) * 0.5;
+    o = vec4(a, 0.0, 0.0, a);
 }"""
 
         private const val VS_FULL = """#version 300 es
