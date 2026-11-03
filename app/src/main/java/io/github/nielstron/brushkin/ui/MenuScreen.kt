@@ -104,6 +104,7 @@ val KEYWORDS = mapOf(
     "Gradient" to "color fade blend",
     "Text" to "type words caption title",
     "Color Picker" to "eyedropper sample color",
+    "Paths" to "bezier pen curve vector precise shape outline",
     "Fuzzy" to "magic wand select similar area",
     "Object" to "AI select person subject thing by tapping",
     "Crop" to "trim cut edges",

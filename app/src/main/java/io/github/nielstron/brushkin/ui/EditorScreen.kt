@@ -69,6 +69,8 @@ fun EditorScreen(vm: EditorViewModel, files: FileActions) {
     val holder = remember { CanvasHolder() }
     val snack = remember { SnackbarHostState() }
     LaunchedEffect(Unit) { vm.messages.collect { snack.showSnackbar(it) } }
+    // Tool-dependent overlays (paths, clone source, crop) must redraw when the tool changes.
+    LaunchedEffect(vm.tool, vm.pathVersion, vm.cloneSource) { holder.view?.invalidate() }
 
     Box(Modifier.fillMaxSize().background(Ui.ground)) {
         AndroidView(
@@ -139,7 +141,7 @@ fun EditorScreen(vm: EditorViewModel, files: FileActions) {
                     Chip("Hide (black)", vm.fg == android.graphics.Color.BLACK) { vm.fg = android.graphics.Color.BLACK }
                     Chip("Reveal (white)", vm.fg == android.graphics.Color.WHITE) { vm.fg = android.graphics.Color.WHITE }
                 }
-                ContextChips(vm, info.hasSelection)
+                ContextChips(vm, info.hasSelection, holder)
             }
             Spacer(Modifier.height(10.dp))
             Dock(vm, info.layers.size)
@@ -180,7 +182,7 @@ private fun ConfirmBar(label: String, onCancel: () -> Unit, onApply: () -> Unit)
 }
 
 @Composable
-private fun ContextChips(vm: EditorViewModel, hasSelection: Boolean) {
+private fun ContextChips(vm: EditorViewModel, hasSelection: Boolean, holder: CanvasHolder? = null) {
     Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
         val t = vm.tool
         when {
@@ -214,6 +216,13 @@ private fun ContextChips(vm: EditorViewModel, hasSelection: Boolean) {
             t == Tool.BUCKET || t == Tool.GRADIENT -> {
                 Chip("Pick", vm.pickMode, ToolIcons.picker) { vm.pickMode = !vm.pickMode }
                 if (t == Tool.BUCKET) Chip("Fill selection", vm.fillWholeSelection) { vm.fillWholeSelection = !vm.fillWholeSelection }
+            }
+            t == Tool.PATHS -> {
+                @Suppress("UNUSED_EXPRESSION") vm.pathVersion
+                Chip("To selection", false) { vm.pathToSelection() }
+                Chip("Stroke with ${vm.lastPaintTool.label.lowercase()}", false) { vm.strokePath() }
+                Chip(if (vm.path.closed) "Open" else "Close", vm.path.closed) { vm.path.closed = !vm.path.closed; vm.pathVersion++; holder?.view?.invalidate() }
+                Chip("Clear", false) { vm.path.clear(); vm.pathVersion++; holder?.view?.invalidate() }
             }
             t == Tool.CROP -> Text("Drag to choose the area to keep", color = Ui.muted, fontSize = 13.sp, modifier = Modifier.padding(8.dp))
             t == Tool.TEXT -> Text("Tap the canvas to add text", color = Ui.muted, fontSize = 13.sp, modifier = Modifier.padding(8.dp))

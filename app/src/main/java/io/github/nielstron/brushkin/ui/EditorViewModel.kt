@@ -49,6 +49,7 @@ enum class Tool(val label: String, val group: ToolGroup, val paint: PaintTool? =
     GRADIENT("Gradient", ToolGroup.PAINT),
     TRANSFORM("Transform", ToolGroup.TRANSFORM),
     CROP("Crop", ToolGroup.TRANSFORM),
+    PATHS("Paths", ToolGroup.OTHER),
     PICKER("Color Picker", ToolGroup.OTHER),
     TEXT("Text", ToolGroup.OTHER);
 
@@ -126,6 +127,25 @@ class EditorViewModel(app: Application) : AndroidViewModel(app) {
 
     var cropRect by mutableStateOf<android.graphics.RectF?>(null)
     var textStyle by mutableStateOf(TEXT_STYLES[0].second)
+    val path = PathEdit()
+    /** Bumped when [path] changes so Compose and the canvas redraw. */
+    var pathVersion by mutableStateOf(0)
+
+    fun pathToSelection() {
+        if (path.anchors.size < 3) { messages.tryEmit("Add at least three points"); return }
+        val p = PathEdit().also { it.anchors.addAll(path.anchors); it.closed = true }.toPath()
+        engine.select(p, selectMode, antialias, feather, "Path to Selection")
+    }
+
+    fun strokePath() {
+        val pts = path.sample()
+        if (pts.size < 2) { messages.tryEmit("Add at least two points"); return }
+        val pt = (if (lastPaintTool.paint != null) lastPaintTool.paint else null) ?: io.github.nielstron.brushkin.engine.PaintTool.BRUSH
+        val s = brushSettings.value[lastPaintTool] ?: BrushSettings()
+        engine.strokeBegin(pt, s.copy(smoothing = 0f, pressureSize = false, pressureOpacity = false), fg)
+        pts.chunked(256).forEach { engine.strokeAdd(it) }
+        engine.strokeEnd()
+    }
 
     init {
         engine.onMessage = { messages.tryEmit(it) }

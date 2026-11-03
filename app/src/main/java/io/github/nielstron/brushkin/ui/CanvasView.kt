@@ -174,6 +174,7 @@ class CanvasView(context: Context, private val vm: EditorViewModel) : View(conte
     /** Magnified view of the area under the finger, shown in the top corner away from it. */
     private fun drawLoupe(canvas: Canvas, s: io.github.nielstron.brushkin.engine.Stack) {
         val active = mode == Mode.STROKE || mode == Mode.SHAPE || mode == Mode.PICK || mode == Mode.CROP ||
+            mode == Mode.PATH_POINT || mode == Mode.PATH_HANDLE || mode == Mode.PATH_NEW ||
             mode == Mode.FLOAT_MOVE || mode == Mode.FLOAT_SCALE || mode == Mode.FLOAT_ROTATE
         val touch = lastTouch ?: return
         if (!active) return
@@ -272,6 +273,7 @@ class CanvasView(context: Context, private val vm: EditorViewModel) : View(conte
             canvas.drawPath(vr, accent)
         }
         engine.floating?.let { drawFloatingHandles(canvas, it) }
+        drawPath(canvas)
         if (vm.tool == Tool.CLONE || vm.tool == Tool.HEAL) {
             val src = vm.cloneSource
             val o = vm.cloneOffset
@@ -322,7 +324,7 @@ class CanvasView(context: Context, private val vm: EditorViewModel) : View(conte
 
     // ------------------------------------------------------------------ input
 
-    private enum class Mode { NONE, STROKE, VIEW, SHAPE, PICK, FLOAT_MOVE, FLOAT_SCALE, FLOAT_ROTATE, CROP, IGNORE }
+    private enum class Mode { NONE, STROKE, VIEW, SHAPE, PICK, FLOAT_MOVE, FLOAT_SCALE, FLOAT_ROTATE, CROP, IGNORE, PATH_POINT, PATH_HANDLE, PATH_NEW }
 
     private var mode = Mode.NONE
     private var downTime = 0L
@@ -450,6 +452,7 @@ class CanvasView(context: Context, private val vm: EditorViewModel) : View(conte
         val f = engine.floating
         val tool = vm.tool
         if (f != null) { startFloating(e, f); return }
+        if (tool == Tool.PATHS) { startPath(); return }
         if (tool == Tool.CROP) { mode = Mode.CROP; vm.cropRect = RectF(downDoc.x, downDoc.y, downDoc.x, downDoc.y); return }
         if (vm.pickMode || tool == Tool.PICKER) { mode = Mode.PICK; pick(e.x, e.y); return }
         val st = vm.strokeTool
@@ -509,6 +512,7 @@ class CanvasView(context: Context, private val vm: EditorViewModel) : View(conte
                 vm.tool == Tool.RECT_SELECT || vm.tool == Tool.ELLIPSE_SELECT -> preview = shapePath(downDoc, d)
             }
             Mode.FLOAT_MOVE, Mode.FLOAT_SCALE, Mode.FLOAT_ROTATE -> dragFloating(e)
+            Mode.PATH_POINT, Mode.PATH_HANDLE, Mode.PATH_NEW -> dragPath(d)
             else -> {}
         }
         invalidate()
@@ -580,6 +584,71 @@ class CanvasView(context: Context, private val vm: EditorViewModel) : View(conte
         val o = vm.cloneOffset ?: android.graphics.Point((src.x - start.x).toInt(), (src.y - start.y).toInt()).also { vm.cloneOffset = it }
         return o
     }
+
+    // ------------------------------------------------------------------ paths tool
+
+    private var pathIndex = -1
+    private var pathHandleOut = true
+
+    private fun startPath() {
+        val pe = vm.path
+        val hit = 22 * density
+        fun near(p: PointF) = run { val v = toView(p.x, p.y); hypot(v.x - down.x, v.y - down.y) < hit }
+        // Handles of the last-touched anchor take priority, then anchors.
+        pe.anchors.forEachIndexed { i, a ->
+            if (a.hout != a.p && near(a.hout)) { pathIndex = i; pathHandleOut = true; mode = Mode.PATH_HANDLE; return }
+            if (a.hin != a.p && near(a.hin)) { pathIndex = i; pathHandleOut = false; mode = Mode.PATH_HANDLE; return }
+        }
+        val idx = pe.anchors.indexOfFirst { near(it.p) }
+        if (idx == 0 && pe.anchors.size > 2 && !pe.closed) { pe.closed = true; mode = Mode.IGNORE; bumpPath(); return }
+        if (idx >= 0) { pathIndex = idx; mode = Mode.PATH_POINT; return }
+        if (pe.closed) { mode = Mode.IGNORE; return }
+        pe.anchors.add(Anchor(PointF(downDoc.x, downDoc.y)))
+        pathIndex = pe.anchors.lastIndex; mode = Mode.PATH_NEW
+        bumpPath()
+    }
+
+    private fun dragPath(d: PointF) {
+        val pe = vm.path
+        val a = pe.anchors.getOrNull(pathIndex) ?: return
+        when (mode) {
+            Mode.PATH_POINT -> {
+                val dx = d.x - a.p.x; val dy = d.y - a.p.y
+                pe.anchors[pathIndex] = Anchor(PointF(d.x, d.y), PointF(a.hin.x + dx, a.hin.y + dy), PointF(a.hout.x + dx, a.hout.y + dy))
+            }
+            Mode.PATH_NEW -> // Dragging right after placing a point pulls out symmetric handles (smooth point).
+                pe.anchors[pathIndex] = Anchor(a.p, PointF(2 * a.p.x - d.x, 2 * a.p.y - d.y), PointF(d.x, d.y))
+            Mode.PATH_HANDLE -> pe.anchors[pathIndex] = if (pathHandleOut) a.copy(hout = PointF(d.x, d.y)) else a.copy(hin = PointF(d.x, d.y))
+            else -> {}
+        }
+        bumpPath()
+    }
+
+    private fun bumpPath() { vm.pathVersion++; invalidate() }
+
+    private val pathPaint = Paint().apply { style = Paint.Style.STROKE; color = 0xFFFFB547.toInt(); strokeWidth = 2f * density; isAntiAlias = true }
+    private val pathHandle = Paint().apply { style = Paint.Style.STROKE; color = Color.WHITE; strokeWidth = 1f * density; isAntiAlias = true }
+
+    private fun drawPath(canvas: Canvas) {
+        if (vm.tool != Tool.PATHS || vm.path.anchors.isEmpty()) return
+        val vp = vm.path.toPath().apply { transform(viewMatrix) }
+        canvas.drawPath(vp, guideDark); canvas.drawPath(vp, pathPaint)
+        val r = 6 * density
+        vm.path.anchors.forEachIndexed { i, a ->
+            val p = toView(a.p.x, a.p.y)
+            for ((h, show) in listOf(a.hin to (a.hin != a.p), a.hout to (a.hout != a.p))) if (show) {
+                val hv = toView(h.x, h.y)
+                canvas.drawLine(p.x, p.y, hv.x, hv.y, guideDark)
+                canvas.drawLine(p.x, p.y, hv.x, hv.y, pathHandle)
+                canvas.drawCircle(hv.x, hv.y, r * 0.7f, handleFill)
+                canvas.drawCircle(hv.x, hv.y, r * 0.7f, guideDark)
+            }
+            canvas.drawCircle(p.x, p.y, r, if (i == 0) accentFill else handleFill)
+            canvas.drawCircle(p.x, p.y, r, guideDark)
+        }
+    }
+
+    private val accentFill = Paint().apply { color = 0xFFFFB547.toInt(); isAntiAlias = true }
 
     private fun onLongPress() {
         if (mode != Mode.STROKE || moved) return
