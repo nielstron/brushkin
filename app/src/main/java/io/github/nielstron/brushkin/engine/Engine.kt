@@ -1,0 +1,731 @@
+package io.github.nielstron.brushkin.engine
+
+import android.graphics.Bitmap
+import android.graphics.Canvas
+import android.graphics.Color
+import android.graphics.LinearGradient
+import android.graphics.Matrix
+import android.graphics.Paint
+import android.graphics.Path
+import android.graphics.PorterDuff
+import android.graphics.PorterDuffXfermode
+import android.graphics.RadialGradient
+import android.graphics.Rect
+import android.graphics.RectF
+import android.graphics.Shader
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.asCoroutineDispatcher
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.ensureActive
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
+import java.util.concurrent.Executors
+import kotlin.math.hypot
+import kotlin.math.roundToInt
+
+data class LayerInfo(
+    val id: Long, val name: String, val visible: Boolean, val opacity: Float, val mode: LayerMode,
+    val lockAlpha: Boolean, val thumb: Bitmap?,
+)
+
+data class DocInfo(
+    val width: Int = 0,
+    val height: Int = 0,
+    val layers: List<LayerInfo> = emptyList(),
+    val activeId: Long = -1,
+    val canUndo: Boolean = false,
+    val canRedo: Boolean = false,
+    val undoNames: List<String> = emptyList(),
+    val redoNames: List<String> = emptyList(),
+    val hasSelection: Boolean = false,
+    val floating: Boolean = false,
+    val name: String = "Untitled",
+)
+
+enum class GradientShape { LINEAR, RADIAL }
+
+/**
+ * Owns the document and performs every mutation on a single dedicated thread, so the UI thread
+ * only ever posts requests and draws immutable snapshots. Heavy pixel work (filters, flood fill)
+ * fans out to all cores from that thread.
+ */
+class Engine {
+    private val executor = Executors.newSingleThreadExecutor { r -> Thread(r, "brushkin-engine").apply { priority = Thread.NORM_PRIORITY + 1 } }
+    val dispatcher = executor.asCoroutineDispatcher()
+    val scope = CoroutineScope(SupervisorJob() + dispatcher)
+
+    @Volatile var stack = Stack(1, 1, emptyList(), -1); private set
+    @Volatile var preview: Pair<Long, TiledBitmap>? = null; private set
+    @Volatile var floating: Floating? = null; private set
+    var docName = "Untitled"; private set
+
+    private val history = History()
+    private val _info = MutableStateFlow(DocInfo())
+    val info: StateFlow<DocInfo> = _info
+    private val _busy = MutableStateFlow<String?>(null)
+    val busy: StateFlow<String?> = _busy
+
+    /** Called (from any thread) when the visible image changed. */
+    @Volatile var onInvalidate: (() -> Unit)? = null
+    /** Error/info messages for the UI. */
+    @Volatile var onMessage: ((String) -> Unit)? = null
+
+    private fun invalidate() = onInvalidate?.invoke()
+
+    fun post(block: suspend () -> Unit): Job = scope.launch {
+        try { block() } catch (t: Throwable) {
+            if (t is kotlinx.coroutines.CancellationException) throw t
+            android.util.Log.e("Brushkin", "engine op failed", t)
+            onMessage?.invoke("Operation failed: ${t.message ?: t.javaClass.simpleName}")
+        }
+    }
+
+    private suspend fun <T> busy(label: String, block: suspend () -> T): T {
+        _busy.value = label
+        try { return block() } finally { _busy.value = null }
+    }
+
+    // ---------------------------------------------------------------- document
+
+    fun newDocument(w: Int, h: Int, background: Int?, name: String = "Untitled") = post {
+        val bg = TiledBitmap(w, h)
+        if (background != null) {
+            for (i in bg.tiles.indices) bg.tiles[i] = TiledBitmap.newTile().apply { eraseColor(background) }
+        }
+        val layer = Layer(name = if (background != null) "Background" else "Layer", pixels = bg)
+        replaceDocument(Stack(w, h, listOf(layer), layer.id), name)
+    }
+
+    fun openImage(bmp: Bitmap, name: String) = post {
+        val px = TiledBitmap.fromBitmap(bmp)
+        val layer = Layer(name = name, pixels = px)
+        replaceDocument(Stack(bmp.width, bmp.height, listOf(layer), layer.id), name)
+    }
+
+    fun openStack(s: Stack, name: String) = post { replaceDocument(s, name) }
+
+    private fun replaceDocument(s: Stack, name: String) {
+        history.clear()
+        floating = null; preview = null
+        stack = s
+        docName = name
+        thumbs.clear()
+        publish()
+        invalidate()
+    }
+
+    // ---------------------------------------------------------------- state publishing
+
+    private val thumbs = HashMap<Long, Pair<Int, Bitmap>>()
+    private var thumbJob: Job? = null
+
+    private fun publish(thumbsNow: Boolean = false) {
+        val s = stack
+        _info.value = DocInfo(
+            width = s.width, height = s.height,
+            layers = s.layers.asReversed().map { l ->
+                LayerInfo(l.id, l.name, l.visible, l.opacity, l.mode, l.lockAlpha, thumbs[l.id]?.second)
+            },
+            activeId = s.active?.id ?: -1,
+            canUndo = history.canUndo, canRedo = history.canRedo,
+            undoNames = history.undoNames, redoNames = history.redoNames,
+            hasSelection = s.selection != null,
+            floating = floating != null,
+            name = docName,
+        )
+        // Thumbnails are cheap but not free; batch them after edits settle.
+        thumbJob?.cancel()
+        thumbJob = scope.launch {
+            if (!thumbsNow) delay(120)
+            if (updateThumbs()) publish(thumbsNow = true)
+        }
+    }
+
+    private fun signature(t: TiledBitmap): Int {
+        var h = 17
+        for (b in t.tiles) h = h * 31 + System.identityHashCode(b)
+        return h
+    }
+
+    private fun updateThumbs(): Boolean {
+        val s = stack
+        var changed = false
+        val maxDim = 96f
+        val scale = minOf(maxDim / s.width, maxDim / s.height)
+        for (l in s.layers) {
+            val sig = signature(l.pixels)
+            if (thumbs[l.id]?.first == sig) continue
+            val bmp = Bitmap.createBitmap((s.width * scale).roundToInt().coerceAtLeast(1), (s.height * scale).roundToInt().coerceAtLeast(1), Bitmap.Config.ARGB_8888)
+            val c = Canvas(bmp)
+            c.scale(scale, scale)
+            Compositor.drawTiles(c, l.pixels, null, Paint().apply { isFilterBitmap = true })
+            thumbs[l.id] = sig to bmp
+            changed = true
+        }
+        thumbs.keys.retainAll(s.layers.map { it.id }.toSet())
+        return changed
+    }
+
+    private fun record(name: String, before: Stack, diffs: List<TileDiff> = emptyList(), extraBytes: Long = 0) {
+        history.push(HistoryEntry(name, before, stack, diffs, extraBytes))
+        publish()
+        invalidate()
+    }
+
+    fun undo() = post {
+        if (floating != null) return@post
+        val e = history.undo() ?: return@post
+        stack = e.before
+        publish(); invalidate()
+    }
+
+    fun redo() = post {
+        if (floating != null) return@post
+        val e = history.redo() ?: return@post
+        stack = e.after
+        publish(); invalidate()
+    }
+
+    /** Undo/redo until [steps] entries remain in the undo list. */
+    fun jumpHistory(undoCount: Int) = post {
+        while (history.undoNames.size > undoCount) { history.undo()?.let { stack = it.before } ?: break }
+        while (history.undoNames.size < undoCount) { history.redo()?.let { stack = it.after } ?: break }
+        publish(); invalidate()
+    }
+
+    // ---------------------------------------------------------------- painting
+
+    private var stroke: StrokeOp? = null
+    private var strokeLayer: Layer? = null
+    private var strokeBefore: Stack? = null
+    private var strokeTool: PaintTool = PaintTool.BRUSH
+
+    fun strokeBegin(tool: PaintTool, settings: BrushSettings, color: Int) = post {
+        val s = stack
+        val layer = s.active ?: return@post
+        if (floating != null) return@post
+        if (!layer.visible) { onMessage?.invoke("The active layer is hidden"); return@post }
+        if (layer.lockPixels) { onMessage?.invoke("The active layer's pixels are locked"); return@post }
+        stroke = StrokeOp(layer.pixels, tool, settings, color, layer.lockAlpha, s.selection)
+        strokeLayer = layer; strokeBefore = s; strokeTool = tool
+    }
+
+    fun strokeAdd(points: List<StrokePoint>) = post {
+        val st = stroke ?: return@post
+        st.add(points)
+        invalidate()
+    }
+
+    fun strokeEnd() = post {
+        val st = stroke ?: return@post
+        stroke = null
+        val changes = st.finish()
+        if (changes.isNotEmpty()) record(toolName(strokeTool), strokeBefore!!, listOf(TileDiff(strokeLayer!!.pixels, changes)))
+        else invalidate()
+    }
+
+    fun strokeCancel() = post {
+        stroke?.cancel(); stroke = null
+        invalidate()
+    }
+
+    private fun toolName(t: PaintTool) = when (t) {
+        PaintTool.BRUSH -> "Paintbrush"; PaintTool.PENCIL -> "Pencil"; PaintTool.AIRBRUSH -> "Airbrush"
+        PaintTool.ERASER -> "Eraser"; PaintTool.SMUDGE -> "Smudge"
+    }
+
+    /** Fills tiles of the active layer through [draw], respecting the selection. */
+    private fun paintRegion(name: String, region: Rect?, opacity: Float, mode: LayerMode, eraser: Boolean = false, draw: (Canvas) -> Unit) {
+        val s = stack
+        val layer = s.active ?: return
+        if (layer.lockPixels) { onMessage?.invoke("The active layer's pixels are locked"); return }
+        val sel = s.selection
+        val r = Rect(0, 0, s.width, s.height)
+        if (region != null && !r.intersect(region)) return
+        if (sel != null && !r.intersect(sel.bounds)) return
+        val session = TileEditSession(layer.pixels)
+        val scratch = Bitmap.createBitmap(TILE, TILE, Bitmap.Config.ARGB_8888)
+        val sc = Canvas(scratch)
+        val maskPaint = Paint().apply { xfermode = PorterDuffXfermode(PorterDuff.Mode.DST_IN) }
+        val comp = Paint().apply {
+            alpha = (opacity * 255).roundToInt()
+            when {
+                eraser -> xfermode = PorterDuffXfermode(PorterDuff.Mode.DST_OUT)
+                layer.lockAlpha -> xfermode = PorterDuffXfermode(PorterDuff.Mode.SRC_ATOP)
+                mode.blend != null -> blendMode = mode.blend
+            }
+        }
+        val c = Canvas()
+        layer.pixels.forTilesIn(r) { i ->
+            val tx = layer.pixels.tileX(i).toFloat(); val ty = layer.pixels.tileY(i).toFloat()
+            scratch.eraseColor(0)
+            sc.save(); sc.translate(-tx, -ty); draw(sc); sc.restore()
+            if (sel != null) sc.drawBitmap(sel.mask, -tx, -ty, maskPaint)
+            c.setBitmap(session.writable(i))
+            c.drawBitmap(scratch, 0f, 0f, comp)
+        }
+        c.setBitmap(null)
+        val changes = session.finish()
+        if (changes.isNotEmpty()) record(name, s, listOf(TileDiff(layer.pixels, changes)))
+    }
+
+    fun fillSelection(color: Int, name: String = "Fill") = post {
+        paintRegion(name, null, 1f, LayerMode.NORMAL) { it.drawColor(color) }
+    }
+
+    fun clearSelection() = post {
+        paintRegion("Clear", null, 1f, LayerMode.NORMAL, eraser = true) { it.drawColor(Color.BLACK) }
+    }
+
+    fun gradient(x0: Float, y0: Float, x1: Float, y1: Float, c0: Int, c1: Int, shape: GradientShape, opacity: Float, mode: LayerMode) = post {
+        val shader = when (shape) {
+            GradientShape.LINEAR -> LinearGradient(x0, y0, x1, y1, c0, c1, Shader.TileMode.CLAMP)
+            GradientShape.RADIAL -> RadialGradient(x0, y0, hypot(x1 - x0, y1 - y0).coerceAtLeast(1f), c0, c1, Shader.TileMode.CLAMP)
+        }
+        val p = Paint().apply { this.shader = shader; isDither = true }
+        paintRegion("Gradient", null, opacity, mode) { it.drawPaint(p) }
+    }
+
+    fun bucketFill(x: Int, y: Int, color: Int, threshold: Int, wholeSelection: Boolean, sampleMerged: Boolean, opacity: Float, mode: LayerMode) = post {
+        val s = stack
+        if (wholeSelection) { paintRegion("Bucket Fill", null, opacity, mode) { it.drawColor(color) }; return@post }
+        busy("Filling") {
+            val src = if (sampleMerged) Compositor.flatten(s).let { b -> IntArray(s.width * s.height).also { b.getPixels(it, 0, s.width, 0, 0, s.width, s.height) } }
+            else s.active?.pixels?.toPixels() ?: return@busy
+            val mask = floodFill(src, s.width, s.height, x, y, threshold)
+            val mb = Bitmap.createBitmap(s.width, s.height, Bitmap.Config.ALPHA_8)
+            Selection.writeMaskBytes(mb, mask, s.width, s.height)
+            val bounds = Selection.fromMask(mb)?.bounds ?: return@busy
+            val p = Paint().apply { this.color = color }
+            val dst = Paint().apply { xfermode = PorterDuffXfermode(PorterDuff.Mode.DST_IN) }
+            paintRegion("Bucket Fill", bounds, opacity, mode) { c ->
+                c.drawColor(color)
+                c.drawBitmap(mb, 0f, 0f, dst)
+            }
+            p.reset()
+        }
+    }
+
+    /** Samples the color at a doc position; [merged] samples the visible image. */
+    fun pickColor(x: Int, y: Int, merged: Boolean, cb: (Int) -> Unit) = post {
+        val s = stack
+        if (x !in 0 until s.width || y !in 0 until s.height) return@post
+        val bmp = Bitmap.createBitmap(1, 1, Bitmap.Config.ARGB_8888)
+        val c = Canvas(bmp)
+        c.translate(-x.toFloat(), -y.toFloat())
+        if (merged) Compositor.draw(c, s, RectF(x.toFloat(), y.toFloat(), x + 1f, y + 1f), filter = false)
+        else s.active?.let { Compositor.drawTiles(c, it.pixels, null, null) }
+        val px = bmp.getPixel(0, 0)
+        if (Color.alpha(px) > 0) withContext(Dispatchers.Main) { cb(px or 0xFF000000.toInt()) }
+    }
+
+    // ---------------------------------------------------------------- selection
+
+    fun select(path: Path, mode: SelectMode, antialias: Boolean, feather: Float, name: String) = post {
+        val s = stack
+        val sel = Selection.combine(s.selection, path, s.width, s.height, mode, antialias, feather)
+        stack = s.copy(selection = sel)
+        record(name, s)
+    }
+
+    fun fuzzySelect(x: Int, y: Int, threshold: Int, mode: SelectMode, byColor: Boolean, sampleMerged: Boolean) = post {
+        val s = stack
+        busy("Selecting") {
+            val src = if (sampleMerged) Compositor.flatten(s).let { b -> IntArray(s.width * s.height).also { b.getPixels(it, 0, s.width, 0, 0, s.width, s.height) } }
+            else s.active?.pixels?.toPixels() ?: return@busy
+            val mask = floodFill(src, s.width, s.height, x, y, threshold, contiguous = !byColor)
+            val mb = Bitmap.createBitmap(s.width, s.height, Bitmap.Config.ALPHA_8)
+            Selection.writeMaskBytes(mb, mask, s.width, s.height)
+            stack = s.copy(selection = Selection.combineMask(s.selection, mb, mode))
+            record(if (byColor) "Select by Color" else "Fuzzy Select", s)
+        }
+    }
+
+    fun selectAll() = post { val s = stack; stack = s.copy(selection = Selection.all(s.width, s.height)); record("Select All", s) }
+    fun selectNone() = post { val s = stack; if (s.selection == null) return@post; stack = s.copy(selection = null); record("Select None", s) }
+
+    fun selectInvert() = post {
+        val s = stack
+        val b = s.selection?.bytes() ?: ByteArray(s.width * s.height)
+        for (i in b.indices) b[i] = (255 - (b[i].toInt() and 0xFF)).toByte()
+        stack = s.copy(selection = Selection.fromBytes(b, s.width, s.height)); record("Invert Selection", s)
+    }
+
+    /** Feather (blur), grow (>0) or shrink (<0) the selection. */
+    fun selectModify(name: String, radius: Int, kind: Int) = post {
+        val s = stack
+        val sel = s.selection ?: return@post
+        busy(name) {
+            val blurred = Selection.blurBytes(sel.bytes(), s.width, s.height, radius * 2)
+            if (kind != 0) for (i in blurred.indices) {
+                val v = blurred[i].toInt() and 0xFF
+                blurred[i] = (if (kind > 0) (if (v > 8) 255 else 0) else (if (v > 247) 255 else 0)).toByte()
+            }
+            stack = s.copy(selection = Selection.fromBytes(blurred, s.width, s.height)); record(name, s)
+        }
+    }
+
+    fun alphaToSelection() = post {
+        val s = stack
+        val l = s.active ?: return@post
+        val px = l.pixels.toPixels()
+        val b = ByteArray(px.size) { (px[it] ushr 24).toByte() }
+        stack = s.copy(selection = Selection.fromBytes(b, s.width, s.height)); record("Alpha to Selection", s)
+    }
+
+    // ---------------------------------------------------------------- layers
+
+    fun setActive(id: Long) = post { stack = stack.copy(activeId = id); publish() }
+
+    fun addLayer(name: String = "Layer", fill: Int? = null) = post {
+        val s = stack
+        val t = TiledBitmap(s.width, s.height)
+        if (fill != null) for (i in t.tiles.indices) t.tiles[i] = TiledBitmap.newTile().apply { eraseColor(fill) }
+        val l = Layer(name = uniqueName(name), pixels = t)
+        val idx = s.indexOf(s.activeId).let { if (it < 0) s.layers.size else it + 1 }
+        stack = s.copy(layers = s.layers.toMutableList().apply { add(idx, l) }, activeId = l.id)
+        record("New Layer", s)
+    }
+
+    private fun uniqueName(base: String): String {
+        val names = stack.layers.map { it.name }.toSet()
+        if (base !in names) return base
+        var i = 2
+        while ("$base #$i" in names) i++
+        return "$base #$i"
+    }
+
+    fun duplicateLayer() = post {
+        val s = stack
+        val l = s.active ?: return@post
+        val copy = l.copy(id = newId(), name = uniqueName("${l.name} copy"), pixels = l.pixels.copy())
+        val idx = s.indexOf(l.id) + 1
+        stack = s.copy(layers = s.layers.toMutableList().apply { add(idx, copy) }, activeId = copy.id)
+        record("Duplicate Layer", s)
+    }
+
+    fun deleteLayer(id: Long) = post {
+        val s = stack
+        if (s.layers.size <= 1) { onMessage?.invoke("An image needs at least one layer"); return@post }
+        val idx = s.indexOf(id)
+        if (idx < 0) return@post
+        val layers = s.layers.filter { it.id != id }
+        val newActive = if (s.activeId == id) layers[(idx - 1).coerceAtLeast(0)].id else s.activeId
+        stack = s.copy(layers = layers, activeId = newActive)
+        record("Delete Layer", s)
+    }
+
+    fun moveLayer(id: Long, delta: Int) = post {
+        val s = stack
+        val idx = s.indexOf(id)
+        val to = (idx + delta).coerceIn(0, s.layers.size - 1)
+        if (idx < 0 || to == idx) return@post
+        stack = s.copy(layers = s.layers.toMutableList().apply { add(to, removeAt(idx)) })
+        record(if (delta > 0) "Raise Layer" else "Lower Layer", s)
+    }
+
+    private var propsBefore: Stack? = null
+
+    /** Change layer properties. With [commit] = false (e.g. while dragging a slider) no history entry is created yet. */
+    fun setLayer(id: Long, name: String, commit: Boolean = true, change: (Layer) -> Layer) = post {
+        val s = stack
+        val l = s.layers.firstOrNull { it.id == id } ?: return@post
+        if (propsBefore == null) propsBefore = s
+        stack = s.replace(change(l))
+        if (commit) {
+            val before = propsBefore!!
+            propsBefore = null
+            record(name, before)
+        } else { publish(); invalidate() }
+    }
+
+    fun mergeDown(id: Long) = post {
+        val s = stack
+        val idx = s.indexOf(id)
+        if (idx <= 0) return@post
+        val top = s.layers[idx]; val bottom = s.layers[idx - 1]
+        busy("Merging") {
+            val sub = Stack(s.width, s.height, listOf(bottom.copy(opacity = 1f, mode = LayerMode.NORMAL, visible = true), top), top.id)
+            val bmp = Compositor.flatten(sub)
+            val merged = bottom.copy(id = newId(), pixels = TiledBitmap.fromBitmap(bmp))
+            stack = s.copy(layers = s.layers.toMutableList().apply { removeAt(idx); set(idx - 1, merged) }, activeId = merged.id)
+            record("Merge Down", s, extraBytes = s.width.toLong() * s.height * 4)
+        }
+    }
+
+    fun flatten() = post {
+        val s = stack
+        busy("Flattening") {
+            val bmp = Compositor.flatten(s, Color.WHITE)
+            val l = Layer(name = "Background", pixels = TiledBitmap.fromBitmap(bmp))
+            stack = s.copy(layers = listOf(l), activeId = l.id)
+            record("Flatten Image", s, extraBytes = s.width.toLong() * s.height * 4)
+        }
+    }
+
+    // ---------------------------------------------------------------- whole-image transforms
+
+    private fun transformAll(name: String, newW: Int, newH: Int, m: Matrix, cropSelection: Boolean = true) {
+        val s = stack
+        val p = Paint().apply { isFilterBitmap = true }
+        val layers = s.layers.map { l ->
+            val src = l.pixels.toBitmap()
+            val dst = Bitmap.createBitmap(newW, newH, Bitmap.Config.ARGB_8888)
+            Canvas(dst).drawBitmap(src, m, p)
+            l.copy(pixels = TiledBitmap.fromBitmap(dst))
+        }
+        val sel = if (!cropSelection) null else s.selection?.let { sel ->
+            val dst = Bitmap.createBitmap(newW, newH, Bitmap.Config.ALPHA_8)
+            Canvas(dst).drawBitmap(sel.mask, m, p)
+            Selection.fromMask(dst)
+        }
+        stack = Stack(newW, newH, layers, s.activeId, sel)
+        thumbs.clear()
+        record(name, s, extraBytes = newW.toLong() * newH * 4 * layers.size)
+    }
+
+    fun flipImage(horizontal: Boolean) = post {
+        val s = stack
+        busy("Flipping") {
+            val m = Matrix().apply { if (horizontal) setScale(-1f, 1f, s.width / 2f, 0f) else setScale(1f, -1f, 0f, s.height / 2f) }
+            transformAll(if (horizontal) "Flip Horizontally" else "Flip Vertically", s.width, s.height, m)
+        }
+    }
+
+    fun rotateImage(degrees: Int) = post {
+        val s = stack
+        busy("Rotating") {
+            val swap = degrees % 180 != 0
+            val nw = if (swap) s.height else s.width; val nh = if (swap) s.width else s.height
+            val m = Matrix().apply { postRotate(degrees.toFloat(), s.width / 2f, s.height / 2f); postTranslate((nw - s.width) / 2f, (nh - s.height) / 2f) }
+            transformAll("Rotate $degrees°", nw, nh, m)
+        }
+    }
+
+    fun scaleImage(nw: Int, nh: Int) = post {
+        val s = stack
+        busy("Scaling") {
+            transformAll("Scale Image", nw, nh, Matrix().apply { setScale(nw / s.width.toFloat(), nh / s.height.toFloat()) })
+        }
+    }
+
+    fun canvasSize(nw: Int, nh: Int, dx: Int, dy: Int) = post {
+        busy("Resizing canvas") { transformAll("Canvas Size", nw, nh, Matrix().apply { setTranslate(dx.toFloat(), dy.toFloat()) }) }
+    }
+
+    fun cropToSelection() = post {
+        val s = stack
+        val b = s.selection?.bounds ?: run { onMessage?.invoke("Make a selection first"); return@post }
+        busy("Cropping") {
+            transformAll("Crop to Selection", b.width(), b.height(), Matrix().apply { setTranslate(-b.left.toFloat(), -b.top.toFloat()) }, cropSelection = false)
+        }
+    }
+
+    fun crop(r: Rect) = post {
+        val s = stack
+        val b = Rect(r); if (!b.intersect(0, 0, s.width, s.height) || b.isEmpty) return@post
+        busy("Cropping") {
+            transformAll("Crop Image", b.width(), b.height(), Matrix().apply { setTranslate(-b.left.toFloat(), -b.top.toFloat()) }, cropSelection = false)
+        }
+    }
+
+    fun flipLayer(horizontal: Boolean) = post {
+        val s = stack
+        val l = s.active ?: return@post
+        val src = l.pixels.toBitmap()
+        val dst = Bitmap.createBitmap(s.width, s.height, Bitmap.Config.ARGB_8888)
+        val m = Matrix().apply { if (horizontal) setScale(-1f, 1f, s.width / 2f, 0f) else setScale(1f, -1f, 0f, s.height / 2f) }
+        Canvas(dst).drawBitmap(src, m, null)
+        replaceLayerPixels(s, l, TiledBitmap.fromBitmap(dst), "Flip Layer")
+    }
+
+    private fun replaceLayerPixels(before: Stack, l: Layer, px: TiledBitmap, name: String) {
+        val changes = HashMap<Int, Pair<Bitmap?, Bitmap?>>()
+        for (i in px.tiles.indices) {
+            val a = l.pixels.tiles[i]; val b = px.tiles[i]
+            if (a !== b) changes[i] = a to b
+            l.pixels.tiles[i] = b
+        }
+        record(name, before, listOf(TileDiff(l.pixels, changes)))
+    }
+
+    // ---------------------------------------------------------------- filters
+
+    private var filterSrc: IntArray? = null
+    private var filterMask: ByteArray? = null
+    private var filterLayer: Long = -1
+    private var previewJob: Job? = null
+    private var lastResult: Pair<Filter, IntArray>? = null
+
+    /** Snapshot the active layer so previews can run off the engine thread. */
+    fun filterBegin() = post {
+        val s = stack
+        val l = s.active ?: return@post
+        filterSrc = l.pixels.toPixels()
+        filterMask = s.selection?.bytes()
+        filterLayer = l.id
+        lastResult = null
+    }
+
+    /** Preview runs on the default pool and is cancelled by newer previews. */
+    fun filterPreview(f: Filter) = post {
+        previewJob?.cancel()
+        val src = filterSrc ?: return@post
+        val mask = filterMask
+        val s = stack
+        val id = filterLayer
+        previewJob = CoroutineScope(Dispatchers.Default).launch {
+            val out = maskBlend(src, f.apply(src, s.width, s.height), mask, s.width, s.height)
+            ensureActive()
+            val tiles = TiledBitmap.fromPixels(out, s.width, s.height)
+            ensureActive()
+            withContext(dispatcher) {
+                if (filterSrc === src) {
+                    preview = id to tiles
+                    lastResult = f to out
+                    invalidate()
+                }
+            }
+        }
+    }
+
+    fun filterApply(f: Filter) = post {
+        previewJob?.cancel()
+        val src = filterSrc ?: return@post
+        val s = stack
+        val l = s.layers.firstOrNull { it.id == filterLayer } ?: return@post
+        busy(f.name) {
+            val out = withContext(Dispatchers.Default) { maskBlend(src, f.apply(src, s.width, s.height), filterMask, s.width, s.height) }
+            filterSrc = null; preview = null
+            replaceLayerPixels(s, l, TiledBitmap.fromPixels(out, s.width, s.height), f.name)
+        }
+    }
+
+    fun filterCancel() = post {
+        previewJob?.cancel()
+        filterSrc = null; filterMask = null; preview = null; lastResult = null
+        invalidate()
+    }
+
+    // ---------------------------------------------------------------- floating (insert / paste / transform)
+
+    fun placeFloating(bmp: Bitmap, name: String) = post {
+        val s = stack
+        commitFloatingNow()
+        val m = Matrix()
+        // Fit into 70% of the canvas, centered.
+        val scale = minOf(1f, s.width * 0.7f / bmp.width, s.height * 0.7f / bmp.height)
+        m.setScale(scale, scale)
+        m.postTranslate((s.width - bmp.width * scale) / 2f, (s.height - bmp.height * scale) / 2f)
+        floating = Floating(bmp, m, null, name)
+        publish(); invalidate()
+    }
+
+    /** Transform tool: lift the selection (or the whole active layer) into a floating bitmap. */
+    fun liftActive() = post {
+        if (floating != null) return@post
+        val s = stack
+        val l = s.active ?: return@post
+        val full = l.pixels.toBitmap()
+        val sel = s.selection
+        if (sel == null) {
+            floating = Floating(full, Matrix(), l.id, l.name, remainder = null)
+        } else {
+            val b = sel.bounds
+            val lifted = Bitmap.createBitmap(b.width(), b.height(), Bitmap.Config.ARGB_8888)
+            val c = Canvas(lifted)
+            c.drawBitmap(full, -b.left.toFloat(), -b.top.toFloat(), null)
+            c.drawBitmap(sel.mask, -b.left.toFloat(), -b.top.toFloat(), Paint().apply { xfermode = PorterDuffXfermode(PorterDuff.Mode.DST_IN) })
+            Canvas(full).drawBitmap(sel.mask, 0f, 0f, Paint().apply { xfermode = PorterDuffXfermode(PorterDuff.Mode.DST_OUT) })
+            floating = Floating(lifted, Matrix().apply { setTranslate(b.left.toFloat(), b.top.toFloat()) }, l.id, l.name, remainder = TiledBitmap.fromBitmap(full))
+        }
+        publish(); invalidate()
+    }
+
+    fun commitFloating(matrix: Matrix) = post {
+        floating?.matrix?.set(matrix)
+        commitFloatingNow()
+    }
+
+    private suspend fun commitFloatingNow() {
+        val f = floating ?: return
+        val s = stack
+        busy("Applying") {
+            val out = Bitmap.createBitmap(s.width, s.height, Bitmap.Config.ARGB_8888)
+            val c = Canvas(out)
+            val target = f.targetLayerId?.let { id -> s.layers.firstOrNull { it.id == id } }
+            if (target != null) {
+                f.remainder?.let { Compositor.drawTiles(c, it, null, null) }
+                c.drawBitmap(f.bitmap, f.matrix, Paint().apply { isFilterBitmap = true })
+                floating = null
+                val moved = f.selectionMoved(s)
+                stack = s.copy(selection = moved)
+                replaceLayerPixels(s, target, TiledBitmap.fromBitmap(out), "Transform")
+            } else {
+                c.drawBitmap(f.bitmap, f.matrix, Paint().apply { isFilterBitmap = true; isAntiAlias = true })
+                floating = null
+                val l = Layer(name = uniqueName(f.name), pixels = TiledBitmap.fromBitmap(out))
+                val idx = s.indexOf(s.activeId).let { if (it < 0) s.layers.size else it + 1 }
+                stack = s.copy(layers = s.layers.toMutableList().apply { add(idx, l) }, activeId = l.id)
+                record("Insert ${f.name}", s, extraBytes = 0)
+            }
+        }
+    }
+
+    private fun Floating.selectionMoved(s: Stack): Selection? {
+        val sel = s.selection ?: return null
+        if (remainder == null) return sel
+        val m = Matrix(matrix); m.preTranslate(-sel.bounds.left.toFloat(), -sel.bounds.top.toFloat())
+        val dst = Bitmap.createBitmap(s.width, s.height, Bitmap.Config.ALPHA_8)
+        Canvas(dst).drawBitmap(sel.mask, m, Paint().apply { isFilterBitmap = true })
+        return Selection.fromMask(dst)
+    }
+
+    fun cancelFloating() = post {
+        floating = null
+        publish(); invalidate()
+    }
+
+    // ---------------------------------------------------------------- clipboard
+
+    private var clipboard: Bitmap? = null
+    private var clipOffset = Rect()
+
+    fun copy(merged: Boolean = false, cut: Boolean = false) = post {
+        val s = stack
+        val l = s.active ?: return@post
+        val b = s.selection?.bounds ?: Rect(0, 0, s.width, s.height)
+        val bmp = Bitmap.createBitmap(b.width(), b.height(), Bitmap.Config.ARGB_8888)
+        val c = Canvas(bmp)
+        c.translate(-b.left.toFloat(), -b.top.toFloat())
+        if (merged) Compositor.draw(c, s) else Compositor.drawTiles(c, l.pixels, null, null)
+        s.selection?.let { c.drawBitmap(it.mask, 0f, 0f, Paint().apply { xfermode = PorterDuffXfermode(PorterDuff.Mode.DST_IN) }) }
+        clipboard = bmp; clipOffset = Rect(b)
+        if (cut) paintRegion("Cut", null, 1f, LayerMode.NORMAL, eraser = true) { it.drawColor(Color.BLACK) }
+        else onMessage?.invoke("Copied")
+    }
+
+    fun paste() = post {
+        val clip = clipboard ?: run { onMessage?.invoke("Clipboard is empty"); return@post }
+        commitFloatingNow()
+        floating = Floating(clip, Matrix().apply { setTranslate(clipOffset.left.toFloat(), clipOffset.top.toFloat()) }, null, "Pasted Layer")
+        publish(); invalidate()
+    }
+
+    // ---------------------------------------------------------------- export
+
+    suspend fun flattened(background: Int? = null): Bitmap = withContext(dispatcher) { Compositor.flatten(stack, background) }
+
+    suspend fun snapshot(): Stack = withContext(dispatcher) {
+        // Tiles are copy-on-write, so a shallow copy of each layer's tile array is a consistent snapshot.
+        val s = stack
+        s.copy(layers = s.layers.map { it.copy(pixels = it.pixels.copy()) })
+    }
+
+    fun shutdown() { scope.coroutineContext[Job]?.cancel(); executor.shutdown() }
+}
