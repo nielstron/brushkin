@@ -134,6 +134,9 @@ fun Dialogs(vm: EditorViewModel, info: DocInfo, files: FileActions) {
             val r = v.toIntOrNull()?.coerceIn(1, 500) ?: return@TextPrompt
             e.selectModify(d.replaceFirstChar { it.uppercase() } + " Selection", r, when (d) { "grow" -> 1; "shrink" -> -1; else -> 0 })
         }
+        d == "grid" -> TextPrompt("Grid spacing (px)", vm.gridSize.toInt().toString(), KeyboardType.Number, close) { v ->
+            close(); v.toIntOrNull()?.coerceIn(2, 4096)?.let { vm.gridSize = it.toFloat(); vm.showGrid = true }
+        }
         d == "border" -> TextPrompt("Border selection width (px)", "10", KeyboardType.Number, close) { v ->
             close(); v.toIntOrNull()?.coerceIn(1, 500)?.let { e.selectBorder(it) }
         }

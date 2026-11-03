@@ -132,6 +132,12 @@ class EditorViewModel(app: Application) : AndroidViewModel(app) {
     var eraseToggle by mutableStateOf(false)
     var fromCenter by mutableStateOf(false)
     var fixedRatio by mutableStateOf(false)
+    // View aids (GIMP's View menu): grid, rulers and snapping.
+    var showGrid by mutableStateOf(false)
+    var gridSize by mutableStateOf(64f)
+    var showRulers by mutableStateOf(false)
+    var snapGrid by mutableStateOf(false)
+    var snapGuides by mutableStateOf(true)
     /** Rounded corners for the rectangle select tool (px). */
     var cornerRadius by mutableStateOf(0f)
     var keepRatio by mutableStateOf(true)

@@ -31,7 +31,9 @@ object Ora {
 
             val xml = StringBuilder()
             xml.append("<?xml version='1.0' encoding='UTF-8'?>\n")
-            xml.append("<image version=\"0.0.5\" w=\"${stack.width}\" h=\"${stack.height}\">\n<stack>\n")
+            // Guides as "v120 h80 …" in an extension attribute other apps ignore.
+            val guides = if (stack.guides.isEmpty()) "" else " brushkin-guides=\"${stack.guides.joinToString(" ") { (if (it.vertical) "v" else "h") + it.pos }}\""
+            xml.append("<image version=\"0.0.5\" w=\"${stack.width}\" h=\"${stack.height}\"$guides>\n<stack>\n")
             var n = 0
             // stack.xml lists items top-most first; groups are nested <stack> elements.
             fun emit(list: List<Layer>) {
@@ -87,6 +89,7 @@ object Ora {
         val parser = Xml.newPullParser()
         parser.setInput(xml.inputStream(), "UTF-8")
         var w = 0; var h = 0
+        val guides = ArrayList<Guide>()
         var activeId = -1L
         val opts = BitmapFactory.Options().apply { inMutable = true; inPreferredConfig = Bitmap.Config.ARGB_8888 }
         // Each open <stack> collects its items (top-most first, as in the file).
@@ -97,7 +100,12 @@ object Ora {
         while (parser.next() != XmlPullParser.END_DOCUMENT) {
             when (parser.eventType) {
                 XmlPullParser.START_TAG -> when (parser.name) {
-                    "image" -> { w = parser.getAttributeValue(null, "w").toInt(); h = parser.getAttributeValue(null, "h").toInt() }
+                    "image" -> {
+                        w = parser.getAttributeValue(null, "w").toInt(); h = parser.getAttributeValue(null, "h").toInt()
+                        parser.getAttributeValue(null, "brushkin-guides")?.split(" ")?.forEach { t ->
+                            t.drop(1).toIntOrNull()?.let { pos -> if (t[0] == 'v' || t[0] == 'h') guides.add(Guide(t[0] == 'v', pos)) }
+                        }
+                    }
                     "stack" -> open.add(attrs() to ArrayList())
                     "layer" -> {
                         val a = attrs()
@@ -138,7 +146,7 @@ object Ora {
         val layers = root ?: ArrayList()
         if (w <= 0 || h <= 0) error("Invalid image size")
         if (layers.isEmpty()) layers.add(Layer(name = "Background", pixels = TiledBitmap(w, h)))
-        val st = Stack(w, h, layers, activeId)
+        val st = Stack(w, h, layers, activeId, guides = guides)
         return if (st.find(activeId) != null) st else st.copy(activeId = st.all.last { !it.isGroup }.id)
     }
 
