@@ -227,13 +227,17 @@ private fun ContextChips(vm: EditorViewModel, hasSelection: Boolean, holder: Can
                 if (t != Tool.ERASER && t != Tool.SMUDGE) Chip("Erase", vm.eraseToggle, ToolIcons.eraser) { vm.eraseToggle = !vm.eraseToggle }
             }
             t.isSelect -> {
+                // Actions on an existing selection come first so they're never scrolled off.
+                if (hasSelection) {
+                    Chip("Invert", false) { vm.engine.selectInvert() }
+                    Chip("Deselect", false) { vm.engine.selectNone() }
+                }
                 for (m in SelectMode.entries) Chip(m.name.lowercase().replaceFirstChar { it.uppercase() }, vm.selectMode == m) { vm.selectMode = m }
                 if (t == Tool.RECT_SELECT || t == Tool.ELLIPSE_SELECT) {
                     Chip("From center", vm.fromCenter) { vm.fromCenter = !vm.fromCenter }
                     Chip("Fixed 1:1", vm.fixedRatio) { vm.fixedRatio = !vm.fixedRatio }
                 }
                 if (t == Tool.OBJECT_SELECT) Chip("Whole foreground", false) { vm.objectSelect(-1f, -1f) }
-                if (hasSelection) Chip("Deselect", false) { vm.engine.selectNone() }
             }
             t == Tool.BUCKET || t == Tool.GRADIENT -> {
                 Chip("Pick", vm.pickMode, ToolIcons.picker) { vm.pickMode = !vm.pickMode }
