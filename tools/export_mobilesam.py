@@ -4,6 +4,7 @@ files the FOSS build downloads on first use of object selection:
 
   mobilesam_encoder.tflite  image [1,1024,1024,3] (normalized RGB, zero padded) -> embeddings
   mobilesam_decoder.tflite  embeddings + 2 prompt points -> 4 candidate masks [256×256] + scores
+  mobilesam_encoder_gpu.tflite  the encoder for LiteRT's GPU backend (float weights)
 
 Weights are stored as 8-bit integers (math stays float32), about 20 MB for both files.
 The decoder takes exactly two prompt points: a tap plus SAM's padding point (label -1), or a box
@@ -25,6 +26,7 @@ if not os.path.exists(src):
     subprocess.check_call(["git", "clone", "-q", "https://github.com/ChaoningZhang/MobileSAM.git", src])
     subprocess.check_call(["git", "-C", src, "checkout", "-q", COMMIT])
 sys.path.insert(0, src)
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 import torch
 import litert_torch
@@ -76,3 +78,11 @@ with torch.no_grad():
         q.quantize().export_model(p, overwrite=True)
         os.remove(raw)
         print(name + ".tflite", os.path.getsize(p), hashlib.sha256(open(p, "rb").read()).hexdigest())
+
+    # GPU variant of the encoder: same function with GPU-friendly window attention (see
+    # mobilesam_gpu.py), full-precision weights (the GPU backend doesn't take 8-bit weights).
+    import mobilesam_gpu
+    mobilesam_gpu.patch(sam)
+    p = os.path.join(out, "mobilesam_encoder_gpu.tflite")
+    litert_torch.convert(Encoder(sam).eval(), sample_enc).export(p)
+    print("mobilesam_encoder_gpu.tflite", os.path.getsize(p), hashlib.sha256(open(p, "rb").read()).hexdigest())

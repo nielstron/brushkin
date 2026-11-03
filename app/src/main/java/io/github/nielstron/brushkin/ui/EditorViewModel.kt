@@ -402,7 +402,7 @@ class EditorViewModel(app: Application) : AndroidViewModel(app) {
     /** A tap waiting for the object selection model to be downloaded (FOSS build). */
     private var pendingObjectSelect: Pair<Float, Float>? = null
     var modelProgress by mutableStateOf<Float?>(null)
-    val modelDownloadMb get() = io.github.nielstron.brushkin.ml.ObjectSelectClient.DOWNLOAD_MB
+    val modelDownloadMb get() = objects.downloadMb()
 
     /** Downloads the model after the user agreed, then runs the selection they asked for. */
     fun downloadModel() {
@@ -542,6 +542,8 @@ class EditorViewModel(app: Application) : AndroidViewModel(app) {
         }
         if (t != Tool.CROP) cropRect = null
         if (t != Tool.SCISSORS) scissorsClear()
+        // Compile the object selection model in the background so the first tap is quick.
+        if (t == Tool.OBJECT_SELECT) viewModelScope.launch { objects.prewarm() }
         if (t != Tool.TEXT) finishText()
         settingSource = (t == Tool.CLONE || t == Tool.HEAL || t == Tool.PERSPECTIVE_CLONE) && cloneSource == null
         if (t == Tool.PERSPECTIVE_CLONE && perspPlane == null) {

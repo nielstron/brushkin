@@ -35,7 +35,7 @@ android {
         release {
             isMinifyEnabled = true
             isShrinkResources = true
-            proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"))
+            proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro")
             if (keystore != null) signingConfig = signingConfigs.getByName("release")
         }
     }
@@ -63,7 +63,6 @@ android {
         sourceCompatibility = JavaVersion.VERSION_17
         targetCompatibility = JavaVersion.VERSION_17
     }
-    kotlinOptions { jvmTarget = "17" }
 }
 
 dependencies {
@@ -82,11 +81,18 @@ dependencies {
 
     // Full system emoji picker (categories, skin tones, recents).
     implementation("androidx.emoji2:emoji2-emojipicker:1.5.0")
-    // Object selection: MobileSAM (downloaded on first use) on LiteRT (Apache-2.0). LiteRT 1.x:
-    // 2.x pulls in Google Play's proprietary ai-delivery library.
-    implementation("com.google.ai.edge.litert:litert:1.4.2")
+    // Object selection: MobileSAM (downloaded on first use) on LiteRT 2 (Apache-2.0) with its GPU
+    // accelerator (ML Drift, Apache-2.0). Google Play's ai-delivery library is only used for
+    // downloading models/NPU packs through Play, which we don't do: excluded so no proprietary
+    // code ships (R8 drops the unused delivery class).
+    implementation("com.google.ai.edge.litert:litert:2.3.0") { exclude(group = "com.google.android.play") }
+    implementation("com.google.ai.edge.litert:litert-gpu:2.3.0") { exclude(group = "com.google.android.play") }
 
     testImplementation("junit:junit:4.13.2")
     androidTestImplementation("androidx.test:runner:1.6.2")
     androidTestImplementation("androidx.test.ext:junit:1.2.1")
+}
+
+kotlin {
+    compilerOptions { jvmTarget.set(org.jetbrains.kotlin.gradle.dsl.JvmTarget.JVM_17) }
 }
