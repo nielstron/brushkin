@@ -21,6 +21,8 @@ class Floating(
     val remainder: TiledBitmap? = null,
     /** Placing or transforming text: becomes / stays an editable text layer. */
     val text: TextSpec? = null,
+    /** The whole (flattened) image is being transformed: layers aren't drawn, and applying transforms them all. */
+    val wholeImage: Boolean = false,
 ) {
     /** The placement when lifted, so Move can apply an offset to it. */
     val initial = Matrix(matrix)

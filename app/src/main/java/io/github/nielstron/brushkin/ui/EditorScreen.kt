@@ -1,5 +1,6 @@
 package io.github.nielstron.brushkin.ui
 
+import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -165,7 +166,8 @@ fun EditorScreen(vm: EditorViewModel, files: FileActions) {
         Column(Modifier.align(Alignment.BottomCenter).navigationBarsPadding().padding(horizontal = 12.dp).padding(bottom = 12.dp)) {
             if (info.floating && vm.tool != Tool.MOVE) {
                 val lifted = vm.tool.confirmTransform
-                if (lifted) Row(Modifier.padding(bottom = 8.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                if (lifted) Row(Modifier.padding(bottom = 8.dp).horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    if (vm.tool != Tool.WARP && vm.tool != Tool.CAGE) TargetChips(!vm.transformWhole) { vm.changeTransformTarget(!it) }
                     if (vm.tool == Tool.SCALE) Chip("Keep ratio", vm.keepRatio) { vm.keepRatio = !vm.keepRatio }
                     if (vm.tool == Tool.ROTATE) Chip("Snap 15°", vm.snapRotation) { vm.snapRotation = !vm.snapRotation }
                     when (vm.tool) {
@@ -178,7 +180,7 @@ fun EditorScreen(vm: EditorViewModel, files: FileActions) {
                         else -> {}
                     }
                 }
-                val relift = { vm.handles.clear(); if (vm.tool == Tool.WARP || vm.tool == Tool.CAGE) vm.engine.meshBegin(vm.tool == Tool.CAGE) else vm.engine.liftActive() }
+                val relift = { vm.handles.clear(); if (vm.tool == Tool.WARP || vm.tool == Tool.CAGE) vm.engine.meshBegin(vm.tool == Tool.CAGE) else vm.engine.liftActive(vm.transformWhole) }
                 ConfirmBar(if (lifted) "Apply" else "Place", onCancel = { vm.engine.cancelFloating(); if (lifted) relift() }) {
                     vm.engine.floating?.let { f -> vm.engine.commitFloating(android.graphics.Matrix(f.matrix), vm.tool.label) }
                     // Stay in the tool, ready for the next adjustment.
@@ -186,7 +188,10 @@ fun EditorScreen(vm: EditorViewModel, files: FileActions) {
                 }
             }
             else if (vm.tool == Tool.CROP && vm.cropRect != null) ConfirmBar("Crop", onCancel = { vm.cropRect = null; holder.view?.invalidate() }) {
-                vm.cropRect?.let { r -> vm.engine.crop(android.graphics.Rect(r.left.roundToInt(), r.top.roundToInt(), r.right.roundToInt(), r.bottom.roundToInt())) }
+                vm.cropRect?.let { r ->
+                    val rect = android.graphics.Rect(r.left.roundToInt(), r.top.roundToInt(), r.right.roundToInt(), r.bottom.roundToInt())
+                    if (vm.cropLayer) vm.engine.setLayerBoundary(rect) else vm.engine.crop(rect)
+                }
                 vm.cropRect = null
             }
             else {
@@ -196,6 +201,7 @@ fun EditorScreen(vm: EditorViewModel, files: FileActions) {
                     Chip("Hide (black)", vm.fg == android.graphics.Color.BLACK) { vm.fg = android.graphics.Color.BLACK }
                     Chip("Reveal (white)", vm.fg == android.graphics.Color.WHITE) { vm.fg = android.graphics.Color.WHITE }
                 }
+                if (vm.favorites.isNotEmpty()) FavoriteBar(vm)
                 ContextChips(vm, info.hasSelection, holder)
             }
             Spacer(Modifier.height(10.dp))
@@ -320,7 +326,8 @@ private fun ContextChips(vm: EditorViewModel, hasSelection: Boolean, holder: Can
             }
             t == Tool.MOVE || t == Tool.SCALE || t == Tool.ROTATE -> {
                 val name = vm.engine.info.collectAsState().value.let { i -> i.layers.firstOrNull { it.id == i.activeId }?.name ?: "" }
-                val what = if (hasSelection) "the selection on “$name”" else "“$name”"
+                val what = if (vm.transformWhole) "the image" else if (hasSelection) "the selection on “$name”" else "“$name”"
+                TargetChips(!vm.transformWhole) { vm.changeTransformTarget(!it) }
                 Text(
                     when (t) { Tool.MOVE -> "Drag to move $what"; Tool.SCALE -> "Scaling $what"; else -> "Drag to rotate $what" },
                     color = Ui.muted, fontSize = 13.sp, modifier = Modifier.padding(8.dp), maxLines = 1,
@@ -332,10 +339,12 @@ private fun ContextChips(vm: EditorViewModel, hasSelection: Boolean, holder: Can
                 }
             }
             t == Tool.FLIP -> {
-                Chip("Flip horizontally", false, ToolIcons.mirror) { vm.engine.flipLayer(true) }
-                Chip("Flip vertically", false) { vm.engine.flipLayer(false) }
+                TargetChips(!vm.transformWhole) { vm.transformWhole = !it }
+                Chip("Flip horizontally", false, ToolIcons.mirror) { if (vm.transformWhole) vm.engine.flipImage(true) else vm.engine.flipLayer(true) }
+                Chip("Flip vertically", false) { if (vm.transformWhole) vm.engine.flipImage(false) else vm.engine.flipLayer(false) }
             }
             t == Tool.CROP -> {
+                TargetChips(vm.cropLayer) { vm.cropLayer = it }
                 if (hasSelection) Chip("Crop to selection", false, ToolIcons.crop) { vm.engine.cropToSelection() }
                 Text("Drag to choose the area to keep", color = Ui.muted, fontSize = 13.sp, modifier = Modifier.padding(8.dp))
             }
@@ -435,4 +444,28 @@ private fun androidx.compose.foundation.layout.RowScope.ObjectChips(vm: EditorVi
     }
     Chip("Whole foreground", false) { vm.selectForeground() }
     if (removeChip) Chip("Remove object", false) { vm.removeObject() }
+}
+
+/** Whether a transform acts on the active layer or the whole image. */
+@Composable
+private fun TargetChips(layer: Boolean, onChange: (layer: Boolean) -> Unit) {
+    Chip("Layer", layer) { onChange(true) }
+    Chip("Image", !layer) { onChange(false) }
+}
+
+/** The user's favorite tools, one tap away (long-press a tool in the tool list to add or remove it). */
+@OptIn(androidx.compose.foundation.ExperimentalFoundationApi::class)
+@Composable
+private fun FavoriteBar(vm: EditorViewModel) {
+    Row(Modifier.fillMaxWidth().padding(bottom = 8.dp).horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+        for (t in vm.favorites) {
+            val active = vm.tool == t
+            Box(
+                Modifier.size(44.dp).clip(RoundedCornerShape(14.dp)).background(if (active) Ui.accent else Ui.panel)
+                    .border(1.dp, Ui.border, RoundedCornerShape(14.dp))
+                    .combinedClickable(onClickLabel = t.label, onClick = { vm.pickTool(t) }, onLongClick = { vm.sheet = Sheet.TOOLS }),
+                contentAlignment = Alignment.Center,
+            ) { Icon(ToolIcons.of(t), t.label, tint = if (active) Ui.onAccent else Ui.text, modifier = Modifier.size(22.dp)) }
+        }
+    }
 }

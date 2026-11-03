@@ -4,6 +4,7 @@ import android.app.Application
 import android.graphics.Color
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateListOf
+import androidx.compose.runtime.mutableStateMapOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import androidx.lifecycle.AndroidViewModel
@@ -27,21 +28,16 @@ import kotlinx.coroutines.withContext
 import java.io.File
 import kotlin.math.roundToInt
 
-enum class ToolGroup(val label: String) { SELECT("Select"), AI("AI (on-device)"), PAINT("Paint"), TRANSFORM("Transform"), OTHER("Other") }
+enum class ToolGroup(val label: String) { SELECT("Select"), PAINT("Paint"), FILTER("Filters"), TRANSFORM("Transform"), OTHER("Other") }
 
-enum class Tool(val label: String, val group: ToolGroup, val paint: PaintTool? = null) {
+enum class Tool(val label: String, val group: ToolGroup, val paint: PaintTool? = null, /** Opens this filter (live preview panel). */ val filter: String? = null) {
     RECT_SELECT("Rectangle", ToolGroup.SELECT),
     ELLIPSE_SELECT("Ellipse", ToolGroup.SELECT),
     FREE_SELECT("Free", ToolGroup.SELECT),
     FUZZY_SELECT("Fuzzy", ToolGroup.SELECT),
     COLOR_SELECT("By Color", ToolGroup.SELECT),
+    OBJECT_SELECT("Object", ToolGroup.SELECT),
     SCISSORS("Scissors", ToolGroup.SELECT),
-    OBJECT_SELECT("Object", ToolGroup.AI),
-    REMOVE_OBJECT("Remove Object", ToolGroup.AI),
-    DEPTH_BLUR("Depth Blur", ToolGroup.AI),
-    UPSCALE("Upscale", ToolGroup.AI),
-    DENOISE("Denoise", ToolGroup.AI),
-    DEBLUR("Deblur", ToolGroup.AI),
     BRUSH("Paintbrush", ToolGroup.PAINT, PaintTool.BRUSH),
     PENCIL("Pencil", ToolGroup.PAINT, PaintTool.PENCIL),
     AIRBRUSH("Airbrush", ToolGroup.PAINT, PaintTool.AIRBRUSH),
@@ -54,8 +50,30 @@ enum class Tool(val label: String, val group: ToolGroup, val paint: PaintTool? =
     INK("Ink", ToolGroup.PAINT, PaintTool.BRUSH),
     MYPAINT("MyPaint Brush", ToolGroup.PAINT, PaintTool.BRUSH),
     PERSPECTIVE_CLONE("Persp. Clone", ToolGroup.PAINT, PaintTool.CLONE),
+    REMOVE_OBJECT("Remove Object", ToolGroup.PAINT),
     BUCKET("Bucket Fill", ToolGroup.PAINT),
     GRADIENT("Gradient", ToolGroup.PAINT),
+    // On-device models; picking one runs it (see isAction).
+    DEPTH_BLUR("Depth Blur", ToolGroup.FILTER),
+    UPSCALE("Upscale", ToolGroup.FILTER),
+    DENOISE("Denoise", ToolGroup.FILTER),
+    DEBLUR("Deblur", ToolGroup.FILTER),
+    CURVES("Curves", ToolGroup.FILTER, filter = "Curves"),
+    BRIGHTNESS_CONTRAST("Bright./Contrast", ToolGroup.FILTER, filter = "Brightness-Contrast"),
+    HUE_SATURATION("Hue/Saturation", ToolGroup.FILTER, filter = "Hue-Saturation"),
+    GAUSSIAN_BLUR("Gaussian Blur", ToolGroup.FILTER, filter = "Gaussian Blur"),
+    LEVELS("Levels", ToolGroup.FILTER, filter = "Levels"),
+    UNSHARP_MASK("Unsharp Mask", ToolGroup.FILTER, filter = "Unsharp Mask"),
+    COLOR_BALANCE("Color Balance", ToolGroup.FILTER, filter = "Color Balance"),
+    EXPOSURE("Exposure", ToolGroup.FILTER, filter = "Exposure"),
+    SHADOWS_HIGHLIGHTS("Shadows/Highl.", ToolGroup.FILTER, filter = "Shadows-Highlights"),
+    COLORIZE("Colorize", ToolGroup.FILTER, filter = "Colorize"),
+    NOISE_REDUCTION("Noise Reduct.", ToolGroup.FILTER, filter = "Noise Reduction"),
+    MOTION_BLUR("Motion Blur", ToolGroup.FILTER, filter = "Motion Blur"),
+    VIGNETTE("Vignette", ToolGroup.FILTER, filter = "Vignette"),
+    DROP_SHADOW("Drop Shadow", ToolGroup.FILTER, filter = "Drop Shadow"),
+    PIXELIZE("Pixelize", ToolGroup.FILTER, filter = "Pixelize"),
+    THRESHOLD("Threshold", ToolGroup.FILTER, filter = "Threshold"),
     MOVE("Move", ToolGroup.TRANSFORM),
     SCALE("Scale", ToolGroup.TRANSFORM),
     ROTATE("Rotate", ToolGroup.TRANSFORM),
@@ -72,11 +90,11 @@ enum class Tool(val label: String, val group: ToolGroup, val paint: PaintTool? =
     PICKER("Color Picker", ToolGroup.OTHER),
     TEXT("Text", ToolGroup.OTHER);
 
-    val isSelect get() = group == ToolGroup.SELECT || this == OBJECT_SELECT
+    val isSelect get() = group == ToolGroup.SELECT
     /** Taps pick an object (MobileSAM). */
     val picksObjects get() = this == OBJECT_SELECT || this == REMOVE_OBJECT
     /** One-shot commands listed with the tools: picking one runs it and keeps the current tool. */
-    val isAction get() = this == DEPTH_BLUR || this == UPSCALE || this == DENOISE || this == DEBLUR
+    val isAction get() = this == DEPTH_BLUR || this == UPSCALE || this == DENOISE || this == DEBLUR || filter != null
     /** Tools that work on a lifted copy of the layer (applied or cancelled as a whole). */
     val liftsLayer get() = this == MOVE || this == SCALE || this == ROTATE || this == SHEAR || this == PERSPECTIVE ||
         this == TRANSFORM_3D || this == HANDLE || this == WARP || this == CAGE
@@ -652,14 +670,58 @@ class EditorViewModel(app: Application) : AndroidViewModel(app) {
         }.onFailure { android.util.Log.w("Brushkin", "autosave failed", it) }
     }
 
+    // Favorite tools (shown in the toolbar strip and first in the tool list) and how often each tool
+    // is picked (the tool list shows the most used ones per section first). Both persist.
+    private val toolPrefs = app.getSharedPreferences("brushkin-tools", 0)
+    val favorites = mutableStateListOf<Tool>().apply {
+        addAll(toolPrefs.getString("favorites", "")!!.split(',').mapNotNull { n -> Tool.entries.firstOrNull { it.name == n } })
+    }
+    private val toolUses = mutableStateMapOf<Tool, Int>().apply {
+        for (e in toolPrefs.getString("uses", "")!!.split(',')) {
+            val (n, c) = e.split(':').takeIf { it.size == 2 } ?: continue
+            Tool.entries.firstOrNull { it.name == n }?.let { put(it, c.toIntOrNull() ?: 0) }
+        }
+    }
+    fun toolUses(t: Tool) = toolUses[t] ?: 0
+
+    fun toggleFavorite(t: Tool) {
+        if (!favorites.remove(t)) favorites.add(t)
+        toolPrefs.edit().putString("favorites", favorites.joinToString(",") { it.name }).apply()
+    }
+
+    /** Moves favorite [t] one place left (-1) or right (+1) in the toolbar. */
+    fun moveFavorite(t: Tool, delta: Int) {
+        val i = favorites.indexOf(t); val j = i + delta
+        if (i < 0 || j !in favorites.indices) return
+        favorites.add(j, favorites.removeAt(i))
+        toolPrefs.edit().putString("favorites", favorites.joinToString(",") { it.name }).apply()
+    }
+
     /** Picks [t] from the tool list: a tool becomes current, an action runs. */
     fun pickTool(t: Tool) {
+        toolUses[t] = toolUses(t) + 1
+        toolPrefs.edit().putString("uses", toolUses.entries.joinToString(",") { "${it.key.name}:${it.value}" }).apply()
         when (t) {
             Tool.DEPTH_BLUR -> depthOfField()
             Tool.UPSCALE -> dialog = "upscale"
             Tool.DENOISE -> denoise()
             Tool.DEBLUR -> deblur()
-            else -> selectTool(t)
+            else -> if (t.filter != null) dialog = "filter:${t.filter}" else selectTool(t)
+        }
+    }
+
+    /** Transform tools act on the whole image instead of the active layer. */
+    var transformWhole by mutableStateOf(false)
+    /** Crop only the active layer (its boundary) instead of the image. */
+    var cropLayer by mutableStateOf(false)
+
+    /** Switches transforms between layer and whole image, re-lifting what's being transformed. */
+    fun changeTransformTarget(whole: Boolean) {
+        if (whole == transformWhole) return
+        transformWhole = whole
+        if (tool.liftsLayer && tool != Tool.WARP && tool != Tool.CAGE) {
+            engine.cancelFloating(); handles.clear()
+            if (tool.confirmTransform) engine.liftActive(whole)
         }
     }
 
@@ -672,7 +734,7 @@ class EditorViewModel(app: Application) : AndroidViewModel(app) {
         // Scale and Rotate show handles right away; Move lifts on touch.
         if (t.confirmTransform) {
             handles.clear()
-            if (t == Tool.WARP || t == Tool.CAGE) engine.meshBegin(cage = t == Tool.CAGE) else engine.liftActive()
+            if (t == Tool.WARP || t == Tool.CAGE) engine.meshBegin(cage = t == Tool.CAGE) else engine.liftActive(transformWhole)
         }
         if (t != Tool.CROP) cropRect = null
         if (t != Tool.SCISSORS) scissorsClear()
