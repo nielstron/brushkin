@@ -21,8 +21,13 @@ filter, apply, disable, from selection/alpha/grayscale), merge down, flatten, du
 **Paths.** Bézier pen: tap for corners, drag for smooth points, then stroke with the current brush or
 turn into a selection.
 
-**Insert.** Images from the gallery or files, text (four styles), stickers and emoji — each placed
-with move/scale/rotate handles as a new layer. Transform tool for the active layer or selection.
+**Insert.** Images from the gallery or files, text (four styles), stickers and every system emoji
+(full picker with categories and skin tones) — each placed with move/scale/rotate handles as a new
+layer.
+
+**Transform.** Separate Move (drag, applies on release), Scale (keep or free ratio), Rotate (drag
+around the center, optional 15° snap) and Flip tools, acting on the active layer's content or the
+selected part of it; shortcuts on the selected layer in the Layers sheet.
 
 **Colors and filters.** Curves, Levels, Brightness-Contrast, Hue-Saturation, Color Balance,
 Threshold, Posterize, Desaturate, Invert, Gaussian blur, Unsharp mask, Pixelize, RGB noise — all
@@ -30,8 +35,8 @@ with live preview.
 
 **Image.** Flip, rotate, scale, canvas size, crop tool, crop to selection.
 
-**Files.** Opens and saves GIMP **.xcf** (layers, groups, masks, modes; 8/16/32-bit and float
-files are read) and OpenRaster **.ora**. Exports PNG, JPEG and WebP to Pictures/Brushkin or shares
+**Files.** Opens and saves GIMP **.xcf** (layers, groups, masks, modes; 8/16/32-bit integer and
+16/32/64-bit float files are read) and OpenRaster **.ora**. Exports PNG, JPEG and WebP to Pictures/Brushkin or shares
 them. Autosaves a few seconds after every edit.
 
 **Touch controls.** Two fingers pan/zoom/rotate the view (rotation snaps straight); two-finger tap
@@ -77,8 +82,9 @@ Requires the Android SDK (compile SDK 36) and JDK 17+.
 - Pixels are stored at 8 bits per channel (GIMP's default precision). Higher-precision XCF files
   are read and converted; XCF files are written as 8-bit sRGB, which is lossless for Brushkin's
   data.
-- 64-bit (double) precision and fractal-compressed XCF files aren't supported.
+- XCF's reserved "fractal" compression isn't supported (no GIMP version has ever written it).
 - Images larger than 8192 px or 40 megapixels are scaled down on import (with a message).
 - Masks are stored in .ora files with Brushkin-specific attributes that other apps ignore.
 - Object selection needs Google Play services. ML Kit's per-subject masks crash in the current
-  beta, so the tapped object is isolated from the foreground mask instead.
+  beta, so the tapped object is isolated from the foreground mask instead; subjects that touch
+  each other are selected together.
