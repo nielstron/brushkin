@@ -263,6 +263,12 @@ private fun ContextChips(vm: EditorViewModel, hasSelection: Boolean, holder: Can
     Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
         val t = vm.tool
         val quickMask = vm.engine.info.collectAsState().value.quickMask
+        // With a selection, whatever the tool: a round × to deselect, always first.
+        if (hasSelection && !vm.pipette) Box(
+            Modifier.size(40.dp).clip(CircleShape).background(Ui.panel.copy(alpha = 0.94f)).border(1.dp, Ui.border, CircleShape)
+                .clickable(onClickLabel = "Deselect") { vm.engine.selectNone(); vm.objectNew(); holder?.view?.invalidate() },
+            contentAlignment = Alignment.Center,
+        ) { Icon(Icons.Rounded.Close, "Deselect", tint = Ui.text, modifier = Modifier.size(20.dp)) }
         if (quickMask) Chip("Quick mask", true) { vm.engine.quickMaskToggle() }
         if (vm.pipette) {
             Text("Touch the image to pick a color", color = Ui.text, fontSize = 13.sp, modifier = Modifier.align(Alignment.CenterVertically).padding(horizontal = 4.dp))
@@ -295,7 +301,6 @@ private fun ContextChips(vm: EditorViewModel, hasSelection: Boolean, holder: Can
                 // Actions on an existing selection come first so they're never scrolled off.
                 if (hasSelection) {
                     Chip("Invert", false) { vm.engine.selectInvert() }
-                    Chip("Deselect", false) { vm.engine.selectNone() }
                     Chip("Crop", false, ToolIcons.crop) { vm.engine.cropToSelection() }
                 }
                 if (t == Tool.OBJECT_SELECT) ObjectChips(vm, holder, removeChip = hasSelection)
