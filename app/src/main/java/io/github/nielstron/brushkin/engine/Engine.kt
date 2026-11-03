@@ -389,6 +389,17 @@ class Engine {
         }
     }
 
+    /** Combine a mask computed elsewhere (e.g. object segmentation, any resolution) with the selection. */
+    fun selectFromMask(bytes: ByteArray, mw: Int, mh: Int, mode: SelectMode, name: String) = post {
+        val s = stack
+        val small = Bitmap.createBitmap(mw, mh, Bitmap.Config.ALPHA_8)
+        Selection.writeMaskBytes(small, bytes, mw, mh)
+        val full = Bitmap.createBitmap(s.width, s.height, Bitmap.Config.ALPHA_8)
+        Canvas(full).drawBitmap(small, null, Rect(0, 0, s.width, s.height), Paint().apply { isFilterBitmap = true })
+        stack = s.copy(selection = Selection.combineMask(s.selection, full, mode))
+        record(name, s)
+    }
+
     fun selectAll() = post { val s = stack; stack = s.copy(selection = Selection.all(s.width, s.height)); record("Select All", s) }
     fun selectNone() = post { val s = stack; if (s.selection == null) return@post; stack = s.copy(selection = null); record("Select None", s) }
 

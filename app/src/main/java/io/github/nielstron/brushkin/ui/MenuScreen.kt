@@ -51,6 +51,61 @@ import io.github.nielstron.brushkin.engine.LutFilter
 
 data class Cmd(val section: String, val label: String, val hint: String = "", val run: () -> Unit)
 
+/** Plain-language descriptions so search finds commands by what people want to do. */
+val KEYWORDS = mapOf(
+    "Curves…" to "brighten darken adjust contrast tones shadows highlights exposure",
+    "Levels…" to "adjust brightness contrast black point white point exposure",
+    "Brightness-Contrast…" to "make lighter darker brighter dimmer more contrast",
+    "Hue-Saturation…" to "change colors make colors more vivid or muted saturation",
+    "Color Balance…" to "warmer cooler white balance remove color cast tint",
+    "Threshold…" to "pure black and white two tone",
+    "Posterize…" to "reduce number of colors flat cartoon look",
+    "Desaturate" to "make black and white grayscale monochrome remove color",
+    "Invert" to "negative opposite colors",
+    "Gaussian Blur…" to "blur soften smooth out of focus",
+    "Unsharp Mask…" to "sharpen crisp details enhance",
+    "Pixelize…" to "pixelate mosaic censor hide face",
+    "RGB Noise…" to "add grain film noise texture",
+    "Select foreground (AI)" to "remove background cut out person subject object automatically",
+    "Crop to selection" to "trim cut image to the selected area",
+    "Scale image…" to "resize make smaller bigger change resolution",
+    "Canvas size…" to "extend add padding border more space",
+    "Rotate 90° clockwise" to "turn image right",
+    "Rotate 90° counter-clockwise" to "turn image left",
+    "Flip horizontally" to "mirror image left right",
+    "Flip vertically" to "upside down mirror",
+    "Export as PNG" to "save picture to gallery photos",
+    "Share image…" to "send picture to someone",
+    "Save project (.ora)…" to "save work with layers to continue later",
+    "Open image…" to "load photo from gallery",
+    "New image…" to "new blank canvas start drawing",
+    "New layer" to "add empty layer",
+    "Merge down" to "combine layer with the one below",
+    "Flatten image" to "merge all layers into one",
+    "Clear" to "delete erase selected pixels",
+    "Fill with FG color" to "paint selection with color",
+    "Invert" to "select everything else opposite",
+    "Feather…" to "soften selection edges",
+    "Undo" to "go back revert mistake",
+    "Undo history…" to "go back several steps",
+    "Transform layer" to "move scale rotate resize layer",
+    "Add layer mask (white)" to "hide parts non destructively",
+    "Smudge" to "smear blend colors with finger",
+    "Clone" to "copy area stamp duplicate",
+    "Heal" to "remove blemish spot fix skin retouch",
+    "Dodge / Burn" to "lighten or darken parts",
+    "Blur / Sharpen" to "soften or sharpen parts with a brush",
+    "Bucket Fill" to "fill area with color paint bucket",
+    "Gradient" to "color fade blend",
+    "Text" to "type words caption title",
+    "Color Picker" to "eyedropper sample color",
+    "Fuzzy" to "magic wand select similar area",
+    "Object" to "AI select person subject thing by tapping",
+    "Crop" to "trim cut edges",
+    "Eraser" to "remove delete paint",
+    "Paintbrush" to "draw paint brush",
+)
+
 fun commands(vm: EditorViewModel, info: DocInfo, files: FileActions, view: () -> CanvasView?): List<Cmd> {
     val e = vm.engine
     fun dlg(d: String) = { vm.dialog = d }
@@ -82,6 +137,7 @@ fun commands(vm: EditorViewModel, info: DocInfo, files: FileActions, view: () ->
         Cmd("Select", "Grow…", run = dlg("grow")),
         Cmd("Select", "Shrink…", run = dlg("shrink")),
         Cmd("Select", "Alpha to selection", run = { e.alphaToSelection() }),
+        Cmd("Select", "Select foreground (AI)", "on-device", run = { vm.objectSelect(-1f, -1f) }),
 
         Cmd("View", "Fit image in window", run = { view()?.fit() }),
         Cmd("View", "Zoom 100%", run = { view()?.zoomTo(1f) }),
@@ -137,6 +193,7 @@ fun MenuScreen(vm: EditorViewModel, info: DocInfo, files: FileActions, holder: C
     var query by remember { mutableStateOf("") }
     val open = remember { mutableStateListOf<String>() }
     val all = remember(info, vm.fg, vm.bg) { commands(vm, info, files) { holder.view } }
+    val search = remember(all) { CommandSearch(all) }
     BackHandler { vm.showMenu = false }
     val focus = remember { androidx.compose.ui.focus.FocusRequester() }
     androidx.compose.runtime.LaunchedEffect(Unit) { focus.requestFocus() }
@@ -159,20 +216,7 @@ fun MenuScreen(vm: EditorViewModel, info: DocInfo, files: FileActions, holder: C
         LazyColumn(Modifier.fillMaxSize()) {
             if (query.isNotBlank()) {
                 val q = query.trim().lowercase()
-                // Rank label matches above section and hint matches; every query word must match somewhere.
-                val words = q.split(' ').filter { it.isNotBlank() }
-                fun score(c: Cmd): Int? {
-                    val label = c.label.lowercase(); val full = "${c.section} ${c.label}".lowercase(); val hint = c.hint.lowercase()
-                    if (words.any { it !in full && it !in hint }) return null
-                    return when {
-                        label.startsWith(q) -> 0
-                        q in label -> 1
-                        q in full -> 2
-                        words.all { it in full } -> 3
-                        else -> 4
-                    }
-                }
-                val hits = all.mapNotNull { c -> score(c)?.let { c to it } }.sortedBy { it.second }.map { it.first }
+                val hits = search.search(query)
                 items(hits) { c -> CmdRow(c, showSection = true) { run(c) } }
                 if (hits.isEmpty()) item { Text("No command matches “$query”", color = Ui.muted, modifier = Modifier.padding(24.dp)) }
             } else {
