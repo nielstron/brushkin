@@ -178,11 +178,12 @@ fun commands(vm: EditorViewModel, info: DocInfo, files: FileActions, view: () ->
         Cmd("Select", "Grow…", run = dlg("grow")),
         Cmd("Select", "Shrink…", run = dlg("shrink")),
         Cmd("Select", "Border…", run = dlg("border")),
+    ) + (if (io.github.nielstron.brushkin.ml.ObjectSelectClient.AVAILABLE) listOf(Cmd("Select", "Select foreground (AI)", "on-device", run = { vm.objectSelect(-1f, -1f) })) else emptyList()) + listOf(
         Cmd("Select", "Save to channel", "keep this selection for later", run = { e.saveSelectionToChannel() }),
         Cmd("Select", "Toggle quick mask", "Shift+Q", run = { e.quickMaskToggle() }),
         Cmd("Select", "Alpha to selection", run = { e.alphaToSelection() }),
         Cmd("Select", "Crop to selection", run = { e.cropToSelection() }),
-        Cmd("Select", "Select foreground (AI)", "on-device", run = { vm.objectSelect(-1f, -1f) }),
+
 
         Cmd("View", "Fit image in window", run = { view()?.fit() }),
         Cmd("View", "Zoom 100%", run = { view()?.zoomTo(1f) }),

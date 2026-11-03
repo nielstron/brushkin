@@ -17,13 +17,39 @@ android {
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
 
+    // Release signing comes from the environment (GitHub Actions secrets). Without it the
+    // release stays unsigned, e.g. on F-Droid's build server, which signs with its own key.
+    val keystore = System.getenv("BRUSHKIN_KEYSTORE")?.let { file(it) }?.takeIf { it.exists() }
+    signingConfigs {
+        if (keystore != null) create("release") {
+            storeFile = keystore
+            storePassword = System.getenv("BRUSHKIN_KEYSTORE_PASSWORD")
+            keyAlias = System.getenv("BRUSHKIN_KEY_ALIAS")
+            keyPassword = System.getenv("BRUSHKIN_KEY_PASSWORD")
+        }
+    }
+
     buildTypes {
         release {
             isMinifyEnabled = true
             isShrinkResources = true
             proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"))
-            signingConfig = signingConfigs.getByName("debug")
+            if (keystore != null) signingConfig = signingConfigs.getByName("release")
         }
+    }
+
+    // "full": with object selection (ML Kit via Google Play services, which isn't free software).
+    // "foss": only free dependencies; this is what F-Droid builds.
+    flavorDimensions += "distribution"
+    productFlavors {
+        create("full") { dimension = "distribution" }
+        create("foss") { dimension = "distribution" }
+    }
+
+    // F-Droid and reproducible builds: no Google dependency-metadata blob in the APK.
+    dependenciesInfo {
+        includeInApk = false
+        includeInBundle = false
     }
 
     buildFeatures { compose = true }
@@ -53,8 +79,8 @@ dependencies {
     // Full system emoji picker (categories, skin tones, recents).
     implementation("androidx.emoji2:emoji2-emojipicker:1.5.0")
     // Object selection: ML Kit subject segmentation, model provided by Google Play services.
-    implementation("com.google.android.gms:play-services-mlkit-subject-segmentation:16.0.0-beta1")
-    implementation("org.jetbrains.kotlinx:kotlinx-coroutines-play-services:1.10.2")
+    "fullImplementation"("com.google.android.gms:play-services-mlkit-subject-segmentation:16.0.0-beta1")
+    "fullImplementation"("org.jetbrains.kotlinx:kotlinx-coroutines-play-services:1.10.2")
 
     testImplementation("junit:junit:4.13.2")
     androidTestImplementation("androidx.test:runner:1.6.2")
