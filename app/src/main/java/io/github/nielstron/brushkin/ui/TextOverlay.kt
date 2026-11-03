@@ -16,6 +16,15 @@ import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.wrapContentSize
+import androidx.compose.foundation.layout.width
+import androidx.compose.ui.layout.onSizeChanged
+import androidx.compose.foundation.systemGestureExclusion
+import androidx.compose.ui.unit.IntSize
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.setValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.foundation.gestures.detectDragGestures
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -75,25 +84,59 @@ fun TextOverlay(vm: EditorViewModel, holder: CanvasHolder, viewVersion: Int) {
     LaunchedEffect(te.layerId) { focus.requestFocus() }
 
     Box(Modifier.fillMaxSize()) {
-        BasicTextField(
-            value = spec.text,
-            onValueChange = { vm.updateTextEdit(spec.copy(text = it)) },
-            textStyle = TextStyle(
-                color = Color(spec.color), fontSize = fontSp,
-                fontFamily = FontFamily(spec.typeface),
-                fontWeight = if (spec.bold) FontWeight.Bold else FontWeight.Normal,
-                fontStyle = if (spec.italic) FontStyle.Italic else FontStyle.Normal,
-                shadow = if (spec.outline) Shadow(Color.White, Offset.Zero, 6f) else null,
-            ),
-            cursorBrush = SolidColor(Ui.accent),
-            modifier = Modifier
+        Box(
+            Modifier
                 .offset { IntOffset(v[2].roundToInt(), v[5].roundToInt()) }
                 .graphicsLayer { rotationZ = angle; transformOrigin = TransformOrigin(0f, 0f) }
-                .wrapContentSize(Alignment.TopStart, unbounded = true)
-                .border(1.dp, Ui.accent.copy(alpha = 0.8f))
-                .padding(with(density) { pad.toDp() })
-                .focusRequester(focus),
-        )
+                .wrapContentSize(Alignment.TopStart, unbounded = true),
+        ) {
+            var fieldSize by remember { mutableStateOf(IntSize.Zero) }
+            val boxW = spec.boxWidth?.let { with(density) { (it * scale).toDp() } }
+            BasicTextField(
+                value = spec.text,
+                onValueChange = { vm.updateTextEdit(spec.copy(text = it)) },
+                textStyle = TextStyle(
+                    color = Color(spec.color), fontSize = fontSp,
+                    fontFamily = FontFamily(spec.typeface),
+                    fontWeight = if (spec.bold) FontWeight.Bold else FontWeight.Normal,
+                    fontStyle = if (spec.italic) FontStyle.Italic else FontStyle.Normal,
+                    shadow = if (spec.outline) Shadow(Color.White, Offset.Zero, 6f) else null,
+                ),
+                cursorBrush = SolidColor(Ui.accent),
+                modifier = (if (boxW != null) Modifier.width(boxW) else Modifier)
+                    .onSizeChanged { fieldSize = it }
+                    .border(1.dp, Ui.accent.copy(alpha = 0.8f))
+                    .padding(with(density) { pad.toDp() })
+                    .focusRequester(focus),
+            )
+            // Drag the right edge to fix the box width; text then wraps inside it.
+            Box(
+                Modifier.offset {
+                    // Sits on the right edge; rides along the screen edge when the box runs off it.
+                    val hw = 28.dp.roundToPx(); val margin = 44.dp.roundToPx()
+                    val cos = kotlin.math.cos(Math.toRadians(angle.toDouble())).toFloat()
+                    val visible = if (cos > 0.5f) ((view.width - margin - v[2]) / cos).toInt() else fieldSize.width
+                    IntOffset(minOf(fieldSize.width, visible) - hw / 2, fieldSize.height / 2 - 22.dp.roundToPx())
+                }
+                    .size(28.dp, 44.dp).systemGestureExclusion()
+                    .pointerInput(scale, angle, v[2]) {
+                        detectDragGestures { change, drag ->
+                            change.consume()
+                            val latest = vm.textEdit?.spec ?: return@detectDragGestures
+                            // First drag starts from where the handle is shown (possibly clamped to the screen).
+                            val start = latest.boxWidth ?: run {
+                                val cos = kotlin.math.cos(Math.toRadians(angle.toDouble())).toFloat()
+                                val visible = if (cos > 0.5f) (view.width - 44.dp.toPx() - v[2]) / cos else Float.MAX_VALUE
+                                minOf(fieldSize.width.toFloat(), visible) / scale
+                            }
+                            vm.updateTextEdit(latest.copy(boxWidth = (start + drag.x / scale).coerceAtLeast(latest.size)))
+                        }
+                    },
+                contentAlignment = Alignment.Center,
+            ) {
+                Box(Modifier.size(10.dp, 28.dp).clip(RoundedCornerShape(5.dp)).background(Ui.accent))
+            }
+        }
 
         // Style bar, riding on top of the keyboard.
         Column(Modifier.align(Alignment.BottomCenter).fillMaxWidth().imePadding().navigationBarsPadding().background(Ui.panel)) {
@@ -109,6 +152,7 @@ fun TextOverlay(vm: EditorViewModel, holder: CanvasHolder, viewVersion: Int) {
                 Chip("B", spec.bold) { vm.updateTextEdit(spec.copy(bold = !spec.bold)) }
                 Chip("I", spec.italic) { vm.updateTextEdit(spec.copy(italic = !spec.italic)) }
                 Chip("Outline", spec.outline) { vm.updateTextEdit(spec.copy(outline = !spec.outline)) }
+                if (spec.boxWidth != null) Chip("Auto width", false) { vm.updateTextEdit(spec.copy(boxWidth = null)) }
                 Box(
                     Modifier.size(36.dp).clip(CircleShape).background(Color(vm.fg)).border(2.dp, if (spec.color == vm.fg) Ui.accent else Ui.border, CircleShape)
                         .clickable { vm.updateTextEdit(spec.copy(color = vm.fg)) },
