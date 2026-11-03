@@ -150,7 +150,6 @@ class StrokeOp(
             s.mode.blend != null -> blendMode = s.mode.blend
         }
     }
-    private val maskPaint = Paint().apply { xfermode = PorterDuffXfermode(PorterDuff.Mode.DST_IN) }
     private val scratch: Bitmap? = if (selection != null) Bitmap.createBitmap(TILE, TILE, Bitmap.Config.ALPHA_8) else null
 
     private var last: StrokePoint? = null
@@ -328,8 +327,8 @@ class StrokeOp(
         val c2 = Canvas(sc)
         sc.eraseColor(0)
         c2.drawBitmap(effectTile(i), 0f, 0f, null)
-        c2.drawBitmap(buf[i]!!, 0f, 0f, maskPaint)
-        if (selection != null) c2.drawBitmap(selection.mask, -target.tileX(i).toFloat(), -target.tileY(i).toFloat(), maskPaint)
+        MaskOps.apply(c2, buf[i]!!, 0f, 0f)
+        if (selection != null) MaskOps.apply(c2, selection.mask, -target.tileX(i).toFloat(), -target.tileY(i).toFloat())
         canvas.setBitmap(tile)
         tile.eraseColor(target.fill)
         if (orig != null) canvas.drawBitmap(orig, 0f, 0f, null)
@@ -350,7 +349,7 @@ class StrokeOp(
             val c2 = Canvas(sc)
             sc.eraseColor(0)
             c2.drawBitmap(src, 0f, 0f, null)
-            c2.drawBitmap(selection.mask, -target.tileX(i).toFloat(), -target.tileY(i).toFloat(), maskPaint)
+            MaskOps.apply(c2, selection.mask, -target.tileX(i).toFloat(), -target.tileY(i).toFloat())
             src = sc
         }
         canvas.drawBitmap(src, 0f, 0f, compPaint)
@@ -384,8 +383,8 @@ class StrokeOp(
         // Shape by the tip and apply.
         val stamp = mixed.copy(Bitmap.Config.ARGB_8888, true)
         val sc = Canvas(stamp)
-        sc.drawBitmap(tip, tipRect, RectF(dst.left - ir.left, dst.top - ir.top, dst.right - ir.left, dst.bottom - ir.top), maskPaint)
-        if (selection != null) sc.drawBitmap(selection.mask, -ir.left.toFloat(), -ir.top.toFloat(), maskPaint)
+        MaskOps.apply(sc, tip, RectF(dst.left - ir.left, dst.top - ir.top, dst.right - ir.left, dst.bottom - ir.top))
+        if (selection != null) MaskOps.apply(sc, selection.mask, -ir.left.toFloat(), -ir.top.toFloat())
         val p = Paint().apply { this.alpha = (alpha * s.opacity * 255).roundToInt() }
         if (lockAlpha) p.xfermode = PorterDuffXfermode(PorterDuff.Mode.SRC_ATOP)
         target.forTilesIn(ir) { i ->
