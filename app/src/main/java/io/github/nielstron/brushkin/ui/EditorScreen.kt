@@ -161,15 +161,25 @@ fun EditorScreen(vm: EditorViewModel, files: FileActions) {
 
         Column(Modifier.align(Alignment.BottomCenter).navigationBarsPadding().padding(horizontal = 12.dp).padding(bottom = 12.dp)) {
             if (info.floating && vm.tool != Tool.MOVE) {
-                val lifted = vm.tool == Tool.SCALE || vm.tool == Tool.ROTATE
+                val lifted = vm.tool.confirmTransform
                 if (lifted) Row(Modifier.padding(bottom = 8.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     if (vm.tool == Tool.SCALE) Chip("Keep ratio", vm.keepRatio) { vm.keepRatio = !vm.keepRatio }
                     if (vm.tool == Tool.ROTATE) Chip("Snap 15°", vm.snapRotation) { vm.snapRotation = !vm.snapRotation }
+                    when (vm.tool) {
+                        Tool.SHEAR -> Text("Drag sideways or up and down", color = Ui.muted, fontSize = 13.sp, modifier = Modifier.padding(8.dp))
+                        Tool.PERSPECTIVE -> Text("Drag the corners", color = Ui.muted, fontSize = 13.sp, modifier = Modifier.padding(8.dp))
+                        Tool.TRANSFORM_3D -> Text("Drag to tilt", color = Ui.muted, fontSize = 13.sp, modifier = Modifier.padding(8.dp))
+                        Tool.HANDLE -> Text("Tap to add up to 4 handles, drag to transform", color = Ui.muted, fontSize = 13.sp, modifier = Modifier.padding(8.dp))
+                        Tool.WARP -> Text("Push pixels with your finger", color = Ui.muted, fontSize = 13.sp, modifier = Modifier.padding(8.dp))
+                        Tool.CAGE -> Text("Tap to place the cage, then drag its points", color = Ui.muted, fontSize = 13.sp, modifier = Modifier.padding(8.dp))
+                        else -> {}
+                    }
                 }
-                ConfirmBar(if (lifted) "Apply" else "Place", onCancel = { vm.engine.cancelFloating(); if (lifted) vm.engine.liftActive() }) {
+                val relift = { vm.handles.clear(); if (vm.tool == Tool.WARP || vm.tool == Tool.CAGE) vm.engine.meshBegin(vm.tool == Tool.CAGE) else vm.engine.liftActive() }
+                ConfirmBar(if (lifted) "Apply" else "Place", onCancel = { vm.engine.cancelFloating(); if (lifted) relift() }) {
                     vm.engine.floating?.let { f -> vm.engine.commitFloating(android.graphics.Matrix(f.matrix), vm.tool.label) }
                     // Stay in the tool, ready for the next adjustment.
-                    if (lifted) vm.engine.liftActive()
+                    if (lifted) relift()
                 }
             }
             else if (vm.tool == Tool.CROP && vm.cropRect != null) ConfirmBar("Crop", onCancel = { vm.cropRect = null; holder.view?.invalidate() }) {
@@ -279,6 +289,11 @@ private fun ContextChips(vm: EditorViewModel, hasSelection: Boolean, holder: Can
                     when (t) { Tool.MOVE -> "Drag to move $what"; Tool.SCALE -> "Scaling $what"; else -> "Drag to rotate $what" },
                     color = Ui.muted, fontSize = 13.sp, modifier = Modifier.padding(8.dp), maxLines = 1,
                 )
+            }
+            t == Tool.ALIGN -> {
+                for ((label, hv) in listOf("Left" to (0 to -1), "Center" to (1 to -1), "Right" to (2 to -1), "Top" to (-1 to 0), "Middle" to (-1 to 1), "Bottom" to (-1 to 2))) {
+                    Chip(label, false) { vm.engine.alignLayer(hv.first, hv.second) }
+                }
             }
             t == Tool.FLIP -> {
                 Chip("Flip horizontally", false, ToolIcons.mirror) { vm.engine.flipLayer(true) }
