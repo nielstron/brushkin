@@ -1,0 +1,8 @@
+On-device AI tools, each downloaded once on first use and run on the device:
+• Object selection is faster (GPU) and can be refined with Include/Exclude taps
+• Remove Object fills in what was behind it
+• Depth Blur keeps your focus point sharp and blurs the rest by distance
+• Upscale ×2/×4, Denoise and Deblur
+Tool list: favorites in a toolbar strip (long-press a tool), most-used tools first, a Filters group.
+Transforms and crop work on the layer or the whole image. Aspect ratio setting for selections and crop.
+Long operations show a progress bar and can be cancelled.
