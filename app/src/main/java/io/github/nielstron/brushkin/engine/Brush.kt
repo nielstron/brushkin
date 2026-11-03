@@ -329,20 +329,13 @@ class StrokeOp(
         c2.drawBitmap(effectTile(i), 0f, 0f, null)
         MaskOps.apply(c2, buf[i]!!, 0f, 0f)
         if (selection != null) MaskOps.apply(c2, selection.mask, -target.tileX(i).toFloat(), -target.tileY(i).toFloat())
-        canvas.setBitmap(tile)
-        tile.eraseColor(target.fill)
-        if (orig != null) canvas.drawBitmap(orig, 0f, 0f, null)
-        canvas.drawBitmap(sc, 0f, 0f, effectPaint)
-        canvas.setBitmap(null)
+        LinearTile.composite(tile, orig, target.fill) { c -> c.drawBitmap(sc, 0f, 0f, effectPaint) }
     }
 
     private fun recomposite(i: Int) {
         if (tool.isEffect) { recompositeEffect(i); return }
         val tile = session.writable(i)
         val orig = session.original(i)
-        canvas.setBitmap(tile)
-        tile.eraseColor(target.fill)
-        if (orig != null) canvas.drawBitmap(orig, 0f, 0f, null)
         var src = buf[i]!!
         if (selection != null) {
             val sc = scratch!!
@@ -352,8 +345,8 @@ class StrokeOp(
             MaskOps.apply(c2, selection.mask, -target.tileX(i).toFloat(), -target.tileY(i).toFloat())
             src = sc
         }
-        canvas.drawBitmap(src, 0f, 0f, compPaint)
-        canvas.setBitmap(null)
+        val stroke = src
+        LinearTile.composite(tile, orig, target.fill) { c -> c.drawBitmap(stroke, 0f, 0f, compPaint) }
     }
 
     private fun smudgeDab(dst: RectF, ir: Rect, alpha: Float) {
@@ -400,5 +393,34 @@ class StrokeOp(
 
     companion object {
         fun isTap(points: List<StrokePoint>) = points.size < 2 || points.all { abs(it.x - points[0].x) < 1 && abs(it.y - points[0].y) < 1 }
+    }
+}
+
+/**
+ * Blends paint onto a tile in linear light (GIMP 2.10's default): the original tile and the new
+ * paint are combined in a half-float linear buffer, then written back as 8-bit sRGB. Starting
+ * from the untouched original each time means no precision is lost over a stroke.
+ * Masks (non-zero fill) hold coverage values, not colors, so they are blended as-is.
+ */
+object LinearTile {
+    private val lin = ThreadLocal.withInitial {
+        Bitmap.createBitmap(TILE, TILE, Bitmap.Config.RGBA_F16, true, android.graphics.ColorSpace.get(android.graphics.ColorSpace.Named.LINEAR_EXTENDED_SRGB))
+    }
+    private val copy = Paint().apply { xfermode = PorterDuffXfermode(PorterDuff.Mode.SRC) }
+
+    fun composite(tile: Bitmap, orig: Bitmap?, fill: Int, draw: (Canvas) -> Unit) {
+        if (fill != 0) {
+            val c = Canvas(tile)
+            tile.eraseColor(fill)
+            if (orig != null) c.drawBitmap(orig, 0f, 0f, null)
+            draw(c)
+            return
+        }
+        val l = lin.get()!!
+        l.eraseColor(0)
+        val lc = Canvas(l)
+        if (orig != null) lc.drawBitmap(orig, 0f, 0f, null)
+        draw(lc)
+        Canvas(tile).drawBitmap(l, 0f, 0f, copy)
     }
 }
