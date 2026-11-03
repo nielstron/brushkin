@@ -71,6 +71,43 @@ class TiledBitmap(val width: Int, val height: Int, /** Color of a missing tile: 
 
     fun isEmpty() = tiles.all { it == null }
 
+    /** Pixels of rows [y0, y1) as one array (missing tiles read as [fill]). */
+    fun readRows(y0: Int, y1: Int): IntArray {
+        val n = y1 - y0
+        val px = IntArray(width * n)
+        if (fill != 0) px.fill(fill)
+        for (cy in y0 / TILE..(y1 - 1) / TILE) for (cx in 0 until cols) {
+            val t = tiles[index(cx, cy)] ?: continue
+            val tx = cx * TILE; val ty = cy * TILE
+            val r0 = maxOf(y0, ty); val r1 = minOf(y1, ty + TILE)
+            val w = minOf(TILE, width - tx)
+            t.getPixels(px, (r0 - y0) * width + tx, width, 0, r0 - ty, w, r1 - r0)
+        }
+        return px
+    }
+
+    /** Write rows starting at [y0] (allocating tiles as needed). */
+    fun writeRows(y0: Int, px: IntArray, n: Int) {
+        for (cy in y0 / TILE..(y0 + n - 1) / TILE) for (cx in 0 until cols) {
+            val i = index(cx, cy)
+            val t = tiles[i] ?: TiledBitmap.newTile().also { if (fill != 0) it.eraseColor(fill); tiles[i] = it }
+            val tx = cx * TILE; val ty = cy * TILE
+            val r0 = maxOf(y0, ty); val r1 = minOf(y0 + n, ty + TILE)
+            val w = minOf(TILE, width - tx)
+            t.setPixels(px, (r0 - y0) * width + tx, width, 0, r0 - ty, w, r1 - r0)
+        }
+    }
+
+    /** Release tiles that ended up equal to [fill]. */
+    fun dropEmpty() {
+        val tmp = IntArray(TILE * TILE)
+        for (i in tiles.indices) {
+            val t = tiles[i] ?: continue
+            t.getPixels(tmp, 0, TILE, 0, 0, TILE, TILE)
+            if (isFill(tmp, fill)) tiles[i] = null
+        }
+    }
+
     companion object {
         fun newTile(): Bitmap = Bitmap.createBitmap(TILE, TILE, Bitmap.Config.ARGB_8888)
 

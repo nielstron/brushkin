@@ -66,6 +66,10 @@ sealed interface Filter {
     fun apply(src: IntArray, w: Int, h: Int): IntArray
     /** The same filter for an image scaled by [k] (previews run on a downscaled proxy). */
     fun scaled(k: Float): Filter = this
+    /** How far (px) a result pixel reads from its source pixel; banded processing overlaps by this. */
+    val margin: Int get() = 0
+    /** Bands must start at multiples of this (block-based filters). */
+    val bandAlign: Int get() = 1
 }
 
 /** Per-channel LUT filter used by Curves, Brightness-Contrast, Invert, Threshold, Posterize. */
@@ -177,11 +181,13 @@ class GaussianBlurFilter(private val radius: Float) : Filter {
     override val name = "Gaussian Blur"
     override fun apply(src: IntArray, w: Int, h: Int) = blurArgb(src, w, h, radius.roundToInt())
     override fun scaled(k: Float) = GaussianBlurFilter(radius * k)
+    override val margin get() = (radius * 2).roundToInt() + 4
 }
 
 class UnsharpMaskFilter(private val radius: Float, private val amount: Float) : Filter {
     override val name = "Unsharp Mask"
     override fun scaled(k: Float) = UnsharpMaskFilter((radius * k).coerceAtLeast(1f), amount)
+    override val margin get() = (radius * 2).roundToInt() + 4
     override fun apply(src: IntArray, w: Int, h: Int): IntArray {
         val blur = blurArgb(src, w, h, radius.roundToInt())
         val out = IntArray(src.size)
@@ -202,6 +208,7 @@ class UnsharpMaskFilter(private val radius: Float, private val amount: Float) : 
 class PixelizeFilter(private val block: Int) : Filter {
     override val name = "Pixelize"
     override fun scaled(k: Float) = PixelizeFilter((block * k).roundToInt().coerceAtLeast(1))
+    override val bandAlign get() = block.coerceAtLeast(1)
     override fun apply(src: IntArray, w: Int, h: Int): IntArray {
         val out = IntArray(src.size)
         val bs = block.coerceAtLeast(1)
@@ -370,4 +377,28 @@ fun floodFill(px: IntArray, w: Int, h: Int, sx: Int, sy: Int, threshold: Int, co
         }
     }
     return mask
+}
+
+/**
+ * Apply [f] to [target] in horizontal bands that overlap by the filter's reach, so even very
+ * large images need only a few band-sized arrays on the Java heap. [sel] limits the effect.
+ */
+fun applyFilterBanded(target: TiledBitmap, f: Filter, sel: android.graphics.Bitmap?, bandPixels: Int = 2_000_000): TiledBitmap {
+    val w = target.width; val h = target.height
+    val result = TiledBitmap(w, h, target.fill)
+    val align = f.bandAlign
+    val bandH = maxOf(align, ((bandPixels / w).coerceAtLeast(1) / align) * align)
+    var y = 0
+    while (y < h) {
+        val y1 = minOf(h, y + bandH)
+        val a0 = maxOf(0, y - f.margin); val a1 = minOf(h, y1 + f.margin)
+        val src = target.readRows(a0, a1)
+        val res = f.apply(src, w, a1 - a0)
+        val from = (y - a0) * w; val to = (y1 - a0) * w
+        val maskBand = sel?.let { Selection.maskBytes(android.graphics.Bitmap.createBitmap(it, 0, y, w, y1 - y), w, y1 - y) }
+        result.writeRows(y, maskBlend(src.copyOfRange(from, to), res.copyOfRange(from, to), maskBand, w, y1 - y), y1 - y)
+        y = y1
+    }
+    result.dropEmpty()
+    return result
 }
