@@ -9,7 +9,7 @@ android {
     compileSdk = 36
 
     defaultConfig {
-        applicationId = "io.github.nielstron.brushkin"
+        applicationId = "de.nielstron.brushkin"
         minSdk = 29
         targetSdk = 36
         versionCode = 1
