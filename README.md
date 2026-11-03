@@ -64,6 +64,10 @@ modifier keys become chips: *Line* (Shift), *Pick* (Ctrl), *Erase*, *Add/Subtrac
 reachable from a searchable menu; search ranks with BM25 over plain-language descriptions, so
 "make it brighter" finds Curves and Levels.
 
+Emoji search uses the Unicode CLDR emoji annotations (names and keywords in English plus German,
+French, Italian and Spanish; regenerate with `tools/cldr_emoji.py`, Unicode License v3 in
+`app/src/main/assets/emoji/`).
+
 ## Architecture
 
 - **Tiled, copy-on-write pixels** (`engine/Tiles.kt`). Layers are 256×256 tile bitmaps; an edit
