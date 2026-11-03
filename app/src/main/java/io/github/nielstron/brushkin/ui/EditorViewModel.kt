@@ -28,7 +28,7 @@ import kotlinx.coroutines.withContext
 import java.io.File
 import kotlin.math.roundToInt
 
-enum class ToolGroup(val label: String) { SELECT("Select"), PAINT("Paint"), FILTER("Filters"), TRANSFORM("Transform"), OTHER("Other") }
+enum class ToolGroup(val label: String) { SELECT("Select"), PAINT("Paint"), TRANSFORM("Transform"), FILTER("Filters"), OTHER("Other") }
 
 enum class Tool(val label: String, val group: ToolGroup, val paint: PaintTool? = null, /** Opens this filter (live preview panel). */ val filter: String? = null) {
     RECT_SELECT("Rectangle", ToolGroup.SELECT),
