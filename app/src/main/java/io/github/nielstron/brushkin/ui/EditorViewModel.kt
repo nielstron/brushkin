@@ -165,7 +165,7 @@ class EditorViewModel(app: Application) : AndroidViewModel(app) {
                 messages.tryEmit(
                     when {
                         "download" in msg.lowercase() -> "Object selection is still being set up by Google Play services. Try again in a moment."
-                        t is io.github.nielstron.brushkin.ml.ObjectSelectUnavailable -> "$msg. Your image is safe."
+                        t is io.github.nielstron.brushkin.ml.ObjectSelectUnavailable -> "Object selection isn't available on this device"
                         else -> "Object selection failed: ${msg.ifBlank { t.javaClass.simpleName }}"
                     }
                 )

@@ -32,6 +32,7 @@ data class LayerInfo(
     val id: Long, val name: String, val visible: Boolean, val opacity: Float, val mode: LayerMode,
     val lockAlpha: Boolean, val thumb: Bitmap?,
     val hasMask: Boolean = false, val maskEnabled: Boolean = true, val editMask: Boolean = false, val maskThumb: Bitmap? = null,
+    val depth: Int = 0, val isGroup: Boolean = false, val expanded: Boolean = true,
 )
 
 data class DocInfo(
@@ -135,11 +136,19 @@ class Engine {
         val s = stack
         _info.value = DocInfo(
             width = s.width, height = s.height,
-            layers = s.layers.asReversed().map { l ->
-                LayerInfo(
-                    l.id, l.name, l.visible, l.opacity, l.mode, l.lockAlpha, thumbs[l.id]?.second,
-                    hasMask = l.mask != null, maskEnabled = l.maskEnabled, editMask = l.editMask && l.mask != null, maskThumb = maskThumbs[l.id]?.second,
-                )
+            layers = buildList {
+                // Top-most first, children indented below their (expanded) group.
+                fun add(list: List<Layer>, depth: Int) {
+                    for (l in list.asReversed()) {
+                        add(LayerInfo(
+                            l.id, l.name, l.visible, l.opacity, l.mode, l.lockAlpha, thumbs[l.id]?.second,
+                            hasMask = l.mask != null, maskEnabled = l.maskEnabled, editMask = l.editMask && l.mask != null, maskThumb = maskThumbs[l.id]?.second,
+                            depth = depth, isGroup = l.isGroup, expanded = l.expanded,
+                        ))
+                        if (l.isGroup && l.expanded) add(l.children!!, depth + 1)
+                    }
+                }
+                add(s.layers, 0)
             },
             activeId = s.active?.id ?: -1,
             canUndo = history.canUndo, canRedo = history.canRedo,
@@ -183,15 +192,23 @@ class Engine {
             }
             return bmp
         }
-        for (l in s.layers) {
-            val sig = signature(l.pixels)
-            if (thumbs[l.id]?.first != sig) { thumbs[l.id] = sig to render(l.pixels); changed = true }
+        fun sigOf(l: Layer): Int = if (l.isGroup) l.children!!.fold(l.children.size) { a, c -> a * 31 + sigOf(c) + (if (c.visible) 1 else 0) + c.mode.ordinal } else signature(l.pixels)
+        for (l in s.all) {
+            val sig = sigOf(l)
+            if (thumbs[l.id]?.first != sig) {
+                thumbs[l.id] = sig to if (l.isGroup) {
+                    // Group thumbnail: its children composited.
+                    val sub = Compositor.flatten(Stack(s.width, s.height, l.children!!, -1))
+                    Bitmap.createScaledBitmap(sub, (s.width * scale).roundToInt().coerceAtLeast(1), (s.height * scale).roundToInt().coerceAtLeast(1), true)
+                } else render(l.pixels)
+                changed = true
+            }
             val m = l.mask
             if (m == null) { if (maskThumbs.remove(l.id) != null) changed = true; continue }
             val ms = signature(m)
             if (maskThumbs[l.id]?.first != ms) { maskThumbs[l.id] = ms to render(m); changed = true }
         }
-        val ids = s.layers.map { it.id }.toSet()
+        val ids = s.all.map { it.id }.toSet()
         thumbs.keys.retainAll(ids); maskThumbs.keys.retainAll(ids)
         return changed
     }
@@ -238,6 +255,7 @@ class Engine {
         val s = stack
         val layer = s.active ?: return@post
         if (floating != null) return@post
+        if (layer.isGroup) { onMessage?.invoke("Layer groups can't be painted on. Pick a layer."); return@post }
         if (!layer.visible) { onMessage?.invoke("The active layer is hidden"); return@post }
         if (layer.lockPixels) { onMessage?.invoke("The active layer's pixels are locked"); return@post }
         if ((tool == PaintTool.CLONE || tool == PaintTool.HEAL) && cloneOffset == null) {
@@ -283,6 +301,7 @@ class Engine {
     private fun paintRegion(name: String, region: Rect?, opacity: Float, mode: LayerMode, eraser: Boolean = false, draw: (Canvas) -> Unit) {
         val s = stack
         val layer = s.active ?: return
+        if (layer.isGroup) { onMessage?.invoke("Layer groups can't be painted on. Pick a layer."); return }
         if (layer.lockPixels) { onMessage?.invoke("The active layer's pixels are locked"); return }
         val sel = s.selection
         val r = Rect(0, 0, s.width, s.height)
@@ -441,13 +460,12 @@ class Engine {
         val t = TiledBitmap(s.width, s.height)
         if (fill != null) for (i in t.tiles.indices) t.tiles[i] = TiledBitmap.newTile().apply { eraseColor(fill) }
         val l = Layer(name = uniqueName(name), pixels = t)
-        val idx = s.indexOf(s.activeId).let { if (it < 0) s.layers.size else it + 1 }
-        stack = s.copy(layers = s.layers.toMutableList().apply { add(idx, l) }, activeId = l.id)
+        stack = s.insertAbove(s.activeId, l).copy(activeId = l.id)
         record("New Layer", s)
     }
 
     private fun uniqueName(base: String): String {
-        val names = stack.layers.map { it.name }.toSet()
+        val names = stack.all.map { it.name }.toSet()
         if (base !in names) return base
         var i = 2
         while ("$base #$i" in names) i++
@@ -457,29 +475,29 @@ class Engine {
     fun duplicateLayer() = post {
         val s = stack
         val l = s.active ?: return@post
-        val copy = l.copy(id = newId(), name = uniqueName("${l.name} copy"), pixels = l.pixels.copy(), mask = l.mask?.copy())
-        val idx = s.indexOf(l.id) + 1
-        stack = s.copy(layers = s.layers.toMutableList().apply { add(idx, copy) }, activeId = copy.id)
+        fun deep(x: Layer): Layer = x.copy(id = newId(), pixels = x.pixels.copy(), mask = x.mask?.copy(), children = x.children?.map { deep(it) })
+        val copy = deep(l).copy(name = uniqueName("${l.name} copy"))
+        stack = s.insertAbove(l.id, copy).copy(activeId = copy.id)
         record("Duplicate Layer", s)
     }
 
     fun deleteLayer(id: Long) = post {
         val s = stack
-        if (s.layers.size <= 1) { onMessage?.invoke("An image needs at least one layer"); return@post }
-        val idx = s.indexOf(id)
-        if (idx < 0) return@post
-        val layers = s.layers.filter { it.id != id }
-        val newActive = if (s.activeId == id) layers[(idx - 1).coerceAtLeast(0)].id else s.activeId
-        stack = s.copy(layers = layers, activeId = newActive)
+        val removed = s.remove(id)
+        val leaves = removed.all.filter { !it.isGroup }
+        if (leaves.isEmpty()) { onMessage?.invoke("An image needs at least one layer"); return@post }
+        val newActive = if (removed.find(s.activeId) != null) s.activeId else leaves.last().id
+        stack = removed.copy(activeId = newActive)
         record("Delete Layer", s)
     }
 
     fun moveLayer(id: Long, delta: Int) = post {
         val s = stack
-        val idx = s.indexOf(id)
-        val to = (idx + delta).coerceIn(0, s.layers.size - 1)
-        if (idx < 0 || to == idx) return@post
-        stack = s.copy(layers = s.layers.toMutableList().apply { add(to, removeAt(idx)) })
+        val (parent, list) = s.siblingsOf(id) ?: return@post
+        val idx = list.indexOfFirst { it.id == id }
+        val to = (idx + delta).coerceIn(0, list.size - 1)
+        if (to == idx) return@post
+        stack = s.withSiblings(parent, list.toMutableList().apply { add(to, removeAt(idx)) })
         record(if (delta > 0) "Raise Layer" else "Lower Layer", s)
     }
 
@@ -488,7 +506,7 @@ class Engine {
     /** Change layer properties. With [commit] = false (e.g. while dragging a slider) no history entry is created yet. */
     fun setLayer(id: Long, name: String, commit: Boolean = true, change: (Layer) -> Layer) = post {
         val s = stack
-        val l = s.layers.firstOrNull { it.id == id } ?: return@post
+        val l = s.find(id) ?: return@post
         if (propsBefore == null) propsBefore = s
         stack = s.replace(change(l))
         if (commit) {
@@ -500,14 +518,15 @@ class Engine {
 
     fun mergeDown(id: Long) = post {
         val s = stack
-        val idx = s.indexOf(id)
-        if (idx <= 0) return@post
-        val top = s.layers[idx]; val bottom = s.layers[idx - 1]
+        val (parent, list) = s.siblingsOf(id) ?: return@post
+        val idx = list.indexOfFirst { it.id == id }
+        if (idx <= 0) { onMessage?.invoke("There is no layer below to merge into"); return@post }
+        val top = list[idx]; val bottom = list[idx - 1]
         busy("Merging") {
             val sub = Stack(s.width, s.height, listOf(bottom.copy(opacity = 1f, mode = LayerMode.NORMAL, visible = true), top), top.id)
             val bmp = Compositor.flatten(sub)
-            val merged = bottom.copy(id = newId(), pixels = TiledBitmap.fromBitmap(bmp), mask = null, editMask = false)
-            stack = s.copy(layers = s.layers.toMutableList().apply { removeAt(idx); set(idx - 1, merged) }, activeId = merged.id)
+            val merged = Layer(name = bottom.name, pixels = TiledBitmap.fromBitmap(bmp), opacity = bottom.opacity, mode = bottom.mode, visible = bottom.visible)
+            stack = s.withSiblings(parent, list.toMutableList().apply { removeAt(idx); set(idx - 1, merged) }).copy(activeId = merged.id)
             record("Merge Down", s, extraBytes = s.width.toLong() * s.height * 4)
         }
     }
@@ -533,7 +552,7 @@ class Engine {
             Canvas(dst).drawBitmap(t.toBitmap(), m, p)
             return TiledBitmap.fromBitmap(dst, fill = t.fill)
         }
-        val layers = s.layers.map { l -> l.copy(pixels = xf(l.pixels), mask = l.mask?.let { xf(it) }) }
+        val layers = Stack.mapTree(s.layers) { l -> if (l.isGroup) l.copy(pixels = TiledBitmap(newW, newH), mask = l.mask?.let { xf(it) }) else l.copy(pixels = xf(l.pixels), mask = l.mask?.let { xf(it) }) }
         val sel = if (!cropSelection) null else s.selection?.let { sel ->
             val dst = Bitmap.createBitmap(newW, newH, Bitmap.Config.ALPHA_8)
             Canvas(dst).drawBitmap(sel.mask, m, p)
@@ -613,6 +632,55 @@ class Engine {
         record(name, before, listOf(TileDiff(target, changes)))
     }
 
+    // ---------------------------------------------------------------- groups
+
+    /** New empty group above the active layer. */
+    fun addGroup() = post {
+        val s = stack
+        val g = Layer(name = uniqueName("Layer Group"), pixels = TiledBitmap(s.width, s.height), children = emptyList())
+        stack = s.insertAbove(s.activeId, g).copy(activeId = g.id)
+        record("New Layer Group", s)
+    }
+
+    /** Wrap the active layer in a new group. */
+    fun groupActive() = post {
+        val s = stack
+        val l = s.active ?: return@post
+        val g = Layer(name = uniqueName("Layer Group"), pixels = TiledBitmap(s.width, s.height), children = listOf(l))
+        val (parent, list) = s.siblingsOf(l.id) ?: return@post
+        stack = s.withSiblings(parent, list.map { if (it.id == l.id) g else it })
+        record("Group Layer", s)
+    }
+
+    /** Move a layer into the group directly above it (as its bottom-most child). */
+    fun moveIntoGroupAbove(id: Long) = post {
+        val s = stack
+        val (parent, list) = s.siblingsOf(id) ?: return@post
+        val idx = list.indexOfFirst { it.id == id }
+        val target = list.getOrNull(idx + 1)?.takeIf { it.isGroup } ?: run { onMessage?.invoke("There is no group directly above"); return@post }
+        val l = list[idx]
+        val newList = list.toMutableList().apply { removeAt(idx) }.map { if (it.id == target.id) it.copy(children = listOf(l) + it.children!!, expanded = true) else it }
+        stack = s.withSiblings(parent, newList)
+        record("Move into Group", s)
+    }
+
+    /** Move a layer out of its group, placing it right above the group. */
+    fun moveOutOfGroup(id: Long) = post {
+        val s = stack
+        val (parent, _) = s.siblingsOf(id) ?: return@post
+        if (parent == null) return@post
+        val l = s.find(id) ?: return@post
+        stack = s.remove(id).insertAbove(parent.id, l)
+        record("Move out of Group", s)
+    }
+
+    fun toggleExpanded(id: Long) = post {
+        val s = stack
+        val l = s.find(id) ?: return@post
+        stack = s.replace(l.copy(expanded = !l.expanded))
+        publish()
+    }
+
     // ---------------------------------------------------------------- masks
 
     enum class MaskInit(val label: String) { WHITE("White (full opacity)"), BLACK("Black (full transparency)"), SELECTION("Selection"), ALPHA("Layer's alpha channel"), GRAYSCALE("Grayscale copy of layer") }
@@ -664,8 +732,8 @@ class Engine {
     /** Choose whether tools act on the layer or its mask. Not an undo step, like in GIMP. */
     fun setEditMask(id: Long, edit: Boolean) = post {
         val s = stack
-        val l = s.layers.firstOrNull { it.id == id } ?: return@post
-        stack = s.copy(layers = s.layers.map { if (it.id == id) it.copy(editMask = edit && it.mask != null) else it }, activeId = id)
+        val l = s.find(id) ?: return@post
+        stack = s.replace(l.copy(editMask = edit && l.mask != null)).copy(activeId = id)
         publish()
         if (l.editMask != edit) onMessage?.invoke(if (edit) "Editing mask: paint black to hide, white to reveal" else "Editing layer pixels")
     }
@@ -698,6 +766,7 @@ class Engine {
     private fun filterBeginInternal() = post {
         val s = stack
         val l = s.active ?: return@post
+        if (l.isGroup) { onMessage?.invoke("Filters apply to layers, not groups. Pick a layer."); return@post }
         filterOnMask = l.drawable !== l.pixels
         filterLayer = l.id
         val k = minOf(1f, PREVIEW_MAX / maxOf(s.width, s.height).toFloat())
@@ -738,7 +807,7 @@ class Engine {
         previewJob?.cancel()
         proxy = null
         val s = stack
-        val l = s.layers.firstOrNull { it.id == filterLayer } ?: return@post
+        val l = s.find(filterLayer) ?: return@post
         val target = if (filterOnMask && l.mask != null) l.mask else l.pixels
         busy(f.name) {
             val out = withContext(Dispatchers.Default) {
@@ -775,6 +844,7 @@ class Engine {
         if (floating != null) return@post
         val s = stack
         val l = s.active ?: return@post
+        if (l.isGroup) { onMessage?.invoke("Transform a layer, not a group"); return@post }
         val full = l.pixels.toBitmap()
         val sel = s.selection
         if (sel == null) {
@@ -802,7 +872,7 @@ class Engine {
         busy("Applying") {
             val out = Bitmap.createBitmap(s.width, s.height, Bitmap.Config.ARGB_8888)
             val c = Canvas(out)
-            val target = f.targetLayerId?.let { id -> s.layers.firstOrNull { it.id == id } }
+            val target = f.targetLayerId?.let { id -> s.find(id) }
             if (target != null) {
                 f.remainder?.let { Compositor.drawTiles(c, it, null, null) }
                 c.drawBitmap(f.bitmap, f.matrix, Paint().apply { isFilterBitmap = true })
@@ -814,8 +884,7 @@ class Engine {
                 c.drawBitmap(f.bitmap, f.matrix, Paint().apply { isFilterBitmap = true; isAntiAlias = true })
                 floating = null
                 val l = Layer(name = uniqueName(f.name), pixels = TiledBitmap.fromBitmap(out))
-                val idx = s.indexOf(s.activeId).let { if (it < 0) s.layers.size else it + 1 }
-                stack = s.copy(layers = s.layers.toMutableList().apply { add(idx, l) }, activeId = l.id)
+                stack = s.insertAbove(s.activeId, l).copy(activeId = l.id)
                 record("Insert ${f.name}", s, extraBytes = 0)
             }
         }
@@ -868,7 +937,7 @@ class Engine {
     suspend fun snapshot(): Stack = withContext(dispatcher) {
         // Tiles are copy-on-write, so a shallow copy of each layer's tile array is a consistent snapshot.
         val s = stack
-        s.copy(layers = s.layers.map { it.copy(pixels = it.pixels.copy()) })
+        s.copy(layers = Stack.mapTree(s.layers) { it.copy(pixels = it.pixels.copy(), mask = it.mask?.copy()) })
     }
 
     fun shutdown() { scope.coroutineContext[Job]?.cancel(); executor.shutdown() }

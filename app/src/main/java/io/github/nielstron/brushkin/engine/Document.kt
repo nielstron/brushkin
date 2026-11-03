@@ -50,7 +50,11 @@ data class Layer(
     val maskEnabled: Boolean = true,
     /** Paint tools and filters act on the mask instead of the pixels. */
     val editMask: Boolean = false,
+    /** Non-null for a layer group: its children, bottom-most first. */
+    val children: List<Layer>? = null,
+    val expanded: Boolean = true,
 ) {
+    val isGroup get() = children != null
     /** What paint tools and filters currently modify. */
     val drawable: TiledBitmap get() = if (editMask && mask != null) mask else pixels
     val masked get() = mask != null && maskEnabled
@@ -74,7 +78,40 @@ data class Stack(
     val activeId: Long,
     val selection: Selection? = null,
 ) {
-    val active: Layer? get() = layers.firstOrNull { it.id == activeId } ?: layers.lastOrNull()
-    fun indexOf(id: Long) = layers.indexOfFirst { it.id == id }
-    fun replace(l: Layer) = copy(layers = layers.map { if (it.id == l.id) l else it })
+    /** Every layer and group, depth-first, bottom-most first. */
+    val all: List<Layer> get() = flatten(layers)
+    val active: Layer? get() = find(activeId) ?: all.lastOrNull { !it.isGroup } ?: layers.lastOrNull()
+    fun find(id: Long): Layer? = all.firstOrNull { it.id == id }
+    fun replace(l: Layer) = copy(layers = mapTree(layers) { if (it.id == l.id) l else it })
+
+    /** Parent group of [id] (null = top level) and the sibling list containing it. */
+    fun siblingsOf(id: Long): Pair<Layer?, List<Layer>>? {
+        fun search(parent: Layer?, list: List<Layer>): Pair<Layer?, List<Layer>>? {
+            if (list.any { it.id == id }) return parent to list
+            for (l in list) l.children?.let { c -> search(l, c)?.let { return it } }
+            return null
+        }
+        return search(null, layers)
+    }
+
+    /** Insert [l] directly above [anchorId] in the same group (or on top when not found). */
+    fun insertAbove(anchorId: Long, l: Layer): Stack {
+        val sib = siblingsOf(anchorId) ?: return copy(layers = layers + l)
+        val list = sib.second.toMutableList().apply { add(indexOfFirst { it.id == anchorId } + 1, l) }
+        return withSiblings(sib.first, list)
+    }
+
+    fun remove(id: Long): Stack = copy(layers = removeTree(layers, id))
+
+    /** Replace the child list of [parent] (null = top level). */
+    fun withSiblings(parent: Layer?, list: List<Layer>): Stack =
+        if (parent == null) copy(layers = list) else replace(find(parent.id)!!.copy(children = list))
+
+    companion object {
+        fun flatten(list: List<Layer>): List<Layer> = list.flatMap { listOf(it) + flatten(it.children ?: emptyList()) }
+        fun mapTree(list: List<Layer>, f: (Layer) -> Layer): List<Layer> =
+            list.map { l -> f(l).let { m -> if (m.children != null) m.copy(children = mapTree(m.children, f)) else m } }
+        fun removeTree(list: List<Layer>, id: Long): List<Layer> =
+            list.filter { it.id != id }.map { if (it.children != null) it.copy(children = removeTree(it.children, id)) else it }
+    }
 }

@@ -71,6 +71,7 @@ interface FileActions {
     fun openImage()
     fun openProject()
     fun saveProject()
+    fun saveXcf()
     fun export(format: String)
     fun share()
 }
@@ -113,6 +114,7 @@ fun Dialogs(vm: EditorViewModel, info: DocInfo, files: FileActions) {
                     }
                     Text("Share…", color = Ui.text, modifier = Modifier.fillMaxWidth().clickable { close(); files.share() }.padding(vertical = 14.dp))
                     Text("Save project with layers (.ora)…", color = Ui.text, modifier = Modifier.fillMaxWidth().clickable { close(); files.saveProject() }.padding(vertical = 14.dp))
+                    Text("Save for GIMP (.xcf)…", color = Ui.text, modifier = Modifier.fillMaxWidth().clickable { close(); files.saveXcf() }.padding(vertical = 14.dp))
                 }
             },
             confirmButton = { TextButton(onClick = close) { Text("Close") } },

@@ -46,7 +46,6 @@ object Compositor {
             xfermode = android.graphics.PorterDuffXfermode(android.graphics.PorterDuff.Mode.DST_IN)
         }
     }
-    private val layerPaint = ThreadLocal.withInitial { Paint() }
 
     fun draw(
         canvas: Canvas,
@@ -61,42 +60,55 @@ object Compositor {
         val tp = tilePaint.get()!!
         tp.isFilterBitmap = filter
         tp.isAntiAlias = false
-        val lp = layerPaint.get()!!
-        for (layer in stack.layers) {
+        drawList(canvas, stack, stack.layers, visible, filter, preview, floating, pixelSize, tp)
+        if (floating != null && floating.targetLayerId == null) drawFloating(canvas, floating, filter)
+    }
+
+    private fun drawList(
+        canvas: Canvas, stack: Stack, list: List<Layer>, visible: RectF?, filter: Boolean,
+        preview: Preview?, floating: Floating?, pixelSize: Float, tp: Paint,
+    ) {
+        val w = stack.width.toFloat(); val h = stack.height.toFloat()
+        for (layer in list) {
             if (!layer.visible) continue
-            val isFloatTarget = floating != null && floating.targetLayerId == layer.id
-            val pixels = when {
-                // The lifted layer shows only what was left behind; the floating part is drawn on top.
-                isFloatTarget -> floating!!.remainder
-                preview != null && preview.layerId == layer.id && !preview.mask -> preview.tiles
-                else -> layer.pixels
-            }
-            val mask = if (!layer.masked) null else if (preview != null && preview.layerId == layer.id && preview.mask) preview.tiles else layer.mask
-            val needsLayer = layer.opacity < 1f || layer.mode.blend != null || mask != null
+            val pv = preview?.takeIf { it.layerId == layer.id }
+            val mask = if (!layer.masked) null else if (pv != null && pv.mask) pv.tiles else layer.mask
+            val isGroup = layer.isGroup
+            // Groups are always composited in isolation (GIMP's default, non pass-through).
+            val needsLayer = isGroup || layer.opacity < 1f || layer.mode.blend != null || mask != null
             if (needsLayer) {
-                lp.reset()
+                val lp = Paint()
                 lp.alpha = (layer.opacity * 255).toInt()
                 layer.mode.blend?.let { lp.blendMode = it }
-                canvas.saveLayer(0f, 0f, stack.width.toFloat(), stack.height.toFloat(), lp)
+                canvas.saveLayer(0f, 0f, w, h, lp)
             }
-            val pv = preview?.takeIf { it.layerId == layer.id }
-            if (pixels != null) {
-                if (pv != null && !pv.mask && pv.scale != 1f) drawScaled(canvas, pv, tp, pixelSize)
-                else drawTiles(canvas, pixels, visible, tp)
+            if (isGroup) {
+                drawList(canvas, stack, layer.children!!, visible, filter, preview, floating, pixelSize, tp)
+            } else {
+                val isFloatTarget = floating != null && floating.targetLayerId == layer.id
+                val pixels = when {
+                    // The lifted layer shows only what was left behind; the floating part is drawn on top.
+                    isFloatTarget -> floating!!.remainder
+                    pv != null && !pv.mask -> pv.tiles
+                    else -> layer.pixels
+                }
+                if (pixels != null) {
+                    if (pv != null && !pv.mask && pv.scale != 1f) drawScaled(canvas, pv, tp, pixelSize)
+                    else drawTiles(canvas, pixels, visible, tp)
+                }
+                if (isFloatTarget) drawFloating(canvas, floating!!, filter)
             }
-            if (isFloatTarget) drawFloating(canvas, floating!!, filter)
             if (mask != null) {
                 // Mask tiles are opaque, so overlapping them inside their own layer is harmless and
                 // closes GPU seams; the whole mask is then applied once (luminance → alpha, DST_IN).
-                canvas.saveLayer(0f, 0f, stack.width.toFloat(), stack.height.toFloat(), maskPaint.get()!!)
-                canvas.drawRect(0f, 0f, stack.width.toFloat(), stack.height.toFloat(), whitePaint)
+                canvas.saveLayer(0f, 0f, w, h, maskPaint.get()!!)
+                canvas.drawRect(0f, 0f, w, h, whitePaint)
                 if (pv != null && pv.mask && pv.scale != 1f) drawScaled(canvas, pv, tp, pixelSize)
                 else drawTiles(canvas, mask, visible, tp, pixelSize * 0.5f)
                 canvas.restore()
             }
             if (needsLayer) canvas.restore()
         }
-        if (floating != null && floating.targetLayerId == null) drawFloating(canvas, floating, filter)
     }
 
     private val dst = ThreadLocal.withInitial { RectF() }
