@@ -243,7 +243,7 @@ private data class Param(val label: String, val range: ClosedFloatingPointRange<
 private class FilterSpec(val params: List<Param>, val build: (List<Float>) -> Filter)
 
 /** Filters with parameters; colors come from the current foreground/background. */
-private fun specs(vm: EditorViewModel): Map<String, FilterSpec> = BASE_SPECS + mapOf(
+private fun specs(fg: Int, bg: Int): Map<String, FilterSpec> = BASE_SPECS + mapOf(
     "Drop Shadow" to FilterSpec(listOf(
         Param("Offset X", -100f..100f, 16f) { "${it.roundToInt()} px" }, Param("Offset Y", -100f..100f, 16f) { "${it.roundToInt()} px" },
         Param("Blur", 0f..100f, 12f) { "${it.roundToInt()} px" }, Param("Opacity", 0f..1f, 0.6f),
@@ -252,7 +252,7 @@ private fun specs(vm: EditorViewModel): Map<String, FilterSpec> = BASE_SPECS + m
         VignetteFilter(it[0], it[1], it[2], android.graphics.Color.BLACK)
     },
     "Motion Blur" to FilterSpec(listOf(Param("Length", 1f..200f, 30f) { "${it.roundToInt()} px" }, Param("Angle", -180f..180f, 0f) { "${it.roundToInt()}°" })) { MotionBlurFilter(it[0], it[1]) },
-    "Color to Alpha" to FilterSpec(emptyList()) { ColorToAlphaFilter(vm.bg) },
+    "Color to Alpha" to FilterSpec(emptyList()) { ColorToAlphaFilter(bg) },
     "Shadows-Highlights" to FilterSpec(listOf(Param("Shadows", 0f..1f, 0.4f), Param("Highlights", 0f..1f, 0.2f), Param("Radius", 2f..200f, 40f) { "${it.roundToInt()} px" })) {
         ShadowsHighlightsFilter(it[0], it[1], it[2])
     },
@@ -301,7 +301,7 @@ private val BASE_SPECS: Map<String, FilterSpec> = mapOf(
 @Composable
 private fun FilterPanel(vm: EditorViewModel, name: String, close: () -> Unit) {
     val e = vm.engine
-    val spec = specs(vm)[name]
+    val spec = specs(vm.fg, vm.bg)[name]
     val values = remember { mutableStateMapOf<Int, Float>() }
     var curves by remember { mutableStateOf(mapOf<Channel, Curve>()) }
     fun build(): Filter = spec?.build(spec.params.indices.map { values[it] ?: spec.params[it].default }) ?: LutFilter.curves(curves)
@@ -318,6 +318,12 @@ private fun FilterPanel(vm: EditorViewModel, name: String, close: () -> Unit) {
             Row(verticalAlignment = Alignment.CenterVertically) {
                 TextButton(onClick = cancel) { Text("Cancel", color = Ui.text) }
                 Text(name, color = Ui.text, fontWeight = FontWeight.Bold, fontSize = 17.sp, modifier = Modifier.weight(1f), textAlign = androidx.compose.ui.text.style.TextAlign.Center)
+                if (spec != null) Box(
+                    // GIMP 3: keep the filter editable on the layer instead of changing its pixels.
+                    Modifier.padding(end = 8.dp).clip(RoundedCornerShape(12.dp)).border(1.dp, Ui.border, RoundedCornerShape(12.dp))
+                        .clickable { e.filterAsEffect(io.github.nielstron.brushkin.engine.LayerEffect(name, spec.params.indices.map { values[it] ?: spec.params[it].default }, vm.fg, vm.bg)); close() }
+                        .padding(horizontal = 12.dp, vertical = 10.dp)
+                ) { Text("As effect", color = Ui.text) }
                 Box(
                     Modifier.clip(RoundedCornerShape(12.dp)).background(Ui.accent).clickable { e.filterApply(build()); close() }.padding(horizontal = 18.dp, vertical = 10.dp)
                 ) { Text("Apply", color = Ui.onAccent, fontWeight = FontWeight.SemiBold) }
@@ -457,4 +463,9 @@ fun GradientEditor(vm: EditorViewModel, close: () -> Unit) {
         },
         dismissButton = { TextButton(onClick = close) { Text("Cancel") } },
     )
+}
+
+/** Rebuilds a layer effect's filter (non-destructive filters store only name and parameters). */
+fun buildEffect(e: io.github.nielstron.brushkin.engine.LayerEffect): Filter? = specs(e.fg, e.bg)[e.name]?.let { sp ->
+    sp.build(sp.params.indices.map { e.params.getOrNull(it) ?: sp.params[it].default })
 }

@@ -65,6 +65,8 @@ data class Layer(
     val lockPosition: Boolean = false,
     /** Linked layers move and transform together. */
     val linked: Boolean = false,
+    /** Non-destructive filters (GIMP 3 layer effects), applied on top of [pixels] when shown. */
+    val effects: List<LayerEffect> = emptyList(),
 ) {
     val isGroup get() = children != null
     /** What paint tools and filters currently modify. */

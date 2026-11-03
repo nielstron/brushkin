@@ -74,4 +74,17 @@ class LayerTest {
         assertEquals(Color.rgb(128, 128, 255), isolated or 0xFF000000.toInt())
         assertNotNull(through)
     }
+
+    @Test fun effectsAreNonDestructive() {
+        io.github.nielstron.brushkin.engine.Effects.factory = { io.github.nielstron.brushkin.engine.LutFilter.invert() }
+        val l = square(100, 100, Color.RED).copy(effects = listOf(io.github.nielstron.brushkin.engine.LayerEffect("Invert", emptyList())))
+        val flat = Compositor.flatten(Stack(w, h, listOf(l), l.id), Color.WHITE)
+        assertEquals(Color.CYAN, flat.getPixel(120, 120))                 // shown inverted…
+        assertEquals(Color.RED, l.pixels.toPixels()[120 * w + 120])        // …pixels untouched
+        val hidden = l.copy(effects = l.effects.map { it.copy(visible = false) })
+        assertEquals(Color.RED, Compositor.flatten(Stack(w, h, listOf(hidden), l.id), Color.WHITE).getPixel(120, 120))
+        // Saved and loaded with the image (ORA keeps them editable).
+        val out = ByteArrayOutputStream(); Ora.write(Stack(w, h, listOf(l), l.id), out)
+        assertEquals(l.effects, Ora.read(out.toByteArray().inputStream()).all.single().effects)
+    }
 }

@@ -465,6 +465,7 @@ private fun LayerRow(vm: EditorViewModel, l: LayerInfo, active: Boolean, info: D
                 Text(l.name, color = if (l.visible) Ui.text else Ui.muted, fontSize = 14.sp, fontWeight = if (active) FontWeight.SemiBold else FontWeight.Normal, maxLines = 1)
                 val sub = buildList {
                     if (l.isGroup) add("Group"); if (l.isText) add("Text"); add(l.mode.label); if (l.opacity < 1f) add("${(l.opacity * 100).roundToInt()}%"); if (l.lockAlpha) add("alpha locked")
+                    if (l.effects.isNotEmpty()) add("${l.effects.size} effect" + if (l.effects.size > 1) "s" else "")
                     if (l.lockPosition) add("position locked"); if (l.linked) add("linked"); if (l.bounds != null) add("${l.bounds.width()}×${l.bounds.height()}")
                     if (active && l.editMask) add("editing mask") else if (l.hasMask && !l.maskEnabled) add("mask off")
                 }.joinToString(" · ")
@@ -484,6 +485,17 @@ private fun LayerRow(vm: EditorViewModel, l: LayerInfo, active: Boolean, info: D
                 IconButton(onClick = { e.moveLayer(l.id, +1) }) { Icon(Icons.Rounded.ArrowUpward, "Raise layer", tint = Ui.text) }
                 IconButton(onClick = { e.moveLayer(l.id, -1) }) { Icon(Icons.Rounded.ArrowDownward, "Lower layer", tint = Ui.text) }
                 IconButton(onClick = { renaming = true }) { Icon(Icons.Rounded.Edit, "Rename layer", tint = Ui.text) }
+            }
+            if (l.effects.isNotEmpty()) {
+                // Non-destructive effects: tap to hide/show, ✕ to remove, or merge them into the pixels.
+                Row(Modifier.horizontalScroll(rememberScrollState()).padding(top = 6.dp), horizontalArrangement = Arrangement.spacedBy(6.dp), verticalAlignment = Alignment.CenterVertically) {
+                    Text("Effects", color = Ui.muted, fontSize = 12.sp)
+                    for ((i, fx) in l.effects.withIndex()) {
+                        Chip(fx.name, fx.visible) { e.setEffects(l.id, if (fx.visible) "Hide Effect" else "Show Effect") { list -> list.mapIndexed { k, x -> if (k == i) x.copy(visible = !x.visible) else x } } }
+                        Text("✕", color = Ui.muted, modifier = Modifier.clickable { e.setEffects(l.id, "Remove Effect") { list -> list.filterIndexed { k, _ -> k != i } } }.padding(4.dp))
+                    }
+                    Chip("Merge", false) { e.mergeEffects(l.id) }
+                }
             }
             Spacer(Modifier.height(6.dp))
             Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(6.dp)) {

@@ -185,7 +185,7 @@ class GlRenderer(private val engine: Engine) : GLSurfaceView.Renderer {
         when {
             isFloatTarget -> f!!.remainder?.let { drawTiles(tileProg, it, m, filter, 1f) }
             p != null && !p.mask -> drawTiles(tileProg, p.tiles, m, filter, p.scale)
-            else -> drawTiles(tileProg, l.pixels, m, filter, 1f)
+            else -> drawTiles(tileProg, io.github.nielstron.brushkin.engine.Compositor.displayPixels?.invoke(l) ?: l.pixels, m, filter, 1f)
         }
         if (isFloatTarget) drawFloating(f!!, m, filter, opacity)
     }

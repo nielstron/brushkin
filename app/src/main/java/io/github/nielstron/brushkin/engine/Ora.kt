@@ -54,6 +54,7 @@ object Ora {
                     xml.append("<layer $common src=\"$src\" x=\"${reg.left}\" y=\"${reg.top}\"")
                     if (l.lockPosition) xml.append(" brushkin-lock-position=\"true\"")
                     if (l.linked) xml.append(" brushkin-linked=\"true\"")
+                    if (l.effects.isNotEmpty()) xml.append(" brushkin-effects=\"${esc(LayerEffect.listToJson(l.effects))}\"")
                     if (l.lockAlpha) xml.append(" alpha-preserve=\"true\"")
                     l.text?.let { xml.append(" brushkin-text=\"${esc(it.toJson())}\"") }
                     // Masks aren't part of the OpenRaster spec; other apps ignore these attributes.
@@ -125,6 +126,7 @@ object Ora {
                             name = a["name"] ?: "Layer",
                             pixels = px, outside = outside, bounds = bounds,
                             lockPosition = a["brushkin-lock-position"] == "true", linked = a["brushkin-linked"] == "true",
+                            effects = a["brushkin-effects"]?.let { runCatching { LayerEffect.listFromJson(it) }.getOrNull() } ?: emptyList(),
                             visible = vis, opacity = op, mode = mode,
                             lockAlpha = a["alpha-preserve"] == "true",
                             mask = a["brushkin-mask"]?.let { files[it] }
