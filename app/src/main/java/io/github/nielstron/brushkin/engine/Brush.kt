@@ -69,6 +69,10 @@ data class BrushSettings(
     val tiltAngle: Boolean = false,
     /** An imported/created image brush (by name) instead of the generated tip. */
     val tipImage: String? = null,
+    /** Generated brush (GIMP's brush editor): 0 circle, 1 square, 2 diamond. */
+    val genShape: Int = 0,
+    /** Star points for generated brushes (2 = none). */
+    val spikes: Int = 2,
 )
 
 /** [tilt] radians from vertical, [orient] radians (stylus direction), [time] ms. */
@@ -95,7 +99,7 @@ data class Symmetry(val kind: Kind, val cx: Float, val cy: Float, val segments: 
 
 /** Rasterized brush tips are cached by their quantized parameters. */
 object TipCache {
-    private data class Key(val d: Int, val hard: Int, val shape: TipShape, val aspect: Int, val angle: Int, val pencil: Boolean, val image: String? = null, val frame: Int = 0)
+    private data class Key(val d: Int, val hard: Int, val shape: TipShape, val aspect: Int, val angle: Int, val pencil: Boolean, val image: String? = null, val frame: Int = 0, val gen: Int = 0, val spikes: Int = 2)
     private val cache = object : LinkedHashMap<Key, Bitmap>(16, 0.75f, true) {
         override fun removeEldestEntry(eldest: MutableMap.MutableEntry<Key, Bitmap>?) = size > 24
     }
@@ -104,7 +108,7 @@ object TipCache {
         // Generate at least 32px so small dabs stay smooth when scaled down.
         val d = max(if (pencil) 1 else 32, min(1024, diameter.roundToInt()))
         val img = s.tipImage?.let { Library.store?.brushByName?.get(it) }
-        val key = Key(d, (s.hardness * 20).roundToInt(), s.shape, (s.aspect * 20).roundToInt(), s.angle.roundToInt(), pencil, img?.name, frame)
+        val key = Key(d, (s.hardness * 20).roundToInt(), s.shape, (s.aspect * 20).roundToInt(), s.angle.roundToInt(), pencil, img?.name, frame, s.genShape, s.spikes)
         return synchronized(cache) { cache.getOrPut(key) { if (img != null) renderImage(d, img.frames[frame % img.frames.size], s) else render(d, s, pencil) } }
     }
 
@@ -142,10 +146,23 @@ object TipCache {
         }
         for (y in 0 until d) for (x in 0 until d) {
             val dx = x + 0.5f - r; val dy = y + 0.5f - r
-            // Rotate into tip space and stretch the minor axis.
-            val u = dx * ca + dy * sa
-            val v = (-dx * sa + dy * ca) / aspect
-            val dist = hypot(u, v) / r
+            // Rotate into tip space; fold into one spike's sector; stretch the minor axis.
+            var u = dx * ca + dy * sa
+            var v = -dx * sa + dy * ca
+            if (s.spikes > 2) {
+                val sector = (2 * Math.PI / s.spikes).toFloat()
+                val rho = hypot(u, v)
+                var phi = kotlin.math.atan2(v, u) % sector
+                if (phi < 0) phi += sector
+                phi -= sector / 2
+                u = rho * cos(phi); v = rho * sin(phi)
+            }
+            v /= aspect
+            val dist = when (s.genShape) {
+                1 -> max(abs(u), abs(v))
+                2 -> abs(u) + abs(v)
+                else -> hypot(u, v)
+            } / r
             var a = when {
                 pencil -> if (dist <= 1f) 1f else 0f
                 dist >= 1f -> 0f
