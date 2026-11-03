@@ -12,8 +12,8 @@ android {
         applicationId = "de.nielstron.brushkin"
         minSdk = 29
         targetSdk = 36
-        versionCode = 2
-        versionName = "0.2.0"
+        versionCode = 3
+        versionName = "0.2.1"
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         // LiteRT (object selection) ships native code: ARM only (phones), which keeps the APK small.
         ndk { abiFilters += listOf("arm64-v8a", "armeabi-v7a") }
@@ -41,7 +41,14 @@ android {
     }
 
     // Store native libraries (LiteRT) compressed so the APK stays small.
-    packaging { jniLibs { useLegacyPackaging = true } }
+    // Not stripping them keeps the (already stripped) libraries byte-identical on every machine,
+    // NDK installed or not, which reproducible builds need.
+    packaging {
+        jniLibs {
+            useLegacyPackaging = true
+            keepDebugSymbols += "**/*.so"
+        }
+    }
 
     // F-Droid and reproducible builds: no Google dependency-metadata blob in the APK.
     dependenciesInfo {

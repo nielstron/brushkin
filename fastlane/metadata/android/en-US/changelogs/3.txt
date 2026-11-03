@@ -1,0 +1,3 @@
+Object selection without Google Play services: tap an object (or use "Select foreground") and the open MobileSAM model selects it. The model (19 MB) is downloaded once on first use and kept in the app's cache.
+The app no longer uses Google Play services at all.
+Native libraries are packaged unchanged, so the build is reproducible.
