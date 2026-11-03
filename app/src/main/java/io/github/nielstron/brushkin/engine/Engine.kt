@@ -257,7 +257,7 @@ class Engine {
     private var strokeBefore: Stack? = null
     private var strokeTool: PaintTool = PaintTool.BRUSH
 
-    fun strokeBegin(tool: PaintTool, settings: BrushSettings, color: Int, cloneOffset: android.graphics.Point? = null) = post {
+    fun strokeBegin(tool: PaintTool, settings: BrushSettings, color: Int, cloneOffset: android.graphics.Point? = null, symmetry: Symmetry? = null) = post {
         val s = stack
         val layer = s.active ?: return@post
         if (floating != null) return@post
@@ -270,7 +270,7 @@ class Engine {
         s.quickMask?.let { qm ->
             // Quick mask: paint white to select, black (or the eraser) to deselect.
             val t = if (tool == PaintTool.ERASER) PaintTool.BRUSH else tool
-            stroke = StrokeOp(qm, t, settings, if (tool == PaintTool.ERASER) MASK_BLACK else maskGray(color), false, null, cloneOffset)
+            stroke = StrokeOp(qm, t, settings, if (tool == PaintTool.ERASER) MASK_BLACK else maskGray(color), false, null, cloneOffset, symmetry)
             strokeTarget = qm; strokeBefore = s; strokeTool = tool
             return@post
         }
@@ -279,7 +279,7 @@ class Engine {
         // On a mask, colors become gray and the eraser paints black (hides).
         val t = if (onMask && tool == PaintTool.ERASER) PaintTool.BRUSH else tool
         val c = if (onMask) (if (tool == PaintTool.ERASER) MASK_BLACK else maskGray(color)) else color
-        stroke = StrokeOp(target, t, settings, c, layer.lockAlpha && !onMask, s.selection, cloneOffset)
+        stroke = StrokeOp(target, t, settings, c, layer.lockAlpha && !onMask, s.selection, cloneOffset, symmetry)
         strokeTarget = target; strokeBefore = s; strokeTool = tool
         if (layer.text != null && !onMask) stack = dropText(s)
     }
