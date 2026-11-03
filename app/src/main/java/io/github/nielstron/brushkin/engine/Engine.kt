@@ -57,6 +57,8 @@ enum class GradientShape { LINEAR, RADIAL }
  * only ever posts requests and draws immutable snapshots. Heavy pixel work (filters, flood fill)
  * fans out to all cores from that thread.
  */
+private const val PREVIEW_MAX = 2048f
+
 class Engine {
     private val executor = Executors.newSingleThreadExecutor { r -> Thread(r, "brushkin-engine").apply { priority = Thread.NORM_PRIORITY + 1 } }
     val dispatcher = executor.asCoroutineDispatcher()
@@ -667,63 +669,79 @@ class Engine {
 
     // ---------------------------------------------------------------- filters
 
-    private var filterSrc: IntArray? = null
-    private var filterMask: ByteArray? = null
+    /** Downscaled copy of the filtered drawable used for fast, memory-light previews. */
+    private class Proxy(val px: IntArray, val w: Int, val h: Int, val k: Float, val mask: ByteArray?)
+    private var proxy: Proxy? = null
     private var filterLayer: Long = -1
     private var filterOnMask = false
+    private val previewRequests = kotlinx.coroutines.flow.MutableStateFlow<Filter?>(null)
     private var previewJob: Job? = null
-    private var lastResult: Pair<Filter, IntArray>? = null
 
-    /** Snapshot the active layer so previews can run off the engine thread. */
-    fun filterBegin() = post {
+    /** Prepare a preview proxy (≤ 2048 px) of the active drawable and start the preview worker. */
+    fun filterBegin(): Job {
+        // Reset synchronously so a preview requested right after this call isn't lost.
+        previewRequests.value = null
+        return filterBeginInternal()
+    }
+
+    private fun filterBeginInternal() = post {
         val s = stack
         val l = s.active ?: return@post
         filterOnMask = l.drawable !== l.pixels
-        filterSrc = l.drawable.toPixels()
-        filterMask = s.selection?.bytes()
         filterLayer = l.id
-        lastResult = null
-    }
-
-    /** Preview runs on the default pool and is cancelled by newer previews. */
-    fun filterPreview(f: Filter) = post {
+        val k = minOf(1f, PREVIEW_MAX / maxOf(s.width, s.height).toFloat())
+        val pw = (s.width * k).roundToInt().coerceAtLeast(1); val ph = (s.height * k).roundToInt().coerceAtLeast(1)
+        val small = Bitmap.createBitmap(pw, ph, Bitmap.Config.ARGB_8888)
+        val c = Canvas(small)
+        c.scale(pw / s.width.toFloat(), ph / s.height.toFloat())
+        if (l.drawable.fill != 0) small.eraseColor(l.drawable.fill)
+        Compositor.drawTiles(c, l.drawable, null, Paint().apply { isFilterBitmap = true }, pad = 1f / k)
+        val px = IntArray(pw * ph).also { small.getPixels(it, 0, pw, 0, 0, pw, ph) }
+        val mask = s.selection?.let { sel ->
+            val m = Bitmap.createScaledBitmap(sel.mask, pw, ph, true)
+            Selection.maskBytes(m, pw, ph)
+        }
+        proxy = Proxy(px, pw, ph, k, mask)
         previewJob?.cancel()
-        val src = filterSrc ?: return@post
-        val mask = filterMask
-        val s = stack
-        val id = filterLayer
+        // One preview at a time, always for the latest request: slider drags never pile up work.
         previewJob = CoroutineScope(Dispatchers.Default).launch {
-            val onMask = filterOnMask
-            val out = maskBlend(src, f.apply(src, s.width, s.height), mask, s.width, s.height)
-            ensureActive()
-            val tiles = TiledBitmap.fromPixels(out, s.width, s.height, if (onMask) MASK_WHITE else 0)
-            ensureActive()
-            withContext(dispatcher) {
-                if (filterSrc === src) {
-                    preview = Preview(id, onMask, tiles)
-                    lastResult = f to out
-                    invalidate()
+            previewRequests.collect { f ->
+                if (f == null) return@collect
+                val p = proxy ?: return@collect
+                val sf = f.scaled(p.k)
+                val out = maskBlend(p.px, sf.apply(p.px, p.w, p.h), p.mask, p.w, p.h)
+                val tiles = TiledBitmap.fromPixels(out, p.w, p.h, if (filterOnMask) MASK_WHITE else 0)
+                withContext(dispatcher) {
+                    if (proxy === p && previewRequests.value === f) {
+                        preview = Preview(filterLayer, filterOnMask, tiles, 1f / p.k)
+                        invalidate()
+                    }
                 }
             }
         }
     }
 
+    fun filterPreview(f: Filter) { previewRequests.value = f }
+
     fun filterApply(f: Filter) = post {
         previewJob?.cancel()
-        val src = filterSrc ?: return@post
+        proxy = null
         val s = stack
         val l = s.layers.firstOrNull { it.id == filterLayer } ?: return@post
+        val target = if (filterOnMask && l.mask != null) l.mask else l.pixels
         busy(f.name) {
-            val out = withContext(Dispatchers.Default) { maskBlend(src, f.apply(src, s.width, s.height), filterMask, s.width, s.height) }
-            filterSrc = null; preview = null
-            val target = if (filterOnMask && l.mask != null) l.mask else l.pixels
+            val out = withContext(Dispatchers.Default) {
+                val src = target.toPixels()
+                maskBlend(src, f.apply(src, s.width, s.height), s.selection?.bytes(), s.width, s.height)
+            }
+            preview = null
             replaceTiles(s, target, TiledBitmap.fromPixels(out, s.width, s.height, target.fill), f.name)
         }
     }
 
     fun filterCancel() = post {
         previewJob?.cancel()
-        filterSrc = null; filterMask = null; preview = null; lastResult = null
+        proxy = null; preview = null
         invalidate()
     }
 
