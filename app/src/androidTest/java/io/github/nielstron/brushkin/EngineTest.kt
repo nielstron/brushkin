@@ -1,0 +1,102 @@
+package io.github.nielstron.brushkin
+
+import android.graphics.Color
+import android.graphics.Path
+import android.graphics.Point
+import androidx.test.ext.junit.runners.AndroidJUnit4
+import io.github.nielstron.brushkin.engine.BrushSettings
+import io.github.nielstron.brushkin.engine.ColorBalanceFilter
+import io.github.nielstron.brushkin.engine.DesaturateFilter
+import io.github.nielstron.brushkin.engine.GaussianBlurFilter
+import io.github.nielstron.brushkin.engine.HueSaturationFilter
+import io.github.nielstron.brushkin.engine.LutFilter
+import io.github.nielstron.brushkin.engine.NoiseFilter
+import io.github.nielstron.brushkin.engine.PaintTool
+import io.github.nielstron.brushkin.engine.PixelizeFilter
+import io.github.nielstron.brushkin.engine.SelectMode
+import io.github.nielstron.brushkin.engine.Selection
+import io.github.nielstron.brushkin.engine.StrokeOp
+import io.github.nielstron.brushkin.engine.StrokePoint
+import io.github.nielstron.brushkin.engine.ThresholdFilter
+import io.github.nielstron.brushkin.engine.TiledBitmap
+import io.github.nielstron.brushkin.engine.UnsharpMaskFilter
+import io.github.nielstron.brushkin.engine.floodFill
+import org.junit.Assert.assertEquals
+import org.junit.Assert.assertNotEquals
+import org.junit.Assert.assertTrue
+import org.junit.Test
+import org.junit.runner.RunWith
+import kotlin.math.abs
+
+/** Engine behaviour on a real device: every tool, filter and selection path. */
+@RunWith(AndroidJUnit4::class)
+class EngineTest {
+    private val w = 600; private val h = 400
+
+    /** White left half, a red/blue stripe pattern on the right so effect tools have detail. */
+    private fun canvas(): TiledBitmap {
+        val px = IntArray(w * h) { i ->
+            val x = i % w; val y = i / w
+            if (x < w / 2) Color.WHITE else if ((x / 10 + y / 10) % 2 == 0) 0xFFB05A3C.toInt() else 0xFF3C6EA0.toInt()
+        }
+        return TiledBitmap.fromPixels(px, w, h)
+    }
+
+    private fun stroke(t: TiledBitmap, tool: PaintTool, s: BrushSettings = BrushSettings(size = 40f, hardness = 1f), color: Int = Color.BLACK,
+                       sel: Selection? = null, clone: Point? = null, pts: List<StrokePoint> = listOf(StrokePoint(100f, 200f, 1f), StrokePoint(500f, 200f, 1f))) {
+        val op = StrokeOp(t, tool, s, color, false, sel, clone)
+        op.add(pts); op.catchUp(); op.finish()
+    }
+
+    @Test fun paintBlendsInLinearLight() {
+        val t = canvas()
+        // A single hard dab at 50% opacity: black over white is 50% linear light → sRGB ≈ 188.
+        stroke(t, PaintTool.BRUSH, BrushSettings(size = 40f, hardness = 1f, opacity = 0.5f, pressureOpacity = false, smoothing = 0f), pts = listOf(StrokePoint(100f, 200f, 1f)))
+        val c = t.toPixels()[200 * w + 100]
+        assertTrue("got ${Color.red(c)}", abs(Color.red(c) - 188) <= 3)
+    }
+
+    @Test fun everyPaintToolChangesPixels() {
+        for (tool in PaintTool.entries) {
+            val t = canvas()
+            val before = t.toPixels()
+            val clone = if (tool == PaintTool.CLONE || tool == PaintTool.HEAL) Point(7, 15) else null
+            // Effect tools act on the striped half.
+            val pts = if (tool.isEffect || tool == PaintTool.SMUDGE) listOf(StrokePoint(330f, 150f, 1f), StrokePoint(560f, 260f, 1f)) else listOf(StrokePoint(60f, 200f, 1f), StrokePoint(560f, 200f, 1f))
+            stroke(t, tool, BrushSettings(size = 50f, hardness = 0.8f, rate = 0.8f), Color.BLACK, clone = clone, pts = pts)
+            val after = t.toPixels()
+            val changed = before.indices.count { before[it] != after[it] }
+            assertTrue("$tool changed $changed pixels", changed > 200)
+        }
+    }
+
+    @Test fun selectionClipsStrokes() {
+        val t = canvas()
+        val sel = Selection.combine(null, Path().apply { addRect(0f, 0f, 200f, 400f, Path.Direction.CW) }, w, h, SelectMode.REPLACE, false, 0f)
+        stroke(t, PaintTool.BRUSH, sel = sel)
+        val px = t.toPixels()
+        assertNotEquals(Color.WHITE, px[200 * w + 150])   // inside
+        assertEquals(Color.WHITE, px[200 * w + 250])      // outside, still white
+    }
+
+    @Test fun everyFilterRuns() {
+        val src = canvas().toPixels()
+        val filters = listOf(
+            LutFilter.curves(mapOf()), LutFilter.brightnessContrast(0.3f, 0.2f), LutFilter.levels(20f, 230f, 1.2f, 30f, 200f),
+            LutFilter.invert(), LutFilter.posterize(4), HueSaturationFilter(90f, 0.2f, 0f), ColorBalanceFilter(0.2f, 0f, -0.1f),
+            ThresholdFilter(100, 255), DesaturateFilter(), GaussianBlurFilter(12f), UnsharpMaskFilter(3f, 1f), PixelizeFilter(16), NoiseFilter(0.2f),
+        )
+        for (f in filters) {
+            val out = f.apply(src, w, h)
+            assertEquals(f.name, src.size, out.size)
+            if (f.name != "Curves") assertTrue("${f.name} had no effect", src.indices.any { src[it] != out[it] })
+        }
+    }
+
+    @Test fun floodFillStopsAtEdges() {
+        val px = canvas().toPixels()
+        val m = floodFill(px, w, h, 10, 10, 15)
+        assertEquals(-1, m[10 * w + 10].toInt())
+        assertEquals(0, m[10 * w + 400].toInt())
+    }
+}

@@ -330,8 +330,7 @@ class Engine {
             scratch.eraseColor(0)
             sc.save(); sc.translate(-tx, -ty); draw(sc); sc.restore()
             if (sel != null) MaskOps.apply(sc, sel.mask, -tx, -ty)
-            c.setBitmap(session.writable(i))
-            c.drawBitmap(scratch, 0f, 0f, comp)
+            LinearTile.composite(session.writable(i), session.original(i), target.fill) { lc -> lc.drawBitmap(scratch, 0f, 0f, comp) }
         }
         c.setBitmap(null)
         val changes = session.finish()
