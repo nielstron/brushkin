@@ -6,12 +6,12 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
-import org.tensorflow.lite.Interpreter
+import com.google.ai.edge.litert.Accelerator
+import com.google.ai.edge.litert.CompiledModel
+import com.google.ai.edge.litert.Environment
 import java.io.File
 import java.net.HttpURLConnection
 import java.net.URL
-import java.nio.ByteBuffer
-import java.nio.ByteOrder
 import java.security.MessageDigest
 
 object ObjectSelect {
@@ -24,15 +24,13 @@ object ObjectSelect {
  * SHA-256 hashes (tools/export_mobilesam.py reproduces the files), and kept in the cache
  * directory, so clearing the app's cache frees the space.
  */
-class ObjectSelectClient(context: Context) {
+class ObjectSelectClient(private val context: Context) {
     companion object {
         private const val BASE = "https://github.com/nielstron/brushkin/releases/download/models-mobilesam-2/"
-        private val FILES = listOf(
-            Triple("mobilesam_encoder.tflite", 11_301_680L, "00d8a83a751abc7723d071bbee9a66ab039faf2821976e9de2da0eb07af78fca"),
-            Triple("mobilesam_decoder.tflite", 8_642_560L, "2b5ed9f6b63000d394939208001833591dc93e322cf2d83a2ba9b59beb2b6e01"),
-        )
-        /** Shown before downloading. */
-        val DOWNLOAD_MB = FILES.sumOf { it.second } / 1_000_000
+        // CPU encoder (8-bit weights), GPU encoder (float weights, GPU-friendly attention), decoder.
+        private val ENC_CPU = Triple("mobilesam_encoder.tflite", 11_301_680L, "00d8a83a751abc7723d071bbee9a66ab039faf2821976e9de2da0eb07af78fca")
+        private val ENC_GPU = Triple("mobilesam_encoder_gpu.tflite", 28_339_460L, "8aae003faf1b1c3fb27af0a6b6961a36d8d4084613c576be6b200ce399f9f3f2")
+        private val DEC = Triple("mobilesam_decoder.tflite", 8_642_560L, "2b5ed9f6b63000d394939208001833591dc93e322cf2d83a2ba9b59beb2b6e01")
         private const val SIDE = 1024
         private const val LOW = 256 // the decoder's masks are 256×256 over the padded 1024×1024 input
         private val MEAN = floatArrayOf(123.675f, 116.28f, 103.53f)
@@ -41,21 +39,33 @@ class ObjectSelectClient(context: Context) {
 
     private val dir = File(context.cacheDir, "models/mobilesam-2")
     private val lock = Mutex()
-    private var encoder: Interpreter? = null
-    private var decoder: Interpreter? = null
+    private var env: Environment? = null
+    private var encoder: CompiledModel? = null
+    private var decoder: CompiledModel? = null
+    /** Which accelerator the encoder ended up on (GPU when available, else CPU). */
+    private var accel = "CPU"
 
     /** Embedding of the last image, so further taps on it only run the (fast) decoder. */
     private var cacheKey: Long = 0
-    private var cached: ByteBuffer? = null
+    private var cached: FloatArray? = null
 
-    fun needsDownload(): Boolean = FILES.any { (n, size, _) -> File(dir, n).length() != size }
+    /** Whether this device has a GPU LiteRT can use (then the GPU encoder is downloaded). */
+    private val gpu: Boolean by lazy {
+        runCatching<Boolean> { env().getAvailableAccelerators().contains(Accelerator.GPU) }.getOrDefault(false)
+    }
+    private val files get() = listOf(if (gpu) ENC_GPU else ENC_CPU, DEC)
+
+    /** Size of the download for this device, shown before asking. */
+    fun downloadMb(): Long = files.sumOf { it.second } / 1_000_000
+
+    fun needsDownload(): Boolean = files.any { (n, size, _) -> File(dir, n).length() != size }
 
     /** Downloads the model; [progress] gets 0…1. Every file is verified before it's kept. */
     suspend fun download(progress: (Float) -> Unit) = withContext(Dispatchers.IO) {
         dir.mkdirs()
-        val total = FILES.sumOf { it.second }.toFloat()
+        val total = files.sumOf { it.second }.toFloat()
         var done = 0L
-        for ((name, size, sha) in FILES) {
+        for ((name, size, sha) in files) {
             val target = File(dir, name)
             if (target.length() == size) { done += size; continue }
             val part = File(dir, "$name.part")
@@ -86,21 +96,46 @@ class ObjectSelectClient(context: Context) {
         progress(1f)
     }
 
-    private fun interpreters(): Pair<Interpreter, Interpreter> {
-        val opts = Interpreter.Options().setNumThreads(Runtime.getRuntime().availableProcessors().coerceIn(1, 4))
-        val enc = encoder ?: Interpreter(File(dir, FILES[0].first), opts).also { encoder = it }
-        val dec = decoder ?: Interpreter(File(dir, FILES[1].first), opts).also { decoder = it }
+    private fun env(): Environment = env ?: Environment.create(context).also { env = it }
+
+    /** Compiles the encoder for the GPU (float32: float16 overflows in this model), else the CPU. */
+    private fun compileEncoder(e: Environment): CompiledModel {
+        val file = File(dir, (if (gpu) ENC_GPU else ENC_CPU).first)
+        if (gpu) runCatching {
+            val cache = File(context.cacheDir, "models/gpu-cache").apply { mkdirs() }
+            val opts = CompiledModel.Options(Accelerator.GPU).apply {
+                gpuOptions = CompiledModel.GpuOptions(precision = CompiledModel.GpuOptions.Precision.FP32,
+                    serializationDir = cache.absolutePath, modelCacheKey = ENC_GPU.third.take(16), serializeProgramCache = true)
+            }
+            return CompiledModel.create(file.absolutePath, opts, e).also { accel = "GPU" }
+        }.onFailure { android.util.Log.w("Brushkin", "ObjectSelect: GPU unavailable (${it.message}), using CPU") }
+        accel = "CPU"
+        return CompiledModel.create(file.absolutePath, cpuOptions(), e)
+    }
+
+    private fun cpuOptions() = CompiledModel.Options(Accelerator.CPU).apply {
+        cpuOptions = CompiledModel.CpuOptions(numThreads = Runtime.getRuntime().availableProcessors().coerceIn(1, 4))
+    }
+
+    private fun models(): Pair<CompiledModel, CompiledModel> {
+        val e = env()
+        val enc = encoder ?: compileEncoder(e).also { encoder = it }
+        // The decoder is small and runs per tap: the CPU avoids GPU upload overhead.
+        val dec = decoder ?: CompiledModel.create(File(dir, DEC.first).absolutePath, cpuOptions(), e).also { decoder = it }
         return enc to dec
     }
 
-    private fun floats(n: Int) = ByteBuffer.allocateDirect(n * 4).order(ByteOrder.nativeOrder())
+    /** Compiles the models in the background (e.g. when the Object tool is picked) so a tap is fast. */
+    suspend fun prewarm() = lock.withLock {
+        if (!needsDownload()) withContext(Dispatchers.Default) { runCatching { models() } }
+    }
 
     /** The object at ([x], [y]) in [image] pixels, or the main subject when [x] < 0. */
     suspend fun select(image: Bitmap, x: Int, y: Int): ObjectSelect.Mask? = lock.withLock {
         // The cache may have been cleared since the last use.
         if (needsDownload()) { close(); throw ObjectSelectUnavailable("The object selection model isn't downloaded") }
         withContext(Dispatchers.Default) {
-            val (enc, dec) = interpreters()
+            val (enc, dec) = models()
             val w = image.width; val h = image.height
             val k = SIDE / maxOf(w, h).toFloat()
             val t0 = System.nanoTime()
@@ -108,18 +143,17 @@ class ObjectSelectClient(context: Context) {
             val t1 = System.nanoTime()
             // Prompt: the tap plus SAM's padding point, or a box around almost everything for
             // "whole foreground".
-            val coords = floats(4); val labels = floats(2)
-            if (x >= 0) { coords.putFloat(x * k).putFloat(y * k).putFloat(0f).putFloat(0f); labels.putFloat(1f).putFloat(-1f) }
-            else { coords.putFloat(w * 0.03f * k).putFloat(h * 0.03f * k).putFloat(w * 0.97f * k).putFloat(h * 0.97f * k); labels.putFloat(2f).putFloat(3f) }
-            coords.rewind(); labels.rewind(); emb.rewind()
-            val masks = floats(4 * LOW * LOW); val scores = floats(4)
-            dec.runForMultipleInputsOutputs(arrayOf(emb, coords, labels), mapOf(0 to masks, 1 to scores))
-            masks.rewind(); scores.rewind()
-            android.util.Log.i("Brushkin", "ObjectSelect: LiteRT 1.x CPU, encoder %d ms%s, decoder %d ms".format((t1 - t0) / 1_000_000, if (t1 - t0 < 1_000_000) " (cached)" else "", (System.nanoTime() - t1) / 1_000_000))
+            val coords = if (x >= 0) floatArrayOf(x * k, y * k, 0f, 0f) else floatArrayOf(w * 0.03f * k, h * 0.03f * k, w * 0.97f * k, h * 0.97f * k)
+            val labels = if (x >= 0) floatArrayOf(1f, -1f) else floatArrayOf(2f, 3f)
+            val ins = dec.createInputBuffers(); val outs = dec.createOutputBuffers()
+            ins[0].writeFloat(emb); ins[1].writeFloat(coords); ins[2].writeFloat(labels)
+            dec.run(ins, outs)
+            val all = outs[0].readFloat(); val sc = outs[1].readFloat()
+            (ins + outs).forEach { it.close() }
+            android.util.Log.i("Brushkin", "ObjectSelect: LiteRT 2 %s, encoder %d ms%s, decoder %d ms".format(accel, (t1 - t0) / 1_000_000, if (t1 - t0 < 1_000_000) " (cached)" else "", (System.nanoTime() - t1) / 1_000_000))
             // SAM proposes several masks; take the one it's most confident in.
-            val sc = FloatArray(4) { scores.getFloat() }
             val best = sc.indices.maxBy { sc[it] }
-            val low = FloatArray(LOW * LOW).also { masks.asFloatBuffer().apply { position(best * LOW * LOW) }.get(it) }
+            val low = all.copyOfRange(best * LOW * LOW, (best + 1) * LOW * LOW)
             // The low-res mask covers the padded 1024² input; sample it bilinearly per pixel.
             val bytes = ByteArray(w * h)
             val f = LOW / SIDE.toFloat() * k
@@ -138,23 +172,25 @@ class ObjectSelectClient(context: Context) {
         }
     }
 
-    private fun embedding(enc: Interpreter, image: Bitmap, k: Float): ByteBuffer {
+    private fun embedding(enc: CompiledModel, image: Bitmap, k: Float): FloatArray {
         val key = imageKey(image)
         cached?.let { if (key == cacheKey) return it }
         val nw = (image.width * k).toInt().coerceIn(1, SIDE); val nh = (image.height * k).toInt().coerceIn(1, SIDE)
         val scaled = Bitmap.createScaledBitmap(image, nw, nh, true)
         val px = IntArray(nw * nh); scaled.getPixels(px, 0, nw, 0, 0, nw, nh)
         // NCHW, normalized, zero padded to 1024×1024 (SAM's preprocessing).
-        val input = floats(3 * SIDE * SIDE)
-        val fb = input.asFloatBuffer()
+        val input = FloatArray(3 * SIDE * SIDE)
         for (yy in 0 until nh) for (xx in 0 until nw) {
             val c = px[yy * nw + xx]; val i = yy * SIDE + xx
-            fb.put(i, (((c shr 16) and 0xFF) - MEAN[0]) / STD[0])
-            fb.put(SIDE * SIDE + i, (((c shr 8) and 0xFF) - MEAN[1]) / STD[1])
-            fb.put(2 * SIDE * SIDE + i, ((c and 0xFF) - MEAN[2]) / STD[2])
+            input[i] = (((c shr 16) and 0xFF) - MEAN[0]) / STD[0]
+            input[SIDE * SIDE + i] = (((c shr 8) and 0xFF) - MEAN[1]) / STD[1]
+            input[2 * SIDE * SIDE + i] = ((c and 0xFF) - MEAN[2]) / STD[2]
         }
-        val emb = floats(256 * 64 * 64)
-        enc.run(input, emb)
+        val ins = enc.createInputBuffers(); val outs = enc.createOutputBuffers()
+        ins[0].writeFloat(input)
+        enc.run(ins, outs)
+        val emb = outs[0].readFloat()
+        (ins + outs).forEach { it.close() }
         cacheKey = key; cached = emb
         return emb
     }
