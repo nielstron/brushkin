@@ -148,6 +148,7 @@ fun Dialogs(vm: EditorViewModel, info: DocInfo, files: FileActions) {
         d == "import" -> { close(); files.importResources() }
         d == "gradient-edit" -> GradientEditor(vm, close)
         d == "pattern-edit" -> PatternEditor(vm, close)
+        d == "model-download" -> ModelDownloadDialog(vm, close)
         d == "grid" -> TextPrompt("Grid spacing (px)", vm.gridSize.toInt().toString(), KeyboardType.Number, close) { v ->
             close(); v.toIntOrNull()?.coerceIn(2, 4096)?.let { vm.gridSize = it.toFloat(); vm.showGrid = true }
         }
@@ -562,5 +563,34 @@ fun PatternEditor(vm: EditorViewModel, close: () -> Unit) {
             }
         },
         confirmButton = { TextButton(onClick = close) { Text("Done") } },
+    )
+}
+
+/** Asks before fetching the object selection model (FOSS build), then shows the download. */
+@Composable
+private fun ModelDownloadDialog(vm: EditorViewModel, close: () -> Unit) {
+    val p = vm.modelProgress
+    var started by remember { mutableStateOf(false) }
+    // Close once the download has finished (the selection then runs by itself).
+    LaunchedEffect(p, started) { if (started && p == null) close() }
+    AlertDialog(
+        onDismissRequest = { if (p == null) close() }, containerColor = Ui.panel,
+        title = { Text("Download object selection?", color = Ui.text) },
+        text = {
+            Column {
+                Text(
+                    "Selecting objects uses MobileSAM, an open model (Apache-2.0). It isn't part of the app: " +
+                        "it's downloaded once (${vm.modelDownloadMb} MB) from the project's GitHub page and then works offline.",
+                    color = Ui.text, fontSize = 14.sp,
+                )
+                if (p != null) {
+                    Spacer(Modifier.height(16.dp))
+                    androidx.compose.material3.LinearProgressIndicator(progress = { p }, modifier = Modifier.fillMaxWidth(), color = Ui.accent)
+                    Text("${(p * 100).roundToInt()}%", color = Ui.muted, fontSize = 12.sp, modifier = Modifier.padding(top = 6.dp))
+                }
+            }
+        },
+        confirmButton = { if (p == null) TextButton(onClick = { started = true; vm.downloadModel() }) { Text("Download") } },
+        dismissButton = { if (p == null) TextButton(onClick = close) { Text("Not now") } },
     )
 }

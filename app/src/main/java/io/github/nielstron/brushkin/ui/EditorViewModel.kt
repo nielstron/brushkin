@@ -399,16 +399,37 @@ class EditorViewModel(app: Application) : AndroidViewModel(app) {
     var mlBusy by mutableStateOf<String?>(null)
 
     /** Select the object under a doc point, or the whole foreground when x < 0. Runs off the UI thread. */
+    /** A tap waiting for the object selection model to be downloaded (FOSS build). */
+    private var pendingObjectSelect: Pair<Float, Float>? = null
+    var modelProgress by mutableStateOf<Float?>(null)
+    val modelDownloadMb get() = io.github.nielstron.brushkin.ml.ObjectSelectClient.DOWNLOAD_MB
+
+    /** Downloads the model after the user agreed, then runs the selection they asked for. */
+    fun downloadModel() {
+        if (modelProgress != null) return
+        modelProgress = 0f
+        viewModelScope.launch {
+            try {
+                objects.download { p -> viewModelScope.launch(Dispatchers.Main) { modelProgress = p } }
+                modelProgress = null
+                pendingObjectSelect?.let { (x, y) -> pendingObjectSelect = null; objectSelect(x, y) }
+            } catch (t: Throwable) {
+                modelProgress = null
+                messages.tryEmit(t.message ?: "Couldn't download the model. Check your connection and try again.")
+            }
+        }
+    }
+
     fun objectSelect(x: Float, y: Float) {
-        if (mlBusy != null) return
+        if (mlBusy != null || modelProgress != null) return
+        if (objects.needsDownload()) { pendingObjectSelect = x to y; dialog = "model-download"; return }
         mlBusy = if (x < 0) "Finding the foreground" else "Finding the object"
         val mode = selectMode
         viewModelScope.launch {
             try {
                 val full = engine.flattened(Color.WHITE)
                 val small = withContext(Dispatchers.Default) {
-                    // ≤1280 px, and dimensions rounded to multiples of 16: ML Kit's GPU path reads
-                    // past the end of rows with odd sizes on some drivers.
+                    // ≤1024 px (the model's input size), dimensions rounded to multiples of 16.
                     val k = minOf(1f, 1024f / maxOf(full.width, full.height))
                     fun r16(v: Float) = ((v / 16f).roundToInt() * 16).coerceAtLeast(16)
                     android.graphics.Bitmap.createScaledBitmap(full, r16(full.width * k), r16(full.height * k), true)
@@ -422,8 +443,7 @@ class EditorViewModel(app: Application) : AndroidViewModel(app) {
                 val msg = t.message ?: ""
                 messages.tryEmit(
                     when {
-                        "download" in msg.lowercase() -> "Object selection is still being set up by Google Play services. Try again in a moment."
-                        t is io.github.nielstron.brushkin.ml.ObjectSelectUnavailable -> "Object selection isn't available on this device"
+                        t is io.github.nielstron.brushkin.ml.ObjectSelectUnavailable -> msg.ifBlank { "Object selection isn't available on this device" }
                         else -> "Object selection failed: ${msg.ifBlank { t.javaClass.simpleName }}"
                     }
                 )

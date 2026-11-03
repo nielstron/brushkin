@@ -14,4 +14,4 @@
 
 <p>Compositing happens in linear light on the GPU, like GIMP 2.10+, and all heavy work runs off the UI thread so the interface stays responsive even with large images.</p>
 
-<p>This build contains only free software. The version on GitHub additionally offers on-device object selection through Google Play services.</p>
+<p>Object selection uses the open MobileSAM model, which is downloaded once (19 MB, after asking) and then runs on the device. The app contains only free software.</p>

@@ -127,7 +127,7 @@ private fun ToolsSheet(vm: EditorViewModel) {
         Text("Tools", color = Ui.text, fontSize = 20.sp, fontWeight = FontWeight.Bold, modifier = Modifier.padding(4.dp, 0.dp, 4.dp, 4.dp))
         for (g in ToolGroup.entries) {
             SectionLabel(g.label, Modifier.padding(start = 4.dp, top = 14.dp, bottom = 8.dp))
-            val tools = Tool.entries.filter { it.group == g && (it != Tool.OBJECT_SELECT || io.github.nielstron.brushkin.ml.ObjectSelectClient.AVAILABLE) }
+            val tools = Tool.entries.filter { it.group == g }
             FlowRow(maxItemsInEachRow = 4, horizontalArrangement = Arrangement.spacedBy(6.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
                 for (t in tools) {
                     val active = vm.tool == t
