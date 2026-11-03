@@ -67,13 +67,12 @@ fun EditorScreen(vm: EditorViewModel, files: FileActions) {
     val info by vm.engine.info.collectAsState()
     val busy by vm.engine.busy.collectAsState()
     val holder = remember { CanvasHolder() }
-    var zoom by remember { mutableFloatStateOf(1f) }
     val snack = remember { SnackbarHostState() }
     LaunchedEffect(Unit) { vm.messages.collect { snack.showSnackbar(it) } }
 
     Box(Modifier.fillMaxSize().background(Ui.ground)) {
         AndroidView(
-            factory = { ctx -> CanvasView(ctx, vm).also { v -> holder.view = v; v.onViewChanged = { zoom = v.scale } } },
+            factory = { ctx -> CanvasView(ctx, vm).also { v -> holder.view = v } },
             modifier = Modifier.fillMaxSize(),
         )
 
@@ -85,11 +84,10 @@ fun EditorScreen(vm: EditorViewModel, files: FileActions) {
             verticalAlignment = Alignment.CenterVertically,
         ) {
             IconButton(onClick = { vm.showMenu = true }) { Icon(Icons.Rounded.Menu, "Menus and commands", tint = Ui.text) }
-            Column(Modifier.weight(1f).padding(start = 2.dp).clickable { holder.view?.fit() }) {
-                Text(info.name, color = Ui.text, fontWeight = FontWeight.SemiBold, fontSize = 14.sp, maxLines = 1)
-                val layerName = info.layers.firstOrNull { it.id == info.activeId }?.name ?: ""
-                Text("$layerName · ${(zoom * 100).roundToInt()}%", color = Ui.muted, fontSize = 11.sp, fontFamily = Ui.mono, maxLines = 1)
-            }
+            Text(
+                info.name, color = Ui.text, fontWeight = FontWeight.SemiBold, fontSize = 15.sp, maxLines = 1,
+                modifier = Modifier.weight(1f).padding(start = 2.dp).clickable { holder.view?.fit() },
+            )
             IconButton(onClick = { vm.engine.undo() }, enabled = info.canUndo) {
                 Icon(Icons.AutoMirrored.Rounded.Undo, "Undo", tint = if (info.canUndo) Ui.text else Ui.muted.copy(alpha = 0.5f))
             }
@@ -183,29 +181,27 @@ private fun ContextChips(vm: EditorViewModel, hasSelection: Boolean) {
 @Composable
 private fun Dock(vm: EditorViewModel, layerCount: Int) {
     Row(
-        Modifier.fillMaxWidth().height(76.dp).clip(RoundedCornerShape(22.dp)).background(Ui.panel).border(1.dp, Ui.border, RoundedCornerShape(22.dp)).padding(horizontal = 6.dp),
+        Modifier.fillMaxWidth().height(68.dp).clip(RoundedCornerShape(22.dp)).background(Ui.panel).border(1.dp, Ui.border, RoundedCornerShape(22.dp)).padding(horizontal = 6.dp),
         horizontalArrangement = Arrangement.SpaceAround, verticalAlignment = Alignment.CenterVertically,
     ) {
-        DockButton(ToolIcons.of(vm.tool), vm.tool.label.substringBefore(' '), active = true) { vm.sheet = Sheet.TOOLS }
+        DockButton(ToolIcons.of(vm.tool), "Tools (${vm.tool.label})", active = true) { vm.sheet = Sheet.TOOLS }
         DockButton(ToolIcons.sliders, "Options") { vm.sheet = Sheet.OPTIONS }
-        Box(Modifier.size(56.dp).clip(CircleShape).background(Ui.text).clickable { vm.sheet = Sheet.INSERT }, contentAlignment = Alignment.Center) {
+        Box(Modifier.size(52.dp).clip(CircleShape).background(Ui.text).clickable { vm.sheet = Sheet.INSERT }, contentAlignment = Alignment.Center) {
             Icon(Icons.Rounded.Add, "Insert image, text, sticker or emoji", tint = Ui.ground, modifier = Modifier.size(28.dp))
         }
-        Column(
-            Modifier.size(64.dp).clip(RoundedCornerShape(16.dp)).clickable { vm.sheet = Sheet.COLOR },
-            horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.Center,
+        Box(
+            Modifier.size(52.dp).clip(RoundedCornerShape(16.dp)).clickable(onClickLabel = "Color") { vm.sheet = Sheet.COLOR },
+            contentAlignment = Alignment.Center,
         ) {
-            Box(Modifier.size(28.dp, 26.dp)) {
-                Box(Modifier.align(Alignment.BottomEnd).size(16.dp).clip(CircleShape).background(Color(vm.bg)).border(2.dp, Ui.panel, CircleShape))
-                Box(Modifier.align(Alignment.TopStart).size(20.dp).clip(CircleShape).background(Color(vm.fg)).border(2.dp, Ui.text, CircleShape))
+            Box(Modifier.size(32.dp, 30.dp)) {
+                Box(Modifier.align(Alignment.BottomEnd).size(18.dp).clip(CircleShape).background(Color(vm.bg)).border(2.dp, Ui.panel, CircleShape))
+                Box(Modifier.align(Alignment.TopStart).size(23.dp).clip(CircleShape).background(Color(vm.fg)).border(2.dp, Ui.text, CircleShape))
             }
-            Spacer(Modifier.height(4.dp))
-            Text("Color", color = Ui.text.copy(alpha = 0.85f), fontSize = 11.sp)
         }
         Box {
             DockButton(ToolIcons.layers, "Layers") { vm.sheet = Sheet.LAYERS }
             Box(
-                Modifier.align(Alignment.TopEnd).offset((-8).dp, 8.dp).size(18.dp).clip(CircleShape).background(Color(0xFF3A3A42)),
+                Modifier.align(Alignment.TopEnd).offset((-2).dp, 4.dp).size(18.dp).clip(CircleShape).background(Color(0xFF3A3A42)),
                 contentAlignment = Alignment.Center,
             ) { Text("$layerCount", color = Ui.text, fontSize = 10.sp) }
         }
@@ -214,13 +210,11 @@ private fun Dock(vm: EditorViewModel, layerCount: Int) {
 
 @Composable
 private fun DockButton(icon: ImageVector, label: String, active: Boolean = false, onClick: () -> Unit) {
-    Column(
-        Modifier.size(64.dp).clip(RoundedCornerShape(16.dp)).background(if (active) Ui.accent else Color.Transparent).clickable(onClick = onClick),
-        horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.Center,
+    Box(
+        Modifier.size(52.dp).clip(RoundedCornerShape(16.dp)).background(if (active) Ui.accent else Color.Transparent).clickable(onClick = onClick),
+        contentAlignment = Alignment.Center,
     ) {
-        Icon(icon, label, tint = if (active) Ui.onAccent else Ui.text.copy(alpha = 0.85f), modifier = Modifier.size(22.dp))
-        Spacer(Modifier.height(4.dp))
-        Text(label, color = if (active) Ui.onAccent else Ui.text.copy(alpha = 0.85f), fontSize = 11.sp, fontWeight = if (active) FontWeight.SemiBold else FontWeight.Normal, maxLines = 1)
+        Icon(icon, label, tint = if (active) Ui.onAccent else Ui.text.copy(alpha = 0.85f), modifier = Modifier.size(24.dp))
     }
 }
 
@@ -259,7 +253,7 @@ private fun VerticalSlider(value: Float, fill: Color, label: String, onChange: (
             Box(Modifier.align(Alignment.BottomCenter).fillMaxWidth().fillMaxHeight(value.coerceIn(0f, 1f)).background(fill))
         }
         Box(
-            Modifier.align(Alignment.BottomCenter).offset(y = (-(value.coerceIn(0f, 1f)) * 130 + 10).dp).size(20.dp).clip(CircleShape).background(Ui.text)
+            Modifier.align(Alignment.BottomCenter).offset(y = (-(value.coerceIn(0f, 1f)) * 110).dp).size(20.dp).clip(CircleShape).background(Ui.text)
         )
     }
 }
