@@ -134,6 +134,62 @@ class EditorViewModel(app: Application) : AndroidViewModel(app) {
 
     var cropRect by mutableStateOf<android.graphics.RectF?>(null)
     var textStyle by mutableStateOf(TEXT_STYLES[0].second)
+    /** Where the Text tool was tapped (doc coordinates). */
+    var textAt: android.graphics.PointF? = null
+
+    /** On-canvas text being typed: the layer it edits (null = new) and its current spec. */
+    class TextEdit(val layerId: Long?, val spec: io.github.nielstron.brushkin.engine.TextSpec)
+    var textEdit by mutableStateOf<TextEdit?>(null)
+
+    /** Text tool tap: edit the text layer under the finger, or start new text there. */
+    fun textToolTap(x: Float, y: Float) {
+        if (textEdit != null) { finishText(); return }
+        val hit = engine.stack.all.lastOrNull { l -> l.visible && l.text?.let { textHit(it, x, y) } == true }
+        if (hit != null) { editTextLayer(hit.id); return }
+        val st = textStyle
+        val preset = TEXT_STYLES.firstOrNull { it.second == st }?.first
+        val size = 120f
+        val spec = io.github.nielstron.brushkin.engine.TextSpec(
+            "", size,
+            when (preset) { "Title" -> "serif"; "hello" -> "cursive"; "POP" -> "sans-serif-black"; else -> "sans-serif" },
+            bold = preset == "Title" || preset == "hello", color = fg, outline = preset == "POP",
+        )
+        // The tap marks the first line's baseline-ish top-left, like GIMP.
+        val pad = size * 0.15f
+        textEdit = TextEdit(null, spec.withMatrix(android.graphics.Matrix().apply { setTranslate(x - pad, y - pad) }))
+    }
+
+    fun editTextLayer(id: Long) {
+        val l = engine.stack.find(id) ?: return
+        val spec = l.text ?: return
+        engine.setActive(id)
+        engine.hiddenLayerId = id
+        textEdit = TextEdit(id, spec)
+    }
+
+    private fun textHit(t: io.github.nielstron.brushkin.engine.TextSpec, x: Float, y: Float): Boolean {
+        if (t.path != null) return false
+        val box = t.renderBox()
+        val inv = android.graphics.Matrix(); t.matrix().invert(inv)
+        val p = floatArrayOf(x, y); inv.mapPoints(p)
+        return p[0] in 0f..box.width.toFloat() && p[1] in 0f..box.height.toFloat()
+    }
+
+    fun updateTextEdit(spec: io.github.nielstron.brushkin.engine.TextSpec) { textEdit = textEdit?.let { TextEdit(it.layerId, spec) } }
+
+    /** Commit the on-canvas text as an editable text layer. */
+    fun finishText(cancel: Boolean = false) {
+        val te = textEdit ?: return
+        textEdit = null
+        engine.hiddenLayerId = -1
+        if (cancel) return
+        val spec = te.spec
+        when {
+            te.layerId != null && spec.text.isBlank() -> engine.deleteLayer(te.layerId)
+            te.layerId != null -> engine.updateTextLayer(te.layerId, spec)
+            spec.text.isNotBlank() -> engine.addTextLayer(spec)
+        }
+    }
     val path = PathEdit()
     /** Bumped when [path] changes so Compose and the canvas redraw. */
     var pathVersion by mutableStateOf(0)
@@ -289,6 +345,7 @@ class EditorViewModel(app: Application) : AndroidViewModel(app) {
         // Scale and Rotate show handles right away; Move lifts on touch.
         if (t == Tool.SCALE || t == Tool.ROTATE) engine.liftActive()
         if (t != Tool.CROP) cropRect = null
+        if (t != Tool.TEXT) finishText()
         settingSource = (t == Tool.CLONE || t == Tool.HEAL) && cloneSource == null
     }
 

@@ -146,7 +146,7 @@ class CanvasView(context: Context, private val vm: EditorViewModel) : View(conte
         canvas.drawRect(docRect, checker)
         canvas.save()
         canvas.clipRect(docRect)
-        Compositor.draw(canvas, s, visible, filter = sc < 2f, preview = engine.preview, floating = engine.floating, pixelSize = 1f / sc)
+        Compositor.draw(canvas, s, visible, filter = sc < 2f, preview = engine.preview, floating = engine.floating, pixelSize = 1f / sc, hiddenId = engine.hiddenLayerId)
         canvas.restore()
 
         canvas.restore()
@@ -582,7 +582,7 @@ class CanvasView(context: Context, private val vm: EditorViewModel) : View(conte
                         val c1 = if (vm.fgToTransparent) vm.fg and 0x00FFFFFF else vm.bg
                         engine.gradient(downDoc.x, downDoc.y, d.x, d.y, vm.fg, c1, vm.gradientShape, vm.settings.opacity, vm.settings.mode)
                     }
-                    vm.tool == Tool.TEXT -> if (isTap) vm.dialog = "text"
+                    vm.tool == Tool.TEXT -> if (isTap) vm.textToolTap(d.x, d.y)
                 }
                 preview = null; lasso = null
             }

@@ -19,6 +19,8 @@ class Floating(
     val name: String,
     /** For Transform: the layer content outside the lifted selection. */
     val remainder: TiledBitmap? = null,
+    /** Placing or transforming text: becomes / stays an editable text layer. */
+    val text: TextSpec? = null,
 ) {
     /** The placement when lifted, so Move can apply an offset to it. */
     val initial = Matrix(matrix)
@@ -58,21 +60,22 @@ object Compositor {
         floating: Floating? = null,
         /** Doc units per screen pixel; mask tiles overlap by half of it so no edge pixel escapes the mask. */
         pixelSize: Float = 0f,
+        hiddenId: Long = -1,
     ) {
         val tp = tilePaint.get()!!
         tp.isFilterBitmap = filter
         tp.isAntiAlias = false
-        drawList(canvas, stack, stack.layers, visible, filter, preview, floating, pixelSize, tp)
+        drawList(canvas, stack, stack.layers, visible, filter, preview, floating, pixelSize, tp, hiddenId)
         if (floating != null && floating.targetLayerId == null) drawFloating(canvas, floating, filter)
     }
 
     private fun drawList(
         canvas: Canvas, stack: Stack, list: List<Layer>, visible: RectF?, filter: Boolean,
-        preview: Preview?, floating: Floating?, pixelSize: Float, tp: Paint,
+        preview: Preview?, floating: Floating?, pixelSize: Float, tp: Paint, hiddenId: Long = -1,
     ) {
         val w = stack.width.toFloat(); val h = stack.height.toFloat()
         for (layer in list) {
-            if (!layer.visible) continue
+            if (!layer.visible || layer.id == hiddenId) continue
             val pv = preview?.takeIf { it.layerId == layer.id }
             val mask = if (!layer.masked) null else if (pv != null && pv.mask) pv.tiles else layer.mask
             val isGroup = layer.isGroup
@@ -85,7 +88,7 @@ object Compositor {
                 canvas.saveLayer(0f, 0f, w, h, lp)
             }
             if (isGroup) {
-                drawList(canvas, stack, layer.children!!, visible, filter, preview, floating, pixelSize, tp)
+                drawList(canvas, stack, layer.children!!, visible, filter, preview, floating, pixelSize, tp, hiddenId)
             } else {
                 val isFloatTarget = floating != null && floating.targetLayerId == layer.id
                 val pixels = when {

@@ -48,6 +48,7 @@ object Ora {
                     val src = "data/layer$i.png"
                     xml.append("<layer $common src=\"$src\" x=\"0\" y=\"0\"")
                     if (l.lockAlpha) xml.append(" alpha-preserve=\"true\"")
+                    l.text?.let { xml.append(" brushkin-text=\"${esc(it.toJson())}\"") }
                     // Masks aren't part of the OpenRaster spec; other apps ignore these attributes.
                     val m = l.mask
                     if (m != null) xml.append(" brushkin-mask=\"data/layer${i}_mask.png\" brushkin-mask-enabled=\"${l.maskEnabled}\"")
@@ -115,6 +116,7 @@ object Ora {
                                 ?.let { BitmapFactory.decodeByteArray(it, 0, it.size, opts) }
                                 ?.let { TiledBitmap.fromBitmap(it, w, h, x, y, fill = MASK_WHITE) },
                             maskEnabled = a["brushkin-mask-enabled"] != "false",
+                            text = a["brushkin-text"]?.let { TextSpec.fromJson(it) },
                         )
                         if (a["selected"] == "true") activeId = l.id
                         open.lastOrNull()?.second?.add(l)

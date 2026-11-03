@@ -32,7 +32,7 @@ data class LayerInfo(
     val id: Long, val name: String, val visible: Boolean, val opacity: Float, val mode: LayerMode,
     val lockAlpha: Boolean, val thumb: Bitmap?,
     val hasMask: Boolean = false, val maskEnabled: Boolean = true, val editMask: Boolean = false, val maskThumb: Bitmap? = null,
-    val depth: Int = 0, val isGroup: Boolean = false, val expanded: Boolean = true,
+    val depth: Int = 0, val isGroup: Boolean = false, val expanded: Boolean = true, val isText: Boolean = false,
 )
 
 data class DocInfo(
@@ -69,6 +69,9 @@ class Engine {
     @Volatile var stack = Stack(1, 1, emptyList(), -1); private set
     @Volatile var preview: Preview? = null; private set
     @Volatile var floating: Floating? = null; private set
+    /** A layer not drawn on screen while it's being edited in place (on-canvas text). */
+    @Volatile var hiddenLayerId: Long = -1
+        set(v) { field = v; invalidate() }
     var docName = "Untitled"; private set
 
     private val history = History()
@@ -144,7 +147,7 @@ class Engine {
                         add(LayerInfo(
                             l.id, l.name, l.visible, l.opacity, l.mode, l.lockAlpha, thumbs[l.id]?.second,
                             hasMask = l.mask != null, maskEnabled = l.maskEnabled, editMask = l.editMask && l.mask != null, maskThumb = maskThumbs[l.id]?.second,
-                            depth = depth, isGroup = l.isGroup, expanded = l.expanded,
+                            depth = depth, isGroup = l.isGroup, expanded = l.expanded, isText = l.text != null,
                         ))
                         if (l.isGroup && l.expanded) add(l.children!!, depth + 1)
                     }
@@ -269,6 +272,7 @@ class Engine {
         val c = if (onMask) (if (tool == PaintTool.ERASER) MASK_BLACK else maskGray(color)) else color
         stroke = StrokeOp(target, t, settings, c, layer.lockAlpha && !onMask, s.selection, cloneOffset)
         strokeTarget = target; strokeBefore = s; strokeTool = tool
+        if (layer.text != null && !onMask) stack = dropText(s)
     }
 
     fun strokeAdd(points: List<StrokePoint>) = post {
@@ -310,6 +314,7 @@ class Engine {
         if (sel != null && !r.intersect(sel.bounds)) return
         val target = layer.drawable
         val onMask = target !== layer.pixels
+        if (layer.text != null && !onMask) stack = dropText(stack)
         val session = TileEditSession(target)
         val scratch = Bitmap.createBitmap(TILE, TILE, Bitmap.Config.ARGB_8888)
         val sc = Canvas(scratch)
@@ -828,6 +833,7 @@ class Engine {
             // images never need more than a few band-sized arrays on the Java heap.
             val out = withContext(Dispatchers.Default) { applyFilterBanded(target, f, s.selection?.mask) }
             preview = null
+            if (!filterOnMask && l.text != null) stack = dropText(stack)
             replaceTiles(s, target, out, f.name)
         }
     }
@@ -841,18 +847,49 @@ class Engine {
     // ---------------------------------------------------------------- floating (insert / paste / transform)
 
     /** Place [bmp] for positioning: at [at] (doc px) unscaled, or fitted and centered. */
-    fun placeFloating(bmp: Bitmap, name: String, at: android.graphics.Point? = null) = post {
+    fun placeFloating(bmp: Bitmap, name: String, at: android.graphics.Point? = null, text: TextSpec? = null, matrix: Matrix? = null) = post {
         val s = stack
         commitFloatingNow()
         val m = Matrix()
-        if (at != null) m.setTranslate(at.x.toFloat(), at.y.toFloat()) else {
+        if (matrix != null) m.set(matrix)
+        else if (at != null) m.setTranslate(at.x.toFloat(), at.y.toFloat()) else {
             // Fit into 70% of the canvas, centered.
             val scale = minOf(1f, s.width * 0.7f / bmp.width, s.height * 0.7f / bmp.height)
             m.setScale(scale, scale)
             m.postTranslate((s.width - bmp.width * scale) / 2f, (s.height - bmp.height * scale) / 2f)
         }
-        floating = Floating(bmp, m, null, name)
+        floating = Floating(bmp, m, null, name, text = text)
         publish(); invalidate()
+    }
+
+    // ---------------------------------------------------------------- text layers
+
+    /** Text on a path goes straight in as a layer (nothing to position). */
+    fun addTextLayer(spec: TextSpec) = post {
+        val s = stack
+        val l = Layer(name = uniqueName(textName(spec)), pixels = spec.renderLayer(s.width, s.height), text = spec)
+        stack = s.insertAbove(s.activeId, l).copy(activeId = l.id)
+        record("Add Text Layer", s)
+    }
+
+    /** Change an existing text layer's text, font or color; it is re-rendered in place. */
+    fun updateTextLayer(id: Long, spec: TextSpec) = post {
+        val s = stack
+        val l = s.find(id) ?: return@post
+        busy("Rendering text") {
+            stack = s.replace(l.copy(text = spec, name = textName(spec), pixels = spec.renderLayer(s.width, s.height)))
+            record("Edit Text", s, extraBytes = s.width.toLong() * s.height * 4)
+        }
+    }
+
+    private fun textName(spec: TextSpec) = spec.text.lineSequence().first().take(24).ifBlank { "Text" }
+
+    /** Painting or filtering a text layer makes it a normal layer (GIMP asks; we just do it). */
+    private fun dropText(s: Stack): Stack {
+        val l = s.active ?: return s
+        if (l.text == null) return s
+        onMessage?.invoke("“${l.name}” is now a pixel layer")
+        return s.replace(l.copy(text = null))
     }
 
     /** Transform tool: lift the selection (or the whole active layer) into a floating bitmap. */
@@ -902,6 +939,16 @@ class Engine {
             val out = Bitmap.createBitmap(s.width, s.height, Bitmap.Config.ARGB_8888)
             val c = Canvas(out)
             val target = f.targetLayerId?.let { id -> s.find(id) }
+            if (target != null && target.text != null && f.remainder == null) {
+                // Transforming a text layer keeps it editable: compose the transform into its spec.
+                val m = Matrix(f.initial); val inv = Matrix(); m.invert(inv)
+                val spec = target.text.withMatrix(Matrix(target.text.matrix()).apply { postConcat(inv); postConcat(f.matrix) })
+                val newSpec = if (spec.path != null) target.text else spec
+                floating = null
+                stack = s.replace(target.copy(text = newSpec, pixels = newSpec.renderLayer(s.width, s.height)))
+                record(name, s, extraBytes = s.width.toLong() * s.height * 4)
+                return@busy
+            }
             if (target != null) {
                 f.remainder?.let { Compositor.drawTiles(c, it, null, null) }
                 c.drawBitmap(f.bitmap, f.matrix, Paint().apply { isFilterBitmap = true })
@@ -912,7 +959,8 @@ class Engine {
             } else {
                 c.drawBitmap(f.bitmap, f.matrix, Paint().apply { isFilterBitmap = true; isAntiAlias = true })
                 floating = null
-                val l = Layer(name = uniqueName(f.name), pixels = TiledBitmap.fromBitmap(out))
+                val spec = f.text?.withMatrix(f.matrix)
+                val l = Layer(name = uniqueName(spec?.let { textName(it) } ?: f.name), pixels = if (spec != null) spec.renderLayer(s.width, s.height) else TiledBitmap.fromBitmap(out), text = spec)
                 stack = s.insertAbove(s.activeId, l).copy(activeId = l.id)
                 record("Insert ${f.name}", s, extraBytes = 0)
             }

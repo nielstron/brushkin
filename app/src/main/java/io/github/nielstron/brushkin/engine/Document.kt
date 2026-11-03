@@ -53,6 +53,8 @@ data class Layer(
     /** Non-null for a layer group: its children, bottom-most first. */
     val children: List<Layer>? = null,
     val expanded: Boolean = true,
+    /** Non-null for an editable text layer; its pixels are rendered from this. */
+    val text: TextSpec? = null,
 ) {
     val isGroup get() = children != null
     /** What paint tools and filters currently modify. */
