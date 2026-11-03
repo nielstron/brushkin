@@ -31,17 +31,21 @@ class GpuEncoderProbe {
             // "<name>_<n>.tflite": a flat input of n values (seeded random); otherwise the test image.
             val n = f.name.substringBeforeLast('.').substringAfterLast('_').toIntOrNull()
             val input = if (n != null) java.util.Random(7).let { r -> FloatArray(n) { r.nextGaussian().toFloat() } } else image
-            fun run(o: CompiledModel.Options): FloatArray {
+            val ms = LongArray(2)
+            fun run(o: CompiledModel.Options, slot: Int): FloatArray {
                 val m = CompiledModel.create(f.absolutePath, o, env); val i = m.createInputBuffers(); val out = m.createOutputBuffers()
-                i[0].writeFloat(input); m.run(i, out); val r = out[0].readFloat(); (i + out).forEach { it.close() }; m.close(); return r
+                i[0].writeFloat(input); m.run(i, out)
+                // Second run timed (the first one includes warm-up).
+                val t = System.nanoTime(); i[0].writeFloat(input); m.run(i, out); val r = out[0].readFloat(); ms[slot] = (System.nanoTime() - t) / 1_000_000
+                (i + out).forEach { it.close() }; m.close(); return r
             }
-            val c = run(CompiledModel.Options(Accelerator.CPU))
-            val g = try { run(CompiledModel.Options(Accelerator.GPU).apply { gpuOptions = GpuOptions(precision = GpuOptions.Precision.FP32) }) } catch (e: Exception) {
-                android.util.Log.i("Brushkin", "Probe ${f.name}: GPU failed: ${e.message}"); continue
+            val c = run(CompiledModel.Options(Accelerator.CPU).apply { cpuOptions = CompiledModel.CpuOptions(numThreads = 4) }, 0)
+            val g = try { run(CompiledModel.Options(Accelerator.GPU).apply { gpuOptions = GpuOptions(precision = GpuOptions.Precision.FP32) }, 1) } catch (e: Exception) {
+                android.util.Log.i("Brushkin", "Probe ${f.name}: GPU failed: ${e.message}; CPU ${ms[0]} ms"); continue
             }
             val err = c.indices.sumOf { kotlin.math.abs(g[it] - c[it]).toDouble() } / c.size
             val mag = c.sumOf { kotlin.math.abs(it).toDouble() } / c.size
-            android.util.Log.i("Brushkin", "Probe ${f.name}: ${c.size} values, relative GPU error %.4f".format(err / mag))
+            android.util.Log.i("Brushkin", "Probe ${f.name}: ${c.size} values, relative GPU error %.4f, CPU %d ms, GPU %d ms".format(err / mag, ms[0], ms[1]))
         }
     }
 
@@ -60,6 +64,8 @@ class GpuEncoderProbe {
         val ctx = InstrumentationRegistry.getInstrumentation().targetContext
         val dir = File(ctx.cacheDir, "models/mobilesam-2")
         val encFile = File(dir, "mobilesam_encoder_gpu.tflite").takeIf { it.exists() } ?: return
+        // The first release's decoder (2 prompt points); copy it to the cache to run this probe.
+        if (!File(dir, "mobilesam_decoder.tflite").exists()) return
         val env = Environment.create(ctx)
         // Red square (tap inside it) and a blue circle that must not be selected.
         val img = Bitmap.createBitmap(1024, 768, Bitmap.Config.ARGB_8888)

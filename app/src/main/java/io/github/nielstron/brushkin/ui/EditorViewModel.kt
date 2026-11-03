@@ -27,7 +27,7 @@ import kotlinx.coroutines.withContext
 import java.io.File
 import kotlin.math.roundToInt
 
-enum class ToolGroup(val label: String) { SELECT("Select"), PAINT("Paint"), TRANSFORM("Transform"), OTHER("Other") }
+enum class ToolGroup(val label: String) { SELECT("Select"), AI("AI (on-device)"), PAINT("Paint"), TRANSFORM("Transform"), OTHER("Other") }
 
 enum class Tool(val label: String, val group: ToolGroup, val paint: PaintTool? = null) {
     RECT_SELECT("Rectangle", ToolGroup.SELECT),
@@ -35,9 +35,13 @@ enum class Tool(val label: String, val group: ToolGroup, val paint: PaintTool? =
     FREE_SELECT("Free", ToolGroup.SELECT),
     FUZZY_SELECT("Fuzzy", ToolGroup.SELECT),
     COLOR_SELECT("By Color", ToolGroup.SELECT),
-    OBJECT_SELECT("Object", ToolGroup.SELECT),
     SCISSORS("Scissors", ToolGroup.SELECT),
-    FOREGROUND_SELECT("Foreground", ToolGroup.SELECT),
+    OBJECT_SELECT("Object", ToolGroup.AI),
+    REMOVE_OBJECT("Remove Object", ToolGroup.AI),
+    DEPTH_BLUR("Depth Blur", ToolGroup.AI),
+    UPSCALE("Upscale", ToolGroup.AI),
+    DENOISE("Denoise", ToolGroup.AI),
+    DEBLUR("Deblur", ToolGroup.AI),
     BRUSH("Paintbrush", ToolGroup.PAINT, PaintTool.BRUSH),
     PENCIL("Pencil", ToolGroup.PAINT, PaintTool.PENCIL),
     AIRBRUSH("Airbrush", ToolGroup.PAINT, PaintTool.AIRBRUSH),
@@ -68,7 +72,11 @@ enum class Tool(val label: String, val group: ToolGroup, val paint: PaintTool? =
     PICKER("Color Picker", ToolGroup.OTHER),
     TEXT("Text", ToolGroup.OTHER);
 
-    val isSelect get() = group == ToolGroup.SELECT
+    val isSelect get() = group == ToolGroup.SELECT || this == OBJECT_SELECT
+    /** Taps pick an object (MobileSAM). */
+    val picksObjects get() = this == OBJECT_SELECT || this == REMOVE_OBJECT
+    /** One-shot commands listed with the tools: picking one runs it and keeps the current tool. */
+    val isAction get() = this == DEPTH_BLUR || this == UPSCALE || this == DENOISE || this == DEBLUR
     /** Tools that work on a lifted copy of the layer (applied or cancelled as a whole). */
     val liftsLayer get() = this == MOVE || this == SCALE || this == ROTATE || this == SHEAR || this == PERSPECTIVE ||
         this == TRANSFORM_3D || this == HANDLE || this == WARP || this == CAGE
@@ -315,7 +323,6 @@ class EditorViewModel(app: Application) : AndroidViewModel(app) {
     val scissorsSegs = ArrayList<FloatArray?>()
     var scissorsVersion by mutableStateOf(0)
     /** Foreground select: width of the band around the rough outline that gets refined (px). */
-    var fgBand by mutableStateOf(24f)
 
     fun scissorsTap(p: android.graphics.PointF, closeRadius: Float) {
         val first = scissorsAnchors.firstOrNull()
@@ -395,37 +402,93 @@ class EditorViewModel(app: Application) : AndroidViewModel(app) {
         }
     }
 
-    private val objects = io.github.nielstron.brushkin.ml.ObjectSelectClient(app)
+    // ------------------------------------------------------------ on-device models
+
+    private val models = io.github.nielstron.brushkin.ml.ModelStore(app)
+    private val objects = io.github.nielstron.brushkin.ml.ObjectSelectClient(models)
+    private val images = io.github.nielstron.brushkin.ml.ImageModels(models)
     var mlBusy by mutableStateOf<String?>(null)
+    private var mlJob: kotlinx.coroutines.Job? = null
+    private var downloadJob: kotlinx.coroutines.Job? = null
 
-    /** Select the object under a doc point, or the whole foreground when x < 0. Runs off the UI thread. */
-    /** A tap waiting for the object selection model to be downloaded (FOSS build). */
-    private var pendingObjectSelect: Pair<Float, Float>? = null
+    /** Cancels whatever long operation is running (model, download or engine work). */
+    fun cancelWork() { mlJob?.cancel(); engine.cancelBusy() }
+
+    fun cancelDownload() { downloadJob?.cancel(); downloadJob = null; modelProgress = null; modelRequest = null }
+
+    /** A tool waiting for its model to be downloaded (after the user agreed). */
+    class ModelRequest(val title: String, val text: String, val files: List<io.github.nielstron.brushkin.ml.ModelFile>, val then: () -> Unit)
+    var modelRequest by mutableStateOf<ModelRequest?>(null)
     var modelProgress by mutableStateOf<Float?>(null)
-    val modelDownloadMb get() = objects.downloadMb()
+    fun modelDownloadMb(r: ModelRequest) = ((models.missingBytes(r.files) + 999_999) / 1_000_000).toInt()
 
-    /** Downloads the model after the user agreed, then runs the selection they asked for. */
+    /** Runs [then] right away when the models are there, else asks to download them first. */
+    private fun withModels(title: String, text: String, files: List<io.github.nielstron.brushkin.ml.ModelFile>, then: () -> Unit) {
+        if (mlBusy != null || modelProgress != null) return
+        if (models.ready(files)) { then(); return }
+        modelRequest = ModelRequest(title, text, files, then)
+        dialog = "model-download"
+    }
+
+    /** Downloads the requested models, then runs what was waiting for them. */
     fun downloadModel() {
+        val r = modelRequest ?: return
         if (modelProgress != null) return
         modelProgress = 0f
-        viewModelScope.launch {
+        downloadJob = viewModelScope.launch {
             try {
-                objects.download { p -> viewModelScope.launch(Dispatchers.Main) { modelProgress = p } }
-                modelProgress = null
-                pendingObjectSelect?.let { (x, y) -> pendingObjectSelect = null; objectSelect(x, y) }
+                models.download(r.files) { p -> viewModelScope.launch(Dispatchers.Main) { if (modelProgress != null) modelProgress = p } }
+                modelProgress = null; modelRequest = null
+                r.then()
             } catch (t: Throwable) {
                 modelProgress = null
+                if (t is kotlinx.coroutines.CancellationException) return@launch
                 messages.tryEmit(t.message ?: "Couldn't download the model. Check your connection and try again.")
             }
         }
     }
 
-    fun objectSelect(x: Float, y: Float) {
-        if (mlBusy != null || modelProgress != null) return
-        if (objects.needsDownload()) { pendingObjectSelect = x to y; dialog = "model-download"; return }
-        mlBusy = if (x < 0) "Finding the foreground" else "Finding the object"
-        val mode = selectMode
-        viewModelScope.launch {
+    private fun mlError(what: String, t: Throwable) {
+        if (t is kotlinx.coroutines.CancellationException) throw t
+        android.util.Log.w("Brushkin", "$what failed", t)
+        messages.tryEmit(if (t is io.github.nielstron.brushkin.ml.ModelUnavailable) t.message ?: "$what isn't available" else "$what failed: ${t.message ?: t.javaClass.simpleName}")
+    }
+
+    // Object selection: taps on the object (and, to refine, on what isn't part of it).
+
+    private val samText = "Selecting objects uses MobileSAM, an open model (Apache-2.0)."
+    /** The taps of the object being selected (document pixels); empty = the next tap starts a new one. */
+    val objPoints = mutableStateListOf<io.github.nielstron.brushkin.ml.ObjectSelect.Point>()
+    /** Taps mark what isn't part of the object. */
+    var objSubtract by mutableStateOf(false)
+    private var objBox: android.graphics.RectF? = null
+    private var objLogits: FloatArray? = null
+    private var objSession = 0L
+    private var objMode = SelectMode.REPLACE
+
+    /** Starts over: the next tap selects a new object. */
+    fun objectNew() { objPoints.clear(); objBox = null; objLogits = null; objSession = 0; objSubtract = false }
+
+    /** A tap with the Object tool: a new object, or (while refining one) a point added to it or taken away. */
+    fun objectTap(x: Float, y: Float) = withModels("Download object selection?", samText, objects.files) {
+        if (objSession == 0L) { objectNew(); objSession = System.nanoTime(); objMode = if (tool == Tool.REMOVE_OBJECT) SelectMode.REPLACE else selectMode }
+        objPoints.add(io.github.nielstron.brushkin.ml.ObjectSelect.Point(x, y, positive = !objSubtract || objPoints.isEmpty()))
+        runObjectSelect()
+    }
+
+    /** Selects the main subject (a box around almost the whole image); taps then refine it. */
+    fun selectForeground() = withModels("Download object selection?", samText, objects.files) {
+        objectNew(); objSession = System.nanoTime(); objMode = if (tool == Tool.REMOVE_OBJECT) SelectMode.REPLACE else selectMode
+        val i = engine.info.value
+        objBox = android.graphics.RectF(i.width * 0.03f, i.height * 0.03f, i.width * 0.97f, i.height * 0.97f)
+        runObjectSelect()
+    }
+
+    private fun runObjectSelect() {
+        val pts = objPoints.toList(); val box = objBox; val prev = objLogits; val session = objSession; val mode = objMode
+        val refining = prev != null
+        mlBusy = when { refining -> "Refining"; box != null -> "Finding the foreground"; else -> "Finding the object" }
+        mlJob = viewModelScope.launch {
             try {
                 val full = engine.flattened(Color.WHITE)
                 val small = withContext(Dispatchers.Default) {
@@ -434,20 +497,80 @@ class EditorViewModel(app: Application) : AndroidViewModel(app) {
                     fun r16(v: Float) = ((v / 16f).roundToInt() * 16).coerceAtLeast(16)
                     android.graphics.Bitmap.createScaledBitmap(full, r16(full.width * k), r16(full.height * k), true)
                 }
-                val sx = if (x < 0) -1 else (x * small.width / full.width).toInt()
-                val sy = if (y < 0) -1 else (y * small.height / full.height).toInt()
-                val m = objects.select(small, sx, sy)
-                if (m == null) messages.tryEmit(if (x < 0) "No foreground subject found" else "No object found there. Try tapping the middle of it.")
-                else engine.selectFromMask(m.bytes, m.width, m.height, mode, if (x < 0) "Select Foreground" else "Object Select")
+                val kx = small.width / full.width.toFloat(); val ky = small.height / full.height.toFloat()
+                val sp = pts.map { io.github.nielstron.brushkin.ml.ObjectSelect.Point(it.x * kx, it.y * ky, it.positive) }
+                val sb = box?.let { android.graphics.RectF(it.left * kx, it.top * ky, it.right * kx, it.bottom * ky) }
+                val r = objects.select(small, sp, sb, prev)
+                if (session != objSession) return@launch // started over meanwhile
+                val m = r.mask
+                if (m == null) {
+                    if (!refining) { messages.tryEmit(if (box != null) "No foreground subject found" else "No object found there. Try tapping the middle of it."); objectNew() }
+                    else { objPoints.removeAt(objPoints.size - 1); messages.tryEmit("That would leave nothing selected") }
+                } else {
+                    objLogits = r.logits
+                    engine.selectFromMask(m.bytes, m.width, m.height, mode, if (box != null) "Select Foreground" else "Object Select", session)
+                }
             } catch (t: Throwable) {
-                val msg = t.message ?: ""
-                messages.tryEmit(
-                    when {
-                        t is io.github.nielstron.brushkin.ml.ObjectSelectUnavailable -> msg.ifBlank { "Object selection isn't available on this device" }
-                        else -> "Object selection failed: ${msg.ifBlank { t.javaClass.simpleName }}"
-                    }
-                )
+                if (!refining) objectNew() else objPoints.removeLastOrNull()
+                if (t !is kotlinx.coroutines.CancellationException) mlError("Object selection", t)
             } finally { mlBusy = null }
+        }
+    }
+
+    // Image tools.
+
+    /** Fills the selection from its surroundings (removes the selected object). */
+    fun removeObject() {
+        if (!engine.info.value.hasSelection) { messages.tryEmit("Select the object first, e.g. with the Object tool"); return }
+        withModels("Download object removal?", "Removing objects uses MI-GAN, an open model (MIT).", listOf(io.github.nielstron.brushkin.ml.ImageModels.INPAINT)) {
+            objectNew()
+            engine.processActive("Remove Object", clipToSelection = false) { src, sel, _ -> images.inpaint(src, sel ?: ByteArray(src.width * src.height) { -1 }) }
+            engine.selectNone()
+        }
+    }
+
+    fun denoise() = withModels("Download denoising?", "Denoising uses NAFNet, an open model (MIT), trained on real camera noise.", listOf(io.github.nielstron.brushkin.ml.ImageModels.DENOISE)) {
+        engine.processActive("Denoise") { src, _, p -> images.denoise(src, p) }
+    }
+
+    fun deblur() = withModels("Download deblurring?", "Deblurring uses NAFNet, an open model (MIT), trained on camera shake and motion blur.", listOf(io.github.nielstron.brushkin.ml.ImageModels.DEBLUR)) {
+        engine.processActive("Deblur") { src, _, p -> images.deblur(src, p) }
+    }
+
+    /** Largest result of an upscale (memory: the image is held whole while it's processed). */
+    private val maxUpscalePixels = 24_000_000L
+
+    fun upscale(factor: Int) {
+        val i = engine.info.value
+        if (i.width.toLong() * i.height * factor * factor > maxUpscalePixels) {
+            messages.tryEmit("Too large to enlarge ×$factor here (the result would be over 24 megapixels)"); return
+        }
+        withModels("Download upscaling?", "Upscaling uses PLKSR-Rep, an open model (MIT).", listOf(io.github.nielstron.brushkin.ml.ImageModels.UPSCALE)) {
+            engine.upscaleImage(factor, "Upscale ×$factor") { src, p -> images.upscale(src, factor, p) }
+        }
+    }
+
+    // Depth of field: a depth map of the active layer, then a live-previewed blur around a focus point.
+
+    class DepthMap(val values: FloatArray, val side: Int)
+    var depthMap by mutableStateOf<DepthMap?>(null)
+    /** Focus point (document pixels) while the depth-of-field panel is open. */
+    var dofFocus by mutableStateOf<android.graphics.PointF?>(null)
+    var dofOpen by mutableStateOf(false)
+
+    fun depthOfField() = withModels("Download depth estimation?", "Depth of field uses ZipDepth, an open model (MIT), to tell near from far.", listOf(io.github.nielstron.brushkin.ml.ImageModels.DEPTH)) {
+        mlBusy = "Estimating depth"
+        mlJob = viewModelScope.launch {
+            try {
+                val src = engine.flattened(Color.WHITE)
+                val d = images.depth(src)
+                depthMap = DepthMap(d, io.github.nielstron.brushkin.ml.ImageModels.DEPTH_SIDE)
+                val i = engine.info.value
+                // Start focused on the nearest thing in the middle of the image.
+                dofFocus = android.graphics.PointF(i.width / 2f, i.height / 2f)
+                dofOpen = true
+                dialog = "depth-of-field"
+            } catch (t: Throwable) { if (t !is kotlinx.coroutines.CancellationException) mlError("Depth estimation", t) } finally { mlBusy = null }
         }
     }
 
@@ -529,10 +652,21 @@ class EditorViewModel(app: Application) : AndroidViewModel(app) {
         }.onFailure { android.util.Log.w("Brushkin", "autosave failed", it) }
     }
 
+    /** Picks [t] from the tool list: a tool becomes current, an action runs. */
+    fun pickTool(t: Tool) {
+        when (t) {
+            Tool.DEPTH_BLUR -> depthOfField()
+            Tool.UPSCALE -> dialog = "upscale"
+            Tool.DENOISE -> denoise()
+            Tool.DEBLUR -> deblur()
+            else -> selectTool(t)
+        }
+    }
+
     fun selectTool(t: Tool) {
         // Leaving a transform tool discards an unapplied transform (like GIMP).
         if (tool.liftsLayer && t != tool) engine.cancelFloating()
-        if (t != tool) altEffect = false
+        if (t != tool) { altEffect = false; objectNew() }
         tool = t
         if (t.paint != null) lastPaintTool = t
         // Scale and Rotate show handles right away; Move lifts on touch.
@@ -543,7 +677,7 @@ class EditorViewModel(app: Application) : AndroidViewModel(app) {
         if (t != Tool.CROP) cropRect = null
         if (t != Tool.SCISSORS) scissorsClear()
         // Compile the object selection model in the background so the first tap is quick.
-        if (t == Tool.OBJECT_SELECT) viewModelScope.launch { objects.prewarm() }
+        if (t.picksObjects) viewModelScope.launch { objects.prewarm() }
         if (t != Tool.TEXT) finishText()
         settingSource = (t == Tool.CLONE || t == Tool.HEAL || t == Tool.PERSPECTIVE_CLONE) && cloneSource == null
         if (t == Tool.PERSPECTIVE_CLONE && perspPlane == null) {
@@ -567,5 +701,5 @@ class EditorViewModel(app: Application) : AndroidViewModel(app) {
 
     fun swapColors() { val t = fg; fg = bg; bg = t }
 
-    override fun onCleared() { engine.shutdown(); objects.close() }
+    override fun onCleared() { engine.shutdown(); objects.close(); images.close() }
 }

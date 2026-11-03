@@ -31,8 +31,12 @@ object ToolIcons {
     val dodge get() = stroke("M12 3a5 5 0 1 0 0 10a5 5 0 1 0 0-10M12 13v8")
     val blur get() = stroke("M12 3c3 4 6 7.5 6 11a6 6 0 0 1-12 0c0-3.5 3-7 6-11z")
     val scissors get() = stroke("M6 9a3 3 0 1 0 0-6 3 3 0 0 0 0 6zM6 21a3 3 0 1 0 0-6 3 3 0 0 0 0 6zM20 4L8.1 15.9M14.5 14.5L20 20M8.1 8.1L12 12")
-    val foreground get() = stroke("M12 4a4 4 0 1 0 0 8 4 4 0 0 0 0-8zM5 21c0-4 3-6 7-6s7 2 7 6M3 3h4M3 3v4M21 3h-4M21 3v4M3 21v-3M21 21v-3")
     val objectSel get() = stroke("M12 2l1.2 3.3L16.5 6.5l-3.3 1.2L12 11l-1.2-3.3L7.5 6.5l3.3-1.2zM5 13h14v8H5z")
+    val removeObj get() = stroke("M12 2l1.2 3.3L16.5 6.5l-3.3 1.2L12 11l-1.2-3.3L7.5 6.5l3.3-1.2zM5 14l5 5M10 14l-5 5M14 15h6M14 19h6")
+    val depthBlur get() = stroke("M12 9a3 3 0 1 0 0 6a3 3 0 1 0 0-6M4 6h.01M7 3h.01M20 6h.01M17 3h.01M4 18h.01M7 21h.01M20 18h.01M17 21h.01M2 12h.01M22 12h.01")
+    val upscale get() = stroke("M4 14v6h6M20 10V4h-6M4 20l7-7M20 4l-7 7")
+    val denoise get() = stroke("M4 4h16v16H4zM8 8h.01M12 9h.01M16 8h.01M9 12h.01M15 13h.01M8 16h.01M12 15h.01M16 16h.01")
+    val deblur get() = stroke("M12 3a9 9 0 1 0 0 18a9 9 0 1 0 0-18M12 7a5 5 0 1 0 0 10a5 5 0 1 0 0-10M12 11a1 1 0 1 0 0 2a1 1 0 1 0 0-2")
     val paths get() = stroke("M5 17a2 2 0 1 0 0 4a2 2 0 1 0 0-4M19 3a2 2 0 1 0 0 4a2 2 0 1 0 0-4M7 19c7 0 3-14 10-14")
     val move get() = stroke("M12 2v20M2 12h20M9 5l3-3 3 3M9 19l3 3 3-3M5 9l-3 3 3 3M19 9l3 3-3 3")
     val rotate get() = stroke("M20 12a8 8 0 1 1-3-6.2M20 4v5h-5")
@@ -66,7 +70,7 @@ object ToolIcons {
 
     fun of(t: Tool): ImageVector = when (t) {
         Tool.RECT_SELECT -> rect; Tool.ELLIPSE_SELECT -> ellipse; Tool.FREE_SELECT -> lasso
-        Tool.FUZZY_SELECT -> fuzzy; Tool.COLOR_SELECT -> byColor; Tool.OBJECT_SELECT -> objectSel; Tool.SCISSORS -> scissors; Tool.FOREGROUND_SELECT -> foreground
+        Tool.FUZZY_SELECT -> fuzzy; Tool.COLOR_SELECT -> byColor; Tool.OBJECT_SELECT -> objectSel; Tool.REMOVE_OBJECT -> removeObj; Tool.DEPTH_BLUR -> depthBlur; Tool.UPSCALE -> upscale; Tool.DENOISE -> denoise; Tool.DEBLUR -> deblur; Tool.SCISSORS -> scissors
         Tool.BRUSH -> brush; Tool.PENCIL -> pencil; Tool.AIRBRUSH -> airbrush; Tool.ERASER -> eraser
         Tool.SMUDGE -> smudge; Tool.CLONE -> clone; Tool.HEAL -> heal; Tool.DODGE_BURN -> dodge; Tool.BLUR_SHARPEN -> blur; Tool.INK -> ink; Tool.MYPAINT -> mypaint; Tool.PERSPECTIVE_CLONE -> perspClone; Tool.BUCKET -> bucket; Tool.GRADIENT -> gradient
         Tool.MOVE -> move; Tool.SCALE -> transform; Tool.ROTATE -> rotate; Tool.FLIP -> mirror; Tool.SHEAR -> shear; Tool.PERSPECTIVE -> perspective; Tool.TRANSFORM_3D -> cube; Tool.HANDLE -> handle; Tool.WARP -> warp; Tool.CAGE -> cage; Tool.ALIGN -> align; Tool.CROP -> crop; Tool.PICKER -> picker; Tool.TEXT -> text; Tool.PATHS -> paths

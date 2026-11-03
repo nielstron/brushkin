@@ -133,7 +133,7 @@ private fun ToolsSheet(vm: EditorViewModel) {
                     val active = vm.tool == t
                     Column(
                         Modifier.weight(1f).height(72.dp).clip(RoundedCornerShape(14.dp)).background(if (active) Ui.accent else Ui.panel2)
-                            .clickable { vm.selectTool(t); vm.sheet = Sheet.NONE },
+                            .clickable { vm.sheet = Sheet.NONE; vm.pickTool(t) },
                         horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.Center,
                     ) {
                         Icon(ToolIcons.of(t), null, tint = if (active) Ui.onAccent else Ui.text, modifier = Modifier.size(22.dp))
@@ -226,7 +226,6 @@ private fun OptionsSheet(vm: EditorViewModel) {
         if (t.isSelect) {
             LabeledSlider("Feather", vm.feather, 0f..100f, "${vm.feather.roundToInt()} px", { vm.feather = it })
             Toggle("Antialiasing", vm.antialias) { vm.antialias = it }
-            if (t == Tool.FOREGROUND_SELECT) LabeledSlider("Edge band", vm.fgBand, 4f..200f, "${vm.fgBand.roundToInt()} px", { vm.fgBand = it })
             if (t == Tool.RECT_SELECT) LabeledSlider("Rounded corners", vm.cornerRadius, 0f..300f, "${vm.cornerRadius.roundToInt()} px", { vm.cornerRadius = it })
         }
         if (t == Tool.FUZZY_SELECT || t == Tool.COLOR_SELECT || t == Tool.BUCKET) {

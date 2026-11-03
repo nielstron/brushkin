@@ -149,6 +149,19 @@ fun Dialogs(vm: EditorViewModel, info: DocInfo, files: FileActions) {
         d == "gradient-edit" -> GradientEditor(vm, close)
         d == "pattern-edit" -> PatternEditor(vm, close)
         d == "model-download" -> ModelDownloadDialog(vm, close)
+        d == "depth-of-field" -> DepthOfFieldPanel(vm, close)
+        d == "upscale" -> AlertDialog(
+            onDismissRequest = close, containerColor = Ui.panel,
+            title = { Text("Upscale image", color = Ui.text) },
+            text = { Text("Enlarges every layer with an on-device model that adds detail (PLKSR-Rep). Now ${info.width} × ${info.height} px.", color = Ui.text, fontSize = 14.sp) },
+            confirmButton = {
+                Row {
+                    TextButton(onClick = { close(); vm.upscale(2) }) { Text("×2 (${info.width * 2} × ${info.height * 2})") }
+                    TextButton(onClick = { close(); vm.upscale(4) }) { Text("×4") }
+                }
+            },
+            dismissButton = { TextButton(onClick = close) { Text("Cancel") } },
+        )
         d == "grid" -> TextPrompt("Grid spacing (px)", vm.gridSize.toInt().toString(), KeyboardType.Number, close) { v ->
             close(); v.toIntOrNull()?.coerceIn(2, 4096)?.let { vm.gridSize = it.toFloat(); vm.showGrid = true }
         }
@@ -569,28 +582,73 @@ fun PatternEditor(vm: EditorViewModel, close: () -> Unit) {
 /** Asks before fetching the object selection model (FOSS build), then shows the download. */
 @Composable
 private fun ModelDownloadDialog(vm: EditorViewModel, close: () -> Unit) {
+    val r = vm.modelRequest ?: run { close(); return }
     val p = vm.modelProgress
     var started by remember { mutableStateOf(false) }
-    // Close once the download has finished (the selection then runs by itself).
+    val mb = remember(r) { vm.modelDownloadMb(r) }
+    // Close once the download has finished (the tool then runs by itself).
     LaunchedEffect(p, started) { if (started && p == null) close() }
     AlertDialog(
-        onDismissRequest = { if (p == null) close() }, containerColor = Ui.panel,
-        title = { Text("Download object selection?", color = Ui.text) },
+        onDismissRequest = { if (p == null) { vm.modelRequest = null; close() } }, containerColor = Ui.panel,
+        title = { Text(r.title, color = Ui.text) },
         text = {
             Column {
                 Text(
-                    "Selecting objects uses MobileSAM, an open model (Apache-2.0). It isn't part of the app: " +
-                        "it's downloaded once (${vm.modelDownloadMb} MB) from the project's GitHub page and then works offline.",
+                    "${r.text} It isn't part of the app: it's downloaded once ($mb MB) from the project's GitHub page, " +
+                        "runs on this device and then works offline. Clearing the app's cache removes it.",
                     color = Ui.text, fontSize = 14.sp,
                 )
                 if (p != null) {
                     Spacer(Modifier.height(16.dp))
-                    androidx.compose.material3.LinearProgressIndicator(progress = { p }, modifier = Modifier.fillMaxWidth(), color = Ui.accent)
-                    Text("${(p * 100).roundToInt()}%", color = Ui.muted, fontSize = 12.sp, modifier = Modifier.padding(top = 6.dp))
+                    androidx.compose.material3.LinearProgressIndicator(progress = { p }, modifier = Modifier.fillMaxWidth().height(6.dp).clip(RoundedCornerShape(3.dp)), color = Ui.accent, trackColor = Ui.panel2, drawStopIndicator = {})
                 }
             }
         },
         confirmButton = { if (p == null) TextButton(onClick = { started = true; vm.downloadModel() }) { Text("Download") } },
-        dismissButton = { if (p == null) TextButton(onClick = close) { Text("Not now") } },
+        dismissButton = {
+            if (p == null) TextButton(onClick = { vm.modelRequest = null; close() }) { Text("Not now") }
+            else TextButton(onClick = { vm.cancelDownload(); close() }) { Text("Cancel") }
+        },
     )
+}
+
+/** Depth of field: touch the image to set the focus; the blur previews live on the canvas. */
+@Composable
+private fun DepthOfFieldPanel(vm: EditorViewModel, close: () -> Unit) {
+    val e = vm.engine
+    val map = vm.depthMap ?: run { close(); return }
+    val info = e.info.collectAsState().value
+    val longSide = maxOf(info.width, info.height).toFloat()
+    var strength by remember { mutableStateOf(0.5f) }
+    var range by remember { mutableStateOf(0.15f) }
+    fun build(): io.github.nielstron.brushkin.engine.Filter {
+        val f = vm.dofFocus ?: android.graphics.PointF(info.width / 2f, info.height / 2f)
+        // Strongest blur: up to 4% of the image's long side.
+        return io.github.nielstron.brushkin.engine.DepthBlurFilter(map.values, map.side, map.side, f.x / info.width, f.y / info.height, strength * longSide * 0.04f, range)
+    }
+    var applied by remember { mutableStateOf(false) }
+    fun done() { vm.dofOpen = false; vm.depthMap = null; vm.dofFocus = null; close() }
+    LaunchedEffect(Unit) { e.filterBegin() }
+    // Replaced by another dialog (e.g. a tool picked meanwhile): drop the preview.
+    androidx.compose.runtime.DisposableEffect(Unit) { onDispose { if (!applied) { e.filterCancel(); vm.dofOpen = false; vm.depthMap = null } } }
+    LaunchedEffect(vm.dofFocus, strength, range) { e.filterPreview(build()) }
+    val cancel = { e.filterCancel(); done() }
+    BackHandler { cancel() }
+    Box(Modifier.fillMaxSize()) {
+        Column(
+            Modifier.align(Alignment.BottomCenter).fillMaxWidth().clip(RoundedCornerShape(topStart = 24.dp, topEnd = 24.dp))
+                .background(Ui.panel).navigationBarsPadding().padding(16.dp)
+        ) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                TextButton(onClick = cancel) { Text("Cancel", color = Ui.text) }
+                Text("Depth of field", color = Ui.text, fontWeight = FontWeight.Bold, fontSize = 17.sp, modifier = Modifier.weight(1f), textAlign = androidx.compose.ui.text.style.TextAlign.Center)
+                Box(
+                    Modifier.clip(RoundedCornerShape(12.dp)).background(Ui.accent).clickable { applied = true; e.filterApply(build()); done() }.padding(horizontal = 18.dp, vertical = 10.dp)
+                ) { Text("Apply", color = Ui.onAccent, fontWeight = FontWeight.SemiBold) }
+            }
+            Text("Touch the image to choose what stays sharp", color = Ui.muted, fontSize = 13.sp, modifier = Modifier.padding(vertical = 6.dp))
+            LabeledSlider("Blur", strength, 0f..1f, "${(strength * 100).roundToInt()}%", { strength = it })
+            LabeledSlider("Sharp depth range", range, 0f..1f, "${(range * 100).roundToInt()}%", { range = it })
+        }
+    }
 }

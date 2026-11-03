@@ -83,6 +83,12 @@ val KEYWORDS = mapOf(
     "Select foreground (AI)" to "remove background cut out person subject object automatically",
     "Crop to selection" to "trim cut image to the selected area",
     "Scale image…" to "resize make smaller bigger change resolution",
+    "Upscale ×2 (AI)" to "super resolution enhance enlarge increase resolution sharpen small photo",
+    "Upscale ×4 (AI)" to "super resolution enhance enlarge increase resolution sharpen small photo",
+    "Denoise (AI)" to "remove noise grain clean up night photo noise reduction",
+    "Deblur (AI)" to "sharpen blurry shaky photo fix motion blur camera shake",
+    "Depth of field (AI)…" to "bokeh portrait mode blur background focus lens",
+    "Remove selected object (AI)" to "erase delete person thing from photo content aware fill inpaint heal magic eraser",
     "Canvas size…" to "extend add padding border more space",
     "Rotate 90° clockwise" to "turn image right",
     "Rotate 90° counter-clockwise" to "turn image left",
@@ -170,6 +176,7 @@ fun commands(vm: EditorViewModel, info: DocInfo, files: FileActions, view: () ->
         Cmd("Edit", "Clear", "erase selection", run = { e.clearSelection() }),
         Cmd("Edit", "Fill with FG color", run = { e.fillSelection(vm.fg, "Fill with FG Color") }),
         Cmd("Edit", "Fill with BG color", run = { e.fillSelection(vm.bg, "Fill with BG Color") }),
+        Cmd("Edit", "Remove selected object (AI)", "fills it in from the surroundings", run = { vm.removeObject() }),
 
         Cmd("Select", "All", run = { e.selectAll() }),
         Cmd("Select", "None", run = { e.selectNone() }),
@@ -178,7 +185,7 @@ fun commands(vm: EditorViewModel, info: DocInfo, files: FileActions, view: () ->
         Cmd("Select", "Grow…", run = dlg("grow")),
         Cmd("Select", "Shrink…", run = dlg("shrink")),
         Cmd("Select", "Border…", run = dlg("border")),
-        Cmd("Select", "Select foreground (AI)", "on-device", run = { vm.objectSelect(-1f, -1f) }),
+        Cmd("Select", "Select foreground (AI)", "on-device", run = { vm.selectForeground() }),
         Cmd("Select", "Save to channel", "keep this selection for later", run = { e.saveSelectionToChannel() }),
         Cmd("Select", "Toggle quick mask", "Shift+Q", run = { e.quickMaskToggle() }),
         Cmd("Select", "Alpha to selection", run = { e.alphaToSelection() }),
@@ -204,6 +211,8 @@ fun commands(vm: EditorViewModel, info: DocInfo, files: FileActions, view: () ->
         Cmd("Image", "Rotate 90° counter-clockwise", run = { e.rotateImage(270) }),
         Cmd("Image", "Rotate 180°", run = { e.rotateImage(180) }),
         Cmd("Image", "Scale image…", run = dlg("scale")),
+        Cmd("Image", "Upscale ×2 (AI)", "enlarge with detail, on-device", run = { vm.upscale(2) }),
+        Cmd("Image", "Upscale ×4 (AI)", "enlarge with detail, on-device", run = { vm.upscale(4) }),
         Cmd("Image", "Canvas size…", run = dlg("canvas")),
         Cmd("Image", "Crop to selection", run = { e.cropToSelection() }),
         Cmd("Image", "Flatten image", run = { e.flatten() }),
@@ -250,6 +259,9 @@ fun commands(vm: EditorViewModel, info: DocInfo, files: FileActions, view: () ->
         Cmd("Colors", "Auto: Stretch Contrast", run = { e.filterBegin(); e.filterApply(io.github.nielstron.brushkin.engine.AutoLevelsFilter("Stretch Contrast", false, 0f)) }),
         Cmd("Colors", "Invert", run = { e.filterBegin(); e.filterApply(LutFilter.invert()) }),
 
+        Cmd("Filters", "Denoise (AI)", "camera noise, on-device", run = { vm.denoise() }),
+        Cmd("Filters", "Deblur (AI)", "camera shake, motion blur", run = { vm.deblur() }),
+        Cmd("Filters", "Depth of field (AI)…", "blur the background", run = { vm.depthOfField() }),
         Cmd("Filters", "Gaussian Blur…", run = dlg("filter:Gaussian Blur")),
         Cmd("Filters", "Motion Blur…", run = dlg("filter:Motion Blur")),
         Cmd("Filters", "Noise Reduction…", run = dlg("filter:Noise Reduction")),
@@ -261,7 +273,7 @@ fun commands(vm: EditorViewModel, info: DocInfo, files: FileActions, view: () ->
         Cmd("Filters", "Unsharp Mask…", run = dlg("filter:Unsharp Mask")),
         Cmd("Filters", "Pixelize…", run = dlg("filter:Pixelize")),
         Cmd("Filters", "RGB Noise…", run = dlg("filter:RGB Noise")),
-    ) + Tool.entries.map { t -> Cmd("Tools", t.label, t.group.label, run = { vm.selectTool(t) }) }
+    ) + Tool.entries.filter { !it.isAction }.map { t -> Cmd("Tools", t.label, t.group.label, run = { vm.selectTool(t) }) }
 }
 
 @Composable
