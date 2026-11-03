@@ -1,5 +1,6 @@
 package io.github.nielstron.brushkin.ui
 
+import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.draw.drawBehind
 import kotlinx.coroutines.launch
@@ -163,7 +164,33 @@ private fun EmojiDialog(vm: EditorViewModel, close: () -> Unit) {
     androidx.compose.ui.window.Dialog(onDismissRequest = close) {
         Column(Modifier.fillMaxWidth().clip(RoundedCornerShape(20.dp)).background(Ui.panel).padding(8.dp)) {
             Text("Emoji", color = Ui.text, fontSize = 18.sp, fontWeight = FontWeight.Bold, modifier = Modifier.padding(8.dp))
-            androidx.compose.ui.viewinterop.AndroidView(
+            val ctx = androidx.compose.ui.platform.LocalContext.current
+            var query by remember { mutableStateOf("") }
+            var results by remember { mutableStateOf<List<String>>(emptyList()) }
+            LaunchedEffect(query) {
+                results = if (query.isBlank()) emptyList() else kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.Default) { EmojiSearch.search(ctx, query) }
+            }
+            LaunchedEffect(Unit) { kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.Default) { EmojiSearch.index(ctx) } }
+            fun place(emoji: String) {
+                close()
+                vm.engine.placeFloating(renderText(emoji, 400f, Typeface.DEFAULT, android.graphics.Color.BLACK), "Emoji $emoji")
+            }
+            OutlinedTextField(
+                query, { query = it }, singleLine = true, placeholder = { Text("Search emoji (e.g. boat, heart, laugh)") },
+                modifier = Modifier.fillMaxWidth().padding(horizontal = 4.dp, vertical = 4.dp),
+            )
+            if (query.isNotBlank()) {
+                if (results.isEmpty()) Text("No emoji found", color = Ui.muted, modifier = Modifier.padding(16.dp).height(428.dp))
+                else androidx.compose.foundation.lazy.grid.LazyVerticalGrid(
+                    androidx.compose.foundation.lazy.grid.GridCells.Fixed(8), Modifier.fillMaxWidth().height(460.dp),
+                ) {
+                    items(results.size) { i ->
+                        Box(Modifier.aspectRatio(1f).clip(RoundedCornerShape(8.dp)).clickable { place(results[i]) }, contentAlignment = Alignment.Center) {
+                            Text(results[i], fontSize = 26.sp)
+                        }
+                    }
+                }
+            } else androidx.compose.ui.viewinterop.AndroidView(
                 factory = { ctx ->
                     androidx.emoji2.emojipicker.EmojiPickerView(ctx).apply {
                         emojiGridColumns = 8
