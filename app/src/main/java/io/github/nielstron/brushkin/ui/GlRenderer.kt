@@ -382,7 +382,8 @@ void main() {
     vec2 doc = uRect.xy + aPos * uRect.zw;
     vec3 p = uMatrix * vec3(doc, 1.0);
     vUv = aPos;
-    gl_Position = vec4(p.xy, 0.0, 1.0);
+    // Homogeneous output: perspective transforms divide by w (texture lookups stay perspective-correct).
+    gl_Position = vec4(p.xy, 0.0, p.z);
 }"""
 
         private const val SRGB = """

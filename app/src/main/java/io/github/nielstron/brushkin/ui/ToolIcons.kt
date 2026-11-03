@@ -34,6 +34,13 @@ object ToolIcons {
     val paths get() = stroke("M5 17a2 2 0 1 0 0 4a2 2 0 1 0 0-4M19 3a2 2 0 1 0 0 4a2 2 0 1 0 0-4M7 19c7 0 3-14 10-14")
     val move get() = stroke("M12 2v20M2 12h20M9 5l3-3 3 3M9 19l3 3 3-3M5 9l-3 3 3 3M19 9l3 3-3 3")
     val rotate get() = stroke("M20 12a8 8 0 1 1-3-6.2M20 4v5h-5")
+    val shear get() = stroke("M8 5h13l-5 14H3z")
+    val perspective get() = stroke("M7 5h10l4 14H3zM12 5v14")
+    val cube get() = stroke("M12 3l8 4.5v9L12 21l-8-4.5v-9zM12 12l8-4.5M12 12v9M12 12L4 7.5")
+    val handle get() = stroke("M6 6h.01M18 6h.01M12 18h.01M6 6l6 12 6-12z")
+    val warp get() = stroke("M3 12c3-6 6 6 9 0s6 6 9 0M3 6c3-4 6 4 9 0s6 4 9 0M3 18c3-4 6 4 9 0s6 4 9 0")
+    val cage get() = stroke("M5 5l7 2 7-2-2 7 2 7-7-2-7 2 2-7z")
+    val align get() = stroke("M4 3v18M8 7h12M8 17h8")
     val target get() = stroke("M12 3v6M12 15v6M3 12h6M15 12h6")
     val bucket get() = stroke("M4 12l7-7 7 7-7 7zM19.5 15c1 1.5 1.8 2.5 1.8 3.4a1.8 1.8 0 0 1-3.6 0c0-.9.8-1.9 1.8-3.4z")
     val gradient get() = stroke("M4 4h16v16H4zM4 14L14 4M4 20L20 4M10 20L20 10")
@@ -57,6 +64,6 @@ object ToolIcons {
         Tool.FUZZY_SELECT -> fuzzy; Tool.COLOR_SELECT -> byColor; Tool.OBJECT_SELECT -> objectSel
         Tool.BRUSH -> brush; Tool.PENCIL -> pencil; Tool.AIRBRUSH -> airbrush; Tool.ERASER -> eraser
         Tool.SMUDGE -> smudge; Tool.CLONE -> clone; Tool.HEAL -> heal; Tool.DODGE_BURN -> dodge; Tool.BLUR_SHARPEN -> blur; Tool.BUCKET -> bucket; Tool.GRADIENT -> gradient
-        Tool.MOVE -> move; Tool.SCALE -> transform; Tool.ROTATE -> rotate; Tool.FLIP -> mirror; Tool.CROP -> crop; Tool.PICKER -> picker; Tool.TEXT -> text; Tool.PATHS -> paths
+        Tool.MOVE -> move; Tool.SCALE -> transform; Tool.ROTATE -> rotate; Tool.FLIP -> mirror; Tool.SHEAR -> shear; Tool.PERSPECTIVE -> perspective; Tool.TRANSFORM_3D -> cube; Tool.HANDLE -> handle; Tool.WARP -> warp; Tool.CAGE -> cage; Tool.ALIGN -> align; Tool.CROP -> crop; Tool.PICKER -> picker; Tool.TEXT -> text; Tool.PATHS -> paths
     }
 }

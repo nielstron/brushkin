@@ -893,15 +893,17 @@ class Engine {
     }
 
     /** Transform tool: lift the selection (or the whole active layer) into a floating bitmap. */
-    fun liftActive() = post {
-        if (floating != null) return@post
+    fun liftActive() = post { liftNow() }
+
+    private fun liftNow() {
+        if (floating != null) return
         val s = stack
-        val l = s.active ?: return@post
-        if (l.isGroup) { onMessage?.invoke("Transform a layer, not a group"); return@post }
+        val l = s.active ?: return
+        if (l.isGroup) { onMessage?.invoke("Transform a layer, not a group"); return }
         val sel = s.selection
         if (sel == null) {
             // Lift just the layer's content, so the handles hug what's actually on it.
-            val b = l.pixels.contentBounds() ?: run { onMessage?.invoke("“${l.name}” is empty"); return@post }
+            val b = l.pixels.contentBounds() ?: run { onMessage?.invoke("“${l.name}” is empty"); return }
             val lifted = Bitmap.createBitmap(b.width(), b.height(), Bitmap.Config.ARGB_8888)
             val c = Canvas(lifted); c.translate(-b.left.toFloat(), -b.top.toFloat())
             Compositor.drawTiles(c, l.pixels, null, null)
@@ -919,6 +921,131 @@ class Engine {
         publish(); invalidate()
     }
 
+    // ---------------------------------------------------------------- mesh deformation (Warp, Cage)
+
+    /** The lifted pixels deformed by moving the vertices of a grid laid over them. */
+    private class Mesh(val src: Bitmap, val gw: Int, val gh: Int, val rest: FloatArray, val verts: FloatArray, val target: Long?, val name: String, val remainder: TiledBitmap?)
+    private var mesh: Mesh? = null
+    /** Cage points (doc coordinates): where they were placed, and where they are now. */
+    @Volatile var cageRest: List<android.graphics.PointF> = emptyList(); private set
+    @Volatile var cageNow: List<android.graphics.PointF> = emptyList(); private set
+    private var cageWeights: Array<FloatArray?>? = null
+    private val meshSeq = java.util.concurrent.atomic.AtomicInteger()
+
+    fun meshBegin(cage: Boolean) = post {
+        floating = null
+        liftNow()
+        val f = floating ?: return@post
+        val v = FloatArray(9); f.matrix.getValues(v)
+        val ox = v[2]; val oy = v[5]
+        val w = f.bitmap.width; val h = f.bitmap.height
+        val gw = (w / 24).coerceIn(4, if (cage) 48 else 32); val gh = (h / 24).coerceIn(4, if (cage) 48 else 32)
+        val rest = FloatArray((gw + 1) * (gh + 1) * 2)
+        for (j in 0..gh) for (i in 0..gw) { val k = (j * (gw + 1) + i) * 2; rest[k] = ox + w * i / gw.toFloat(); rest[k + 1] = oy + h * j / gh.toFloat() }
+        mesh = Mesh(f.bitmap, gw, gh, rest, rest.copyOf(), f.targetLayerId, f.name, f.remainder)
+        cageRest = emptyList(); cageNow = emptyList(); cageWeights = null
+    }
+
+    private fun meshRender() {
+        val m = mesh ?: return
+        var minX = Float.MAX_VALUE; var minY = Float.MAX_VALUE; var maxX = -Float.MAX_VALUE; var maxY = -Float.MAX_VALUE
+        for (k in m.verts.indices step 2) { minX = minOf(minX, m.verts[k]); maxX = maxOf(maxX, m.verts[k]); minY = minOf(minY, m.verts[k + 1]); maxY = maxOf(maxY, m.verts[k + 1]) }
+        val ow = (maxX - minX).toInt().coerceIn(1, 16384); val oh = (maxY - minY).toInt().coerceIn(1, 16384)
+        val out = Bitmap.createBitmap(ow, oh, Bitmap.Config.ARGB_8888)
+        val c = Canvas(out); c.translate(-minX, -minY)
+        c.drawBitmapMesh(m.src, m.gw, m.gh, m.verts, 0, null, 0, Paint(Paint.FILTER_BITMAP_FLAG or Paint.ANTI_ALIAS_FLAG))
+        floating = Floating(out, Matrix().apply { setTranslate(minX, minY) }, m.target, m.name, remainder = m.remainder)
+        invalidate()
+    }
+
+    /** Re-render only for the newest request, so fast finger movement never queues up work. */
+    private fun meshRenderLatest(seq: Int) { if (seq == meshSeq.get()) meshRender() }
+
+    /** Warp: push vertices near (x, y) by (dx, dy), fading out over [radius]. */
+    fun meshPush(x: Float, y: Float, dx: Float, dy: Float, radius: Float, strength: Float) {
+        val seq = meshSeq.incrementAndGet()
+        post {
+            val m = mesh ?: return@post
+            for (k in m.verts.indices step 2) {
+                val d = kotlin.math.hypot(m.verts[k] - x, m.verts[k + 1] - y)
+                if (d >= radius) continue
+                val t = 1 - d / radius
+                val wgt = t * t * strength
+                m.verts[k] += dx * wgt; m.verts[k + 1] += dy * wgt
+            }
+            meshRenderLatest(seq)
+        }
+    }
+
+    fun cageAdd(x: Float, y: Float) = post {
+        if (mesh == null) return@post
+        cageRest = cageRest + android.graphics.PointF(x, y); cageNow = cageNow + android.graphics.PointF(x, y)
+        cageWeights = null
+        invalidate()
+    }
+
+    /** Cage: move point [i]; everything inside the cage follows (mean value coordinates). */
+    fun cageMove(i: Int, x: Float, y: Float) {
+        val seq = meshSeq.incrementAndGet()
+        post {
+            val m = mesh ?: return@post
+            if (i !in cageNow.indices || cageRest.size < 3) return@post
+            cageNow = cageNow.toMutableList().also { it[i] = android.graphics.PointF(x, y) }
+            val wts = cageWeights ?: Array(m.rest.size / 2) { k -> meanValue(cageRest, m.rest[k * 2], m.rest[k * 2 + 1]) }.also { cageWeights = it }
+            for (k in wts.indices) {
+                val wv = wts[k] ?: continue
+                var nx = 0f; var ny = 0f
+                for (c in wv.indices) { nx += wv[c] * cageNow[c].x; ny += wv[c] * cageNow[c].y }
+                m.verts[k * 2] = nx; m.verts[k * 2 + 1] = ny
+            }
+            meshRenderLatest(seq)
+        }
+    }
+
+    /** Mean value coordinates of (x, y) in [poly], or null when outside (outside doesn't move). */
+    private fun meanValue(poly: List<android.graphics.PointF>, x: Float, y: Float): FloatArray? {
+        var inside = false
+        var j = poly.size - 1
+        for (i in poly.indices) {
+            val a = poly[i]; val b = poly[j]
+            if ((a.y > y) != (b.y > y) && x < (b.x - a.x) * (y - a.y) / (b.y - a.y) + a.x) inside = !inside
+            j = i
+        }
+        if (!inside) return null
+        val n = poly.size
+        val w = FloatArray(n)
+        val dx = FloatArray(n) { poly[it].x - x }; val dy = FloatArray(n) { poly[it].y - y }
+        val r = FloatArray(n) { kotlin.math.hypot(dx[it], dy[it]).coerceAtLeast(1e-4f) }
+        fun tanHalf(i: Int): Float {
+            val k = (i + 1) % n
+            val cross = dx[i] * dy[k] - dy[i] * dx[k]; val dot = dx[i] * dx[k] + dy[i] * dy[k]
+            val ang = kotlin.math.atan2(cross, dot)
+            return kotlin.math.tan(ang / 2)
+        }
+        var sum = 0f
+        for (i in 0 until n) { w[i] = (tanHalf((i - 1 + n) % n) + tanHalf(i)) / r[i]; sum += w[i] }
+        if (kotlin.math.abs(sum) < 1e-8f) return null
+        for (i in 0 until n) w[i] /= sum
+        return w
+    }
+
+    // ---------------------------------------------------------------- align
+
+    /** Align the active layer's content to the canvas: h/v = 0 start, 1 center, 2 end, -1 keep. */
+    fun alignLayer(h: Int, v: Int) = post {
+        val s = stack
+        val l = s.active ?: return@post
+        if (l.isGroup) return@post
+        val b = l.pixels.contentBounds() ?: return@post
+        val dx = when (h) { 0 -> -b.left; 1 -> (s.width - b.width()) / 2 - b.left; 2 -> s.width - b.right; else -> 0 }
+        val dy = when (v) { 0 -> -b.top; 1 -> (s.height - b.height()) / 2 - b.top; 2 -> s.height - b.bottom; else -> 0 }
+        if (dx == 0 && dy == 0) return@post
+        val out = Bitmap.createBitmap(s.width, s.height, Bitmap.Config.ARGB_8888)
+        val c = Canvas(out); c.translate(dx.toFloat(), dy.toFloat())
+        Compositor.drawTiles(c, l.pixels, null, null)
+        replaceLayerPixels(s, l, TiledBitmap.fromBitmap(out), "Align Layer")
+    }
+
     fun commitFloating(matrix: Matrix, name: String = "Transform") = post {
         floating?.matrix?.set(matrix)
         commitFloatingNow(name)
@@ -934,6 +1061,7 @@ class Engine {
 
     private suspend fun commitFloatingNow(name: String = "Transform") {
         val f = floating ?: return
+        mesh = null; cageRest = emptyList(); cageNow = emptyList()
         val s = stack
         busy("Applying") {
             val out = Bitmap.createBitmap(s.width, s.height, Bitmap.Config.ARGB_8888)
@@ -978,6 +1106,7 @@ class Engine {
 
     fun cancelFloating() = post {
         floating = null
+        mesh = null; cageRest = emptyList(); cageNow = emptyList()
         publish(); invalidate()
     }
 

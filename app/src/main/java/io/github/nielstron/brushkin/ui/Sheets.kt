@@ -207,6 +207,10 @@ private fun OptionsSheet(vm: EditorViewModel) {
             }
             Toggle("FG to transparent", vm.fgToTransparent) { vm.fgToTransparent = it }
         }
+        if (t == Tool.WARP) {
+            LabeledSlider("Radius", vm.warpRadius, 10f..600f, "${vm.warpRadius.roundToInt()} px", { vm.warpRadius = it })
+            LabeledSlider("Strength", vm.warpStrength, 0.05f..1f, "${(vm.warpStrength * 100).roundToInt()}%", { vm.warpStrength = it })
+        }
         if (t == Tool.ROTATE) Toggle("Snap rotation to 15°", vm.snapRotation) { vm.snapRotation = it }
         if (t == Tool.SCALE) Toggle("Keep aspect ratio", vm.keepRatio) { vm.keepRatio = it }
     }

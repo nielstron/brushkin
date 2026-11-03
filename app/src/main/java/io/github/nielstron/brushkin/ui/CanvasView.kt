@@ -310,8 +310,30 @@ class CanvasView(context: Context, private val vm: EditorViewModel) : View(conte
                 for (p in listOf(guideDark, accent)) { canvas.drawLine(cx - r, cy, cx + r, cy, p); canvas.drawLine(cx, cy - r, cx, cy + r, p) }
                 return
             }
-            Tool.SCALE -> {
+            Tool.SCALE, Tool.PERSPECTIVE -> {
                 for (i in 0 until 4) { canvas.drawCircle(pts[i * 2], pts[i * 2 + 1], hr, handleFill); canvas.drawCircle(pts[i * 2], pts[i * 2 + 1], hr, accent) }
+                return
+            }
+            Tool.SHEAR, Tool.TRANSFORM_3D -> return
+            Tool.HANDLE -> {
+                for (hd in vm.handles) { val p = toView(hd.second.x, hd.second.y); canvas.drawCircle(p.x, p.y, hr * 1.2f, accentFill); canvas.drawCircle(p.x, p.y, hr * 1.2f, guideDark) }
+                return
+            }
+            Tool.WARP -> {
+                val c = cursor ?: return
+                val r = vm.warpRadius * scale
+                canvas.drawCircle(c.x, c.y, r, guideDark); canvas.drawCircle(c.x, c.y, r, guide)
+                return
+            }
+            Tool.CAGE -> {
+                val cp = engine.cageNow
+                if (cp.isNotEmpty()) {
+                    val path = Path()
+                    cp.forEachIndexed { i, p -> val v = toView(p.x, p.y); if (i == 0) path.moveTo(v.x, v.y) else path.lineTo(v.x, v.y) }
+                    if (cp.size > 2) path.close()
+                    canvas.drawPath(path, guideDark); canvas.drawPath(path, accent)
+                    for (p in cp) { val v = toView(p.x, p.y); canvas.drawCircle(v.x, v.y, hr, handleFill); canvas.drawCircle(v.x, v.y, hr, accent) }
+                }
                 return
             }
             else -> {}
@@ -337,7 +359,8 @@ class CanvasView(context: Context, private val vm: EditorViewModel) : View(conte
 
     // ------------------------------------------------------------------ input
 
-    private enum class Mode { NONE, STROKE, VIEW, SHAPE, PICK, FLOAT_MOVE, FLOAT_SCALE, FLOAT_ROTATE, CROP, IGNORE, PATH_POINT, PATH_HANDLE, PATH_NEW }
+    private enum class Mode { NONE, STROKE, VIEW, SHAPE, PICK, FLOAT_MOVE, FLOAT_SCALE, FLOAT_ROTATE, CROP, IGNORE, PATH_POINT, PATH_HANDLE, PATH_NEW,
+        FLOAT_SHEAR, FLOAT_CORNER, FLOAT_3D, FLOAT_HANDLE, WARP_PUSH, CAGE_DRAG }
 
     private var mode = Mode.NONE
     private var downTime = 0L
@@ -503,6 +526,7 @@ class CanvasView(context: Context, private val vm: EditorViewModel) : View(conte
     private fun moveSingle(e: MotionEvent) {
         val d = toDoc(e.x, e.y)
         when (mode) {
+            Mode.WARP_PUSH -> { cursor = PointF(e.x, e.y); dragFloating(e) }
             Mode.STROKE -> {
                 val pts = ArrayList<StrokePoint>(e.historySize + 1)
                 for (i in 0 until e.historySize) {
@@ -525,7 +549,8 @@ class CanvasView(context: Context, private val vm: EditorViewModel) : View(conte
                 vm.tool == Tool.GRADIENT -> preview = Path().apply { moveTo(downDoc.x, downDoc.y); lineTo(d.x, d.y) }
                 vm.tool == Tool.RECT_SELECT || vm.tool == Tool.ELLIPSE_SELECT -> preview = shapePath(downDoc, d)
             }
-            Mode.FLOAT_MOVE, Mode.FLOAT_SCALE, Mode.FLOAT_ROTATE -> dragFloating(e)
+            Mode.FLOAT_MOVE, Mode.FLOAT_SCALE, Mode.FLOAT_ROTATE, Mode.FLOAT_SHEAR, Mode.FLOAT_CORNER, Mode.FLOAT_3D,
+            Mode.FLOAT_HANDLE, Mode.WARP_PUSH, Mode.CAGE_DRAG -> dragFloating(e)
             Mode.PATH_POINT, Mode.PATH_HANDLE, Mode.PATH_NEW -> dragPath(d)
             else -> {}
         }
@@ -697,6 +722,33 @@ class CanvasView(context: Context, private val vm: EditorViewModel) : View(conte
         fStart.set(f.matrix)
         val centerDoc = toDoc((pts[0] + pts[4]) / 2, (pts[1] + pts[5]) / 2)
         if (f.targetLayerId != null) when (vm.tool) {
+            Tool.SHEAR -> { mode = Mode.FLOAT_SHEAR; fPivotDoc = centerDoc; return }
+            Tool.TRANSFORM_3D -> { mode = Mode.FLOAT_3D; fPivotDoc = centerDoc; return }
+            Tool.PERSPECTIVE -> {
+                for (i in 0 until 4) if (hypot(e.x - pts[i * 2], e.y - pts[i * 2 + 1]) < hit) {
+                    mode = Mode.FLOAT_CORNER; cornerIndex = i
+                    cornersDoc = f.corners(); return
+                }
+                mode = Mode.IGNORE; return
+            }
+            Tool.HANDLE -> {
+                val near = vm.handles.indexOfFirst { val p = toView(it.second.x, it.second.y); hypot(e.x - p.x, e.y - p.y) < hit }
+                if (near >= 0) { mode = Mode.FLOAT_HANDLE; cornerIndex = near; return }
+                if (vm.handles.size >= 4) { mode = Mode.IGNORE; return }
+                val inv = Matrix(); f.matrix.invert(inv)
+                val src = floatArrayOf(downDoc.x, downDoc.y); inv.mapPoints(src)
+                vm.handles.add(PointF(src[0], src[1]) to PointF(downDoc.x, downDoc.y))
+                handleBase = Matrix(f.matrix)
+                mode = Mode.FLOAT_HANDLE; cornerIndex = vm.handles.lastIndex; invalidate(); return
+            }
+            Tool.WARP -> { mode = Mode.WARP_PUSH; lastWarp = PointF(downDoc.x, downDoc.y); return }
+            Tool.CAGE -> {
+                if (engine.cageNow.isEmpty()) cageEditing = false
+                val near = engine.cageNow.indexOfFirst { val p = toView(it.x, it.y); hypot(e.x - p.x, e.y - p.y) < hit }
+                if (near >= 0 && engine.cageNow.size >= 3) { mode = Mode.CAGE_DRAG; cornerIndex = near; cageEditing = true; return }
+                if (!cageEditing) engine.cageAdd(downDoc.x, downDoc.y)
+                mode = Mode.IGNORE; return
+            }
             // Dedicated tools: Rotate turns around the center from anywhere; Move only moves.
             Tool.ROTATE -> { mode = Mode.FLOAT_ROTATE; fPivotDoc = centerDoc; return }
             Tool.MOVE -> { mode = Mode.FLOAT_MOVE; return }
@@ -731,11 +783,41 @@ class CanvasView(context: Context, private val vm: EditorViewModel) : View(conte
 
     /** Move tool drag in progress (the layer is lifted on touch and applied on release). */
     private var moving = false
+    private var cornerIndex = 0
+    private var cornersDoc = FloatArray(8)
+    private var handleBase = Matrix()
+    private var lastWarp = PointF()
+    /** Cage: once a point has been dragged, taps no longer add points. */
+    private var cageEditing = false
+    private val camera = android.graphics.Camera()
 
     private fun dragFloating(e: MotionEvent) {
         val f = engine.floating ?: return
         val d = toDoc(e.x, e.y)
         if (moving) { f.matrix.set(f.initial); f.matrix.postTranslate(d.x - downDoc.x, d.y - downDoc.y); return }
+        when (mode) {
+            Mode.WARP_PUSH -> {
+                engine.meshPush(lastWarp.x, lastWarp.y, d.x - lastWarp.x, d.y - lastWarp.y, vm.warpRadius, vm.warpStrength)
+                lastWarp = PointF(d.x, d.y); return
+            }
+            Mode.CAGE_DRAG -> { engine.cageMove(cornerIndex, d.x, d.y); return }
+            Mode.FLOAT_CORNER -> {
+                val dst = cornersDoc.copyOf(); dst[cornerIndex * 2] = d.x; dst[cornerIndex * 2 + 1] = d.y
+                val w = f.bitmap.width.toFloat(); val h = f.bitmap.height.toFloat()
+                f.matrix.setPolyToPoly(floatArrayOf(0f, 0f, w, 0f, w, h, 0f, h), 0, dst, 0, 4); return
+            }
+            Mode.FLOAT_HANDLE -> {
+                val hs = vm.handles
+                hs[cornerIndex] = hs[cornerIndex].first to PointF(d.x, d.y)
+                // GIMP Handle Transform: 1 handle moves, 2 add scale/rotate, 3 affine, 4 perspective.
+                val src = hs.flatMap { listOf(it.first.x, it.first.y) }.toFloatArray()
+                val dst = hs.flatMap { listOf(it.second.x, it.second.y) }.toFloatArray()
+                if (hs.size == 1) { f.matrix.set(handleBase); val p = floatArrayOf(src[0], src[1]); handleBase.mapPoints(p); f.matrix.postTranslate(dst[0] - p[0], dst[1] - p[1]) }
+                else f.matrix.setPolyToPoly(src, 0, dst, 0, hs.size)
+                return
+            }
+            else -> {}
+        }
         f.matrix.set(fStart)
         when (mode) {
             Mode.FLOAT_MOVE -> f.matrix.postTranslate(d.x - downDoc.x, d.y - downDoc.y)
@@ -750,6 +832,22 @@ class CanvasView(context: Context, private val vm: EditorViewModel) : View(conte
                     val k = (s1 / s0).coerceAtLeast(0.01f)
                     f.matrix.postScale(k, k, fPivotDoc.x, fPivotDoc.y)
                 }
+            }
+            Mode.FLOAT_SHEAR -> {
+                val dx = d.x - downDoc.x; val dy = d.y - downDoc.y
+                val sz = f.corners().let { c -> hypot(c[6] - c[0], c[7] - c[1]) to hypot(c[2] - c[0], c[3] - c[1]) }
+                if (abs(dx) >= abs(dy)) f.matrix.postSkew(dx / sz.first.coerceAtLeast(1f), 0f, fPivotDoc.x, fPivotDoc.y)
+                else f.matrix.postSkew(0f, dy / sz.second.coerceAtLeast(1f), fPivotDoc.x, fPivotDoc.y)
+            }
+            Mode.FLOAT_3D -> {
+                val dx = e.x - down.x; val dy = e.y - down.y
+                camera.save()
+                // Depth proportional to the image so the perspective looks the same at any size.
+                camera.setLocation(0f, 0f, -maxOf(f.bitmap.width, f.bitmap.height) / 72f * 1.2f)
+                camera.rotateY(dx * 0.25f); camera.rotateX(-dy * 0.25f)
+                val cm = Matrix(); camera.getMatrix(cm); camera.restore()
+                cm.preTranslate(-fPivotDoc.x, -fPivotDoc.y); cm.postTranslate(fPivotDoc.x, fPivotDoc.y)
+                f.matrix.postConcat(cm)
             }
             Mode.FLOAT_ROTATE -> {
                 val a0 = atan2(downDoc.y - fPivotDoc.y, downDoc.x - fPivotDoc.x)

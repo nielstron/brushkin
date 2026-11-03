@@ -51,6 +51,13 @@ enum class Tool(val label: String, val group: ToolGroup, val paint: PaintTool? =
     SCALE("Scale", ToolGroup.TRANSFORM),
     ROTATE("Rotate", ToolGroup.TRANSFORM),
     FLIP("Flip", ToolGroup.TRANSFORM),
+    SHEAR("Shear", ToolGroup.TRANSFORM),
+    PERSPECTIVE("Perspective", ToolGroup.TRANSFORM),
+    TRANSFORM_3D("3D Transform", ToolGroup.TRANSFORM),
+    HANDLE("Handle Transform", ToolGroup.TRANSFORM),
+    WARP("Warp", ToolGroup.TRANSFORM),
+    CAGE("Cage", ToolGroup.TRANSFORM),
+    ALIGN("Align", ToolGroup.TRANSFORM),
     CROP("Crop", ToolGroup.TRANSFORM),
     PATHS("Paths", ToolGroup.OTHER),
     PICKER("Color Picker", ToolGroup.OTHER),
@@ -58,7 +65,10 @@ enum class Tool(val label: String, val group: ToolGroup, val paint: PaintTool? =
 
     val isSelect get() = group == ToolGroup.SELECT
     /** Tools that work on a lifted copy of the layer (applied or cancelled as a whole). */
-    val liftsLayer get() = this == MOVE || this == SCALE || this == ROTATE
+    val liftsLayer get() = this == MOVE || this == SCALE || this == ROTATE || this == SHEAR || this == PERSPECTIVE ||
+        this == TRANSFORM_3D || this == HANDLE || this == WARP || this == CAGE
+    /** Transform tools with handles and Apply/Cancel (everything that lifts except Move). */
+    val confirmTransform get() = liftsLayer && this != MOVE
 }
 
 enum class Sheet { NONE, TOOLS, OPTIONS, COLOR, LAYERS, INSERT, HISTORY }
@@ -121,6 +131,10 @@ class EditorViewModel(app: Application) : AndroidViewModel(app) {
     var fromCenter by mutableStateOf(false)
     var fixedRatio by mutableStateOf(false)
     var keepRatio by mutableStateOf(true)
+    /** Handle Transform: (source point in the lifted bitmap, current doc point). */
+    val handles = ArrayList<Pair<android.graphics.PointF, android.graphics.PointF>>()
+    var warpRadius by mutableStateOf(120f)
+    var warpStrength by mutableStateOf(0.6f)
     var snapRotation by mutableStateOf(false)
 
     var selectMode by mutableStateOf(SelectMode.REPLACE)
@@ -343,7 +357,10 @@ class EditorViewModel(app: Application) : AndroidViewModel(app) {
         tool = t
         if (t.paint != null) lastPaintTool = t
         // Scale and Rotate show handles right away; Move lifts on touch.
-        if (t == Tool.SCALE || t == Tool.ROTATE) engine.liftActive()
+        if (t.confirmTransform) {
+            handles.clear()
+            if (t == Tool.WARP || t == Tool.CAGE) engine.meshBegin(cage = t == Tool.CAGE) else engine.liftActive()
+        }
         if (t != Tool.CROP) cropRect = null
         if (t != Tool.TEXT) finishText()
         settingSource = (t == Tool.CLONE || t == Tool.HEAL) && cloneSource == null
