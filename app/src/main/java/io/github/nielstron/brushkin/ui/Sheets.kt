@@ -435,7 +435,7 @@ private fun LayerRow(vm: EditorViewModel, l: LayerInfo, active: Boolean, info: D
             Column(Modifier.weight(1f).padding(start = 10.dp)) {
                 Text(l.name, color = if (l.visible) Ui.text else Ui.muted, fontSize = 14.sp, fontWeight = if (active) FontWeight.SemiBold else FontWeight.Normal, maxLines = 1)
                 val sub = buildList {
-                    if (l.isGroup) add("Group"); add(l.mode.label); if (l.opacity < 1f) add("${(l.opacity * 100).roundToInt()}%"); if (l.lockAlpha) add("alpha locked")
+                    if (l.isGroup) add("Group"); if (l.isText) add("Text"); add(l.mode.label); if (l.opacity < 1f) add("${(l.opacity * 100).roundToInt()}%"); if (l.lockAlpha) add("alpha locked")
                     if (active && l.editMask) add("editing mask") else if (l.hasMask && !l.maskEnabled) add("mask off")
                 }.joinToString(" · ")
                 Text(sub, color = Ui.muted, fontSize = 12.sp, maxLines = 1)
@@ -461,6 +461,7 @@ private fun LayerRow(vm: EditorViewModel, l: LayerInfo, active: Boolean, info: D
                     Chip("Scale", false, ToolIcons.transform) { vm.sheet = Sheet.NONE; vm.selectTool(Tool.SCALE) }
                     Chip("Rotate", false, ToolIcons.rotate) { vm.sheet = Sheet.NONE; vm.selectTool(Tool.ROTATE) }
                 }
+                if (l.isText) Chip("Edit text", false, ToolIcons.text) { vm.sheet = Sheet.NONE; vm.dialog = "text-edit:${l.id}" }
                 if (l.depth > 0) Chip("Move out of group", false) { e.moveOutOfGroup(l.id) }
                 Chip("Into group above", false) { e.moveIntoGroupAbove(l.id) }
                 if (!l.isGroup) Chip("Put in new group", false) { e.groupActive() }
@@ -542,7 +543,7 @@ private fun InsertSheet(vm: EditorViewModel, files: FileActions) {
             for ((label, style) in TEXT_STYLES) {
                 Box(
                     Modifier.weight(1f).height(64.dp).clip(RoundedCornerShape(14.dp)).background(Ui.panel2)
-                        .clickable { vm.sheet = Sheet.NONE; vm.textStyle = style; vm.dialog = "text" },
+                        .clickable { vm.sheet = Sheet.NONE; vm.textStyle = style; vm.selectTool(Tool.TEXT); vm.messages.tryEmit("Tap where the text should go") },
                     contentAlignment = Alignment.Center,
                 ) { Text(label, color = Ui.text, style = style.preview) }
             }

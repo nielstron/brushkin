@@ -70,6 +70,7 @@ fun EditorScreen(vm: EditorViewModel, files: FileActions) {
     val info by vm.engine.info.collectAsState()
     val busy by vm.engine.busy.collectAsState()
     val holder = remember { CanvasHolder() }
+    var viewVersion by remember { androidx.compose.runtime.mutableIntStateOf(0) }
     val snack = remember { SnackbarHostState() }
     LaunchedEffect(Unit) { vm.messages.collect { snack.showSnackbar(it) } }
     // Pause the GL thread with the activity so it doesn't render (or hold the GPU) in the background.
@@ -92,7 +93,7 @@ fun EditorScreen(vm: EditorViewModel, files: FileActions) {
     Box(Modifier.fillMaxSize().background(Ui.ground)) {
         AndroidView(
             factory = { ctx ->
-                val canvasView = CanvasView(ctx, vm).also { holder.view = it }
+                val canvasView = CanvasView(ctx, vm).also { holder.view = it; it.onViewChanged = { viewVersion++ } }
                 android.widget.FrameLayout(ctx).apply {
                     // Linear-light GPU rendering when OpenGL ES 3 is available; the canvas view on
                     // top handles input and overlays. Without GLES3 it draws the document itself.
@@ -202,6 +203,7 @@ fun EditorScreen(vm: EditorViewModel, files: FileActions) {
 
         SnackbarHost(snack, Modifier.align(Alignment.BottomCenter).navigationBarsPadding().padding(bottom = 150.dp))
 
+        TextOverlay(vm, holder, viewVersion)
         Sheets(vm, info, files)
         if (vm.showMenu) MenuScreen(vm, info, files, holder)
         Dialogs(vm, info, files)

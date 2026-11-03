@@ -2,6 +2,9 @@ package io.github.nielstron.brushkin.ui
 
 import android.graphics.Typeface
 import androidx.activity.compose.BackHandler
+import io.github.nielstron.brushkin.engine.TextSpec
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -122,7 +125,8 @@ fun Dialogs(vm: EditorViewModel, info: DocInfo, files: FileActions) {
         )
         d == "new" -> NewImageDialog(vm, close)
         d == "emoji" -> EmojiDialog(vm, close)
-        d == "text" -> TextDialog(vm, close)
+        d == "text" -> { close(); vm.selectTool(Tool.TEXT); vm.messages.tryEmit("Tap where the text should go") }
+        d.startsWith("text-edit:") -> { close(); vm.selectTool(Tool.TEXT); vm.editTextLayer(d.removePrefix("text-edit:").toLong()) }
         d == "scale" -> SizeDialog("Scale image", info.width, info.height, true, close) { w, h -> e.scaleImage(w, h) }
         d == "canvas" -> SizeDialog("Canvas size", info.width, info.height, false, close) { w, h -> e.canvasSize(w, h, (w - info.width) / 2, (h - info.height) / 2) }
         d == "feather" || d == "grow" || d == "shrink" -> TextPrompt("${d.replaceFirstChar { it.uppercase() }} selection by (px)", "10", KeyboardType.Number, close) { v ->
@@ -216,41 +220,7 @@ private fun SizeDialog(title: String, w0: Int, h0: Int, keepRatioDefault: Boolea
     )
 }
 
-@Composable
-private fun TextDialog(vm: EditorViewModel, close: () -> Unit) {
-    var text by remember { mutableStateOf("") }
-    var size by remember { mutableStateOf(160f) }
-    var style by remember { mutableStateOf(vm.textStyle) }
-    AlertDialog(
-        onDismissRequest = close, containerColor = Ui.panel,
-        title = { Text("Add text") },
-        text = {
-            Column {
-                OutlinedTextField(text, { text = it }, placeholder = { Text("Type something") }, modifier = Modifier.fillMaxWidth(), minLines = 2)
-                Spacer(Modifier.height(10.dp))
-                Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                    for ((label, s) in TEXT_STYLES) Box(
-                        Modifier.weight(1f).height(48.dp).clip(RoundedCornerShape(12.dp)).background(Ui.panel2)
-                            .border(2.dp, if (style == s) Ui.accent else Color.Transparent, RoundedCornerShape(12.dp)).clickable { style = s },
-                        contentAlignment = Alignment.Center,
-                    ) { Text(label, color = Ui.text, style = s.preview.copy(fontSize = 15.sp)) }
-                }
-                LabeledSlider("Size", size, 24f..600f, "${size.roundToInt()} px", { size = it })
-                Text("Uses the foreground color.", color = Ui.muted, fontSize = 12.sp)
-            }
-        },
-        confirmButton = {
-            TextButton(onClick = {
-                if (text.isNotBlank()) {
-                    vm.engine.placeFloating(renderText(text, size, style.typeface, vm.fg, style.outline), "Text: ${text.lines().first().take(20)}")
-                    // Text is placed at its real size, not fitted.
-                }
-                close()
-            }) { Text("Place") }
-        },
-        dismissButton = { TextButton(onClick = close) { Text("Cancel") } },
-    )
-}
+val FONTS = listOf("Sans" to "sans-serif", "Serif" to "serif", "Mono" to "monospace", "Script" to "cursive", "Casual" to "casual", "Condensed" to "sans-serif-condensed", "Black" to "sans-serif-black")
 
 // ---------------------------------------------------------------------------- filters
 
