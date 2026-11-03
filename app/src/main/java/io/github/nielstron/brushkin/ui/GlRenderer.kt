@@ -45,6 +45,16 @@ class GlRenderer(private val engine: Engine) : GLSurfaceView.Renderer {
     private val textures = HashMap<Bitmap, Tex>()
     private var frameNo = 0L
 
+    /**
+     * One texture per TiledBitmap ("atlas"), updated tile by tile with glTexSubImage2D. Sampling a
+     * single texture filters seamlessly across tile borders, which per-tile textures can't.
+     */
+    private class Atlas(val id: Int, val cols: Int, val rows: Int, val bmps: Array<Bitmap?>, val gens: IntArray, var used: Long)
+    private val atlases = java.util.IdentityHashMap<TiledBitmap, Atlas>()
+    private var maxTex = 4096
+    private val clearTile by lazy { Bitmap.createBitmap(TILE, TILE, Bitmap.Config.ARGB_8888) }
+    private val whiteTile by lazy { Bitmap.createBitmap(TILE, TILE, Bitmap.Config.ARGB_8888).apply { eraseColor(-1) } }
+
     // Render targets: pairs of accumulation buffers per group depth plus a layer buffer.
     private class Target(val fbo: Int, val tex: Int)
     private val pool = ArrayList<Target>()
@@ -60,7 +70,8 @@ class GlRenderer(private val engine: Engine) : GLSurfaceView.Renderer {
         val b = ByteBuffer.allocateDirect(8 * 4).order(ByteOrder.nativeOrder()).asFloatBuffer().put(floatArrayOf(0f, 0f, 1f, 0f, 0f, 1f, 1f, 1f)).also { it.position(0) }
         val ids = IntArray(1); glGenBuffers(1, ids, 0); quad = ids[0]
         glBindBuffer(GL_ARRAY_BUFFER, quad); glBufferData(GL_ARRAY_BUFFER, 32, b, GL_STATIC_DRAW)
-        textures.clear(); pool.clear(); poolW = 0
+        textures.clear(); atlases.clear(); pool.clear(); poolW = 0
+        val mt = IntArray(1); glGetIntegerv(GL_MAX_TEXTURE_SIZE, mt, 0); maxTex = mt[0]
     }
 
     override fun onSurfaceChanged(gl: GL10?, width: Int, height: Int) { w = width; h = height; glViewport(0, 0, w, h) }
@@ -181,6 +192,14 @@ class GlRenderer(private val engine: Engine) : GLSurfaceView.Renderer {
 
     private fun drawTiles(prog: Int, t: TiledBitmap, m: FloatArray, filter: Boolean, scale: Float) {
         glUniformMatrix3fv(glGetUniformLocation(prog, "uMatrix"), 1, false, m, 0)
+        if (t.cols * TILE <= maxTex && t.rows * TILE <= maxTex) {
+            val a = atlas(t, filter)
+            glUniform1i(glGetUniformLocation(prog, "uTex"), 0)
+            glUniform4f(glGetUniformLocation(prog, "uRect"), 0f, 0f, t.cols * TILE * scale, t.rows * TILE * scale)
+            a.used = frameNo
+            quadDraw(prog)
+            return
+        }
         val rectLoc = glGetUniformLocation(prog, "uRect")
         for (i in t.tiles.indices) {
             val b = t.tiles[i] ?: continue
@@ -226,8 +245,38 @@ class GlRenderer(private val engine: Engine) : GLSurfaceView.Renderer {
         glUniform1i(glGetUniformLocation(prog, "uTex"), unit)
     }
 
+    private fun atlas(t: TiledBitmap, filter: Boolean): Atlas {
+        var a = atlases[t]
+        glActiveTexture(GL_TEXTURE0)
+        if (a == null) {
+            val ids = IntArray(1); glGenTextures(1, ids, 0)
+            glBindTexture(GL_TEXTURE_2D, ids[0])
+            glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA8, t.cols * TILE, t.rows * TILE, 0, GL_RGBA, GL_UNSIGNED_BYTE, null)
+            glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE)
+            glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE)
+            a = Atlas(ids[0], t.cols, t.rows, arrayOfNulls(t.tiles.size), IntArray(t.tiles.size) { Int.MIN_VALUE }, frameNo)
+            atlases[t] = a
+        } else glBindTexture(GL_TEXTURE_2D, a.id)
+        // Upload only tiles whose bitmap or contents changed since last frame.
+        for (i in t.tiles.indices) {
+            val b = t.tiles[i]
+            val gen = b?.generationId ?: 0
+            if (a.bmps[i] === b && a.gens[i] == gen && (b != null || a.gens[i] == 0)) continue
+            GLUtils.texSubImage2D(GL_TEXTURE_2D, 0, t.tileX(i), t.tileY(i), b ?: if (t.fill != 0) whiteTile else clearTile)
+            a.bmps[i] = b; a.gens[i] = gen
+        }
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR)
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, if (filter) GL_LINEAR else GL_NEAREST)
+        return a
+    }
+
     /** Drop textures not used in the last few seconds of frames (old tile versions, closed docs). */
     private fun evict() {
+        val ai = atlases.entries.iterator()
+        while (ai.hasNext()) {
+            val e = ai.next()
+            if (frameNo - e.value.used > 300) { glDeleteTextures(1, intArrayOf(e.value.id), 0); ai.remove() }
+        }
         if (textures.size < 256) return
         val it = textures.entries.iterator()
         while (it.hasNext()) {
