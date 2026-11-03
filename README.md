@@ -13,8 +13,8 @@ randomness and stylus tilt can drive size, opacity and angle. Symmetry painting 
 mandala). Stroke opacity works like GIMP's: overlapping dabs within one stroke never exceed it.
 
 **Resources.** Imports GIMP brushes (.gbr, animated .gih), gradients (.ggr), palettes (.gpl),
-patterns (.pat) and MyPaint brushes (.myb). Gradient and palette editors; new brushes and patterns
-from the selection.
+patterns (.pat) and MyPaint brushes (.myb). Gradient, palette and pattern editors (generate checker/stripe/dot patterns from
+the current colors, scale, offset, make seamless); new brushes and patterns from the selection.
 
 **Selections.** Rectangle (optionally rounded), ellipse, free (lasso), fuzzy select, select by
 color, Intelligent Scissors (edge-following live wire), foreground select (refines a rough outline)

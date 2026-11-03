@@ -107,4 +107,18 @@ Name: Sunset
         assertTrue("differs in $diff px", diff < 200)
         assertTrue(a.indices.any { a[it] != px[it] })
     }
+
+    @Test fun patternEditing() {
+        val ops = io.github.nielstron.brushkin.engine.PatternOps
+        val chk = ops.generate(0, 8, Color.BLACK, Color.WHITE)
+        assertEquals(16, chk.width); assertEquals(Color.BLACK, chk.getPixel(2, 2)); assertEquals(Color.WHITE, chk.getPixel(10, 2))
+        // Offset by half swaps the checker's cells.
+        assertEquals(Color.BLACK, ops.offsetHalf(chk).getPixel(10, 10))
+        assertEquals(32, ops.scale(chk, 2f).width)
+        // Seamless: a left-to-right ramp gets matching opposite edges.
+        val ramp = Bitmap.createBitmap(IntArray(64 * 64) { i -> val v = (i % 64) * 4; Color.rgb(v, v, v) }, 64, 64, Bitmap.Config.ARGB_8888)
+        val sm = ops.seamless(ramp)
+        val jump = { b: Bitmap -> (0 until 64).maxOf { y -> abs(Color.red(b.getPixel(0, y)) - Color.red(b.getPixel(63, y))) } }
+        assertTrue("before ${jump(ramp)} after ${jump(sm)}", jump(sm) < 20 && jump(ramp) > 200)
+    }
 }

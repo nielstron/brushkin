@@ -1,5 +1,9 @@
 package io.github.nielstron.brushkin.ui
 
+import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.ui.draw.drawBehind
+import kotlinx.coroutines.launch
+import androidx.compose.runtime.collectAsState
 import android.graphics.Typeface
 import androidx.activity.compose.BackHandler
 import io.github.nielstron.brushkin.engine.TextSpec
@@ -142,6 +146,7 @@ fun Dialogs(vm: EditorViewModel, info: DocInfo, files: FileActions) {
         }
         d == "import" -> { close(); files.importResources() }
         d == "gradient-edit" -> GradientEditor(vm, close)
+        d == "pattern-edit" -> PatternEditor(vm, close)
         d == "grid" -> TextPrompt("Grid spacing (px)", vm.gridSize.toInt().toString(), KeyboardType.Number, close) { v ->
             close(); v.toIntOrNull()?.coerceIn(2, 4096)?.let { vm.gridSize = it.toFloat(); vm.showGrid = true }
         }
@@ -468,4 +473,67 @@ fun GradientEditor(vm: EditorViewModel, close: () -> Unit) {
 /** Rebuilds a layer effect's filter (non-destructive filters store only name and parameters). */
 fun buildEffect(e: io.github.nielstron.brushkin.engine.LayerEffect): Filter? = specs(e.fg, e.bg)[e.name]?.let { sp ->
     sp.build(sp.params.indices.map { e.params.getOrNull(it) ?: sp.params[it].default })
+}
+
+/**
+ * Pattern editor: generate two-color patterns from the current colors, and rename, scale, offset,
+ * make seamless or delete the selected pattern. Patterns are saved as GIMP .pat files.
+ */
+@Composable
+fun PatternEditor(vm: EditorViewModel, close: () -> Unit) {
+    val list by vm.resources.patterns.collectAsState()
+    val ops = io.github.nielstron.brushkin.engine.PatternOps
+    val scope = androidx.compose.runtime.rememberCoroutineScope()
+    var cur by remember { mutableStateOf(vm.pattern ?: list.firstOrNull()) }
+    var name by remember(cur) { mutableStateOf(cur?.name ?: "") }
+    var kind by remember { mutableStateOf(0) }
+    var cell by remember { mutableStateOf(16f) }
+    fun update(f: (android.graphics.Bitmap) -> android.graphics.Bitmap) {
+        val p = cur ?: return
+        scope.launch {
+            val np = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) { vm.resources.updatePattern(p, name.ifBlank { p.name }, f(p.bitmap)) }
+            cur = np; vm.pattern = np
+        }
+    }
+    AlertDialog(
+        onDismissRequest = close, containerColor = Ui.panel,
+        title = { Text("Patterns", color = Ui.text) },
+        text = {
+            Column(Modifier.verticalScroll(androidx.compose.foundation.rememberScrollState())) {
+                Row(Modifier.horizontalScroll(androidx.compose.foundation.rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    for (p in list) {
+                        val img = remember(p) { p.bitmap.asImageBitmap() }
+                        Box(Modifier.size(48.dp).clip(RoundedCornerShape(10.dp)).border(2.dp, if (cur === p) Ui.accent else Ui.border, RoundedCornerShape(10.dp)).clickable { cur = p }
+                            .drawBehind { var y = 0f; while (y < size.height) { var x = 0f; while (x < size.width) { drawImage(img, androidx.compose.ui.geometry.Offset(x, y)); x += img.width.coerceAtLeast(1) }; y += img.height.coerceAtLeast(1) } })
+                    }
+                }
+                cur?.let { p ->
+                    Text("${p.bitmap.width} × ${p.bitmap.height}", color = Ui.muted, fontSize = 12.sp, modifier = Modifier.padding(top = 6.dp))
+                    OutlinedTextField(name, { name = it }, singleLine = true, label = { Text("Name") }, modifier = Modifier.fillMaxWidth().padding(vertical = 6.dp))
+                    Row(Modifier.horizontalScroll(androidx.compose.foundation.rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                        Chip("Rename", false) { update { it } }
+                        Chip("½ size", false) { update { ops.scale(it, 0.5f) } }
+                        Chip("2× size", false) { update { ops.scale(it, 2f) } }
+                        Chip("Offset ½", false) { update { ops.offsetHalf(it) } }
+                        Chip("Make seamless", false) { update { ops.seamless(it) } }
+                        Chip("Delete", false) { vm.resources.delete(p.file); if (vm.pattern === p) vm.pattern = null; cur = null }
+                    }
+                }
+                SectionLabel("New from colors", Modifier.padding(top = 14.dp, bottom = 6.dp))
+                Row(Modifier.horizontalScroll(androidx.compose.foundation.rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                    for ((i, n) in listOf("Checker", "Stripes", "Dots", "Diagonal").withIndex()) Chip(n, kind == i) { kind = i }
+                }
+                LabeledSlider("Cell", cell, 2f..128f, "${cell.roundToInt()} px", { cell = it })
+                Chip("Create", false) {
+                    scope.launch {
+                        val bmp = ops.generate(kind, cell.roundToInt(), vm.fg, vm.bg)
+                        val n = listOf("Checker", "Stripes", "Dots", "Diagonal")[kind] + " ${cell.roundToInt()}"
+                        val p = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) { vm.resources.savePattern(n, bmp) }
+                        cur = p; vm.pattern = p; vm.fillWithPattern = true
+                    }
+                }
+            }
+        },
+        confirmButton = { TextButton(onClick = close) { Text("Done") } },
+    )
 }
