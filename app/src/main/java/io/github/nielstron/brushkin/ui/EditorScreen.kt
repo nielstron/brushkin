@@ -124,14 +124,15 @@ fun EditorScreen(vm: EditorViewModel, files: FileActions) {
             Dock(vm, info.layers.size)
         }
 
-        if (busy != null) {
+        val anyBusy = busy ?: vm.mlBusy
+        if (anyBusy != null) {
             Row(
                 Modifier.align(Alignment.TopCenter).statusBarsPadding().padding(top = 76.dp)
                     .clip(RoundedCornerShape(20.dp)).background(Ui.panel).padding(horizontal = 14.dp, vertical = 8.dp),
                 verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp),
             ) {
                 CircularProgressIndicator(Modifier.size(16.dp), color = Ui.accent, strokeWidth = 2.dp)
-                Text("$busy…", color = Ui.text, fontSize = 13.sp)
+                Text("$anyBusy…", color = Ui.text, fontSize = 13.sp)
             }
         }
 
@@ -186,6 +187,7 @@ private fun ContextChips(vm: EditorViewModel, hasSelection: Boolean) {
                     Chip("From center", vm.fromCenter) { vm.fromCenter = !vm.fromCenter }
                     Chip("Fixed 1:1", vm.fixedRatio) { vm.fixedRatio = !vm.fixedRatio }
                 }
+                if (t == Tool.OBJECT_SELECT) Chip("Whole foreground", false) { vm.objectSelect(-1f, -1f) }
                 if (hasSelection) Chip("Deselect", false) { vm.engine.selectNone() }
             }
             t == Tool.BUCKET || t == Tool.GRADIENT -> {

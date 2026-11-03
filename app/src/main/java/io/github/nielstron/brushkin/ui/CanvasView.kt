@@ -210,8 +210,8 @@ class CanvasView(context: Context, private val vm: EditorViewModel) : View(conte
         canvas.drawPath(clip, loupeBorder)
     }
 
-    // Marching ants: a black/white diagonal stripe shader in screen space, scrolled over time.
-    // Unlike a dash effect it works on outlines made of many tiny segments.
+    // Selection outline: a black/white checker shader in screen space. Unlike a dash effect it
+    // alternates along outlines made of many tiny segments, in every direction.
     private val antsStripe: BitmapShader = run {
         val n = (5 * density).toInt().coerceAtLeast(3)
         val b = Bitmap.createBitmap(n * 2, n * 2, Bitmap.Config.ARGB_8888)
@@ -219,7 +219,6 @@ class CanvasView(context: Context, private val vm: EditorViewModel) : View(conte
         BitmapShader(b, Shader.TileMode.REPEAT, Shader.TileMode.REPEAT)
     }
     private val antsPaint = Paint().apply { style = Paint.Style.STROKE; strokeWidth = 2.5f * density; shader = antsStripe; strokeCap = Paint.Cap.SQUARE }
-    private val antsShift = Matrix()
     private var antsPath = Path()
     private var antsFor: Any? = null
     private val antsMatrix = Matrix()
@@ -230,11 +229,8 @@ class CanvasView(context: Context, private val vm: EditorViewModel) : View(conte
             antsPath = Path(sel.outline).apply { transform(viewMatrix) }
             antsFor = sel; antsMatrix.set(viewMatrix)
         }
-        val shift = (android.os.SystemClock.uptimeMillis() / 40 % 1000) * density / 2f
-        antsShift.setTranslate(shift, shift)
-        antsStripe.setLocalMatrix(antsShift)
+        // Static (not animated): a checker stroke reads clearly on any background without flicker.
         canvas.drawPath(antsPath, antsPaint)
-        postInvalidateDelayed(80)
     }
 
     private fun drawOverlays(canvas: Canvas) {
@@ -532,6 +528,7 @@ class CanvasView(context: Context, private val vm: EditorViewModel) : View(conte
                         if (l != null && !isTap) { l.close(); engine.select(Path(l), vm.selectMode, vm.antialias, vm.feather, "Free Select") }
                         else if (isTap) engine.selectNone()
                     }
+                    vm.tool == Tool.OBJECT_SELECT -> if (isTap) vm.objectSelect(d.x, d.y)
                     vm.tool == Tool.FUZZY_SELECT || vm.tool == Tool.COLOR_SELECT -> if (isTap)
                         engine.fuzzySelect(d.x.toInt(), d.y.toInt(), vm.threshold.toInt(), vm.selectMode, vm.tool == Tool.COLOR_SELECT, vm.sampleMerged)
                     vm.tool == Tool.BUCKET -> if (isTap) {

@@ -25,6 +25,7 @@ import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 import java.io.File
+import kotlin.math.roundToInt
 
 enum class ToolGroup(val label: String) { SELECT("Select"), PAINT("Paint"), TRANSFORM("Transform"), OTHER("Other") }
 
@@ -34,6 +35,7 @@ enum class Tool(val label: String, val group: ToolGroup, val paint: PaintTool? =
     FREE_SELECT("Free", ToolGroup.SELECT),
     FUZZY_SELECT("Fuzzy", ToolGroup.SELECT),
     COLOR_SELECT("By Color", ToolGroup.SELECT),
+    OBJECT_SELECT("Object", ToolGroup.SELECT),
     BRUSH("Paintbrush", ToolGroup.PAINT, PaintTool.BRUSH),
     PENCIL("Pencil", ToolGroup.PAINT, PaintTool.PENCIL),
     AIRBRUSH("Airbrush", ToolGroup.PAINT, PaintTool.AIRBRUSH),
@@ -135,6 +137,42 @@ class EditorViewModel(app: Application) : AndroidViewModel(app) {
         }
     }
 
+    private val objects = io.github.nielstron.brushkin.ml.ObjectSelectClient(app)
+    var mlBusy by mutableStateOf<String?>(null)
+
+    /** Select the object under a doc point, or the whole foreground when x < 0. Runs off the UI thread. */
+    fun objectSelect(x: Float, y: Float) {
+        if (mlBusy != null) return
+        mlBusy = if (x < 0) "Finding the foreground" else "Finding the object"
+        val mode = selectMode
+        viewModelScope.launch {
+            try {
+                val full = engine.flattened(Color.WHITE)
+                val small = withContext(Dispatchers.Default) {
+                    // ≤1280 px, and dimensions rounded to multiples of 16: ML Kit's GPU path reads
+                    // past the end of rows with odd sizes on some drivers.
+                    val k = minOf(1f, 1280f / maxOf(full.width, full.height))
+                    fun r16(v: Float) = ((v / 16f).roundToInt() * 16).coerceAtLeast(16)
+                    android.graphics.Bitmap.createScaledBitmap(full, r16(full.width * k), r16(full.height * k), true)
+                }
+                val sx = if (x < 0) -1 else (x * small.width / full.width).toInt()
+                val sy = if (y < 0) -1 else (y * small.height / full.height).toInt()
+                val m = objects.select(small, sx, sy)
+                if (m == null) messages.tryEmit(if (x < 0) "No foreground subject found" else "No object found there. Try tapping the middle of it.")
+                else engine.selectFromMask(m.bytes, m.width, m.height, mode, if (x < 0) "Select Foreground" else "Object Select")
+            } catch (t: Throwable) {
+                val msg = t.message ?: ""
+                messages.tryEmit(
+                    when {
+                        "download" in msg.lowercase() -> "Object selection is still being set up by Google Play services. Try again in a moment."
+                        t is io.github.nielstron.brushkin.ml.ObjectSelectUnavailable -> "$msg. Your image is safe."
+                        else -> "Object selection failed: ${msg.ifBlank { t.javaClass.simpleName }}"
+                    }
+                )
+            } finally { mlBusy = null }
+        }
+    }
+
     private val saveLock = Mutex()
     private var savedVersion = -1L
     val autosaveFile get() = File(getApplication<Application>().filesDir, "autosave.ora")
@@ -178,5 +216,5 @@ class EditorViewModel(app: Application) : AndroidViewModel(app) {
 
     fun swapColors() { val t = fg; fg = bg; bg = t }
 
-    override fun onCleared() { engine.shutdown() }
+    override fun onCleared() { engine.shutdown(); objects.close() }
 }
