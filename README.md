@@ -8,6 +8,7 @@
 
 A layered image editor for Android with GIMP's toolbox, redesigned for fingers and styluses:
 
+- Insert other images, emojis, stickers and text.
 - Paint with brushes, pencil, airbrush, ink and MyPaint-style brushes, plus smudge, clone, heal, dodge/burn and symmetry painting.
 - Select with rectangle, lasso, fuzzy, Intelligent Scissors, foreground select, quick mask and on-device object selection.
 - Work with layers, groups, blend modes, masks, editable text and non-destructive filters.
@@ -15,7 +16,6 @@ A layered image editor for Android with GIMP's toolbox, redesigned for fingers a
 - Over 30 filters with live preview: curves, levels, colorize, blurs, noise reduction, drop shadow, distortions…
 - Open and save GIMP `.xcf` and OpenRaster `.ora`, export PNG/JPEG/WebP, and import GIMP brushes, gradients, palettes and patterns.
 
-Everything is composited in linear light on the GPU, like GIMP, and heavy work never blocks the interface.
 
 ## Screenshots
 
