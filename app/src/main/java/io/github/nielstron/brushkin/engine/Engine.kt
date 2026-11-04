@@ -1180,8 +1180,42 @@ class Engine {
     }
 
     /** Transform tool: lift the selection (or the whole active layer) into a floating bitmap. */
-    /** Lifts the active layer (or the selected part of it) for transforming; [wholeImage]: the whole image instead. */
-    fun liftActive(wholeImage: Boolean = false) = post { if (wholeImage) liftImage() else liftNow() }
+    /**
+     * Direct transforms (each drag applied at once): the pixels as first lifted and the transform so
+     * far, so a series of moves, rotations and scales resamples the original once per drag instead of
+     * blurring a little more each time. Valid while nothing else changed the document.
+     */
+    private class TransformSession(
+        val layerId: Long, val bitmap: Bitmap, val remainder: TiledBitmap?, val selection: Selection?,
+        val matrix: Matrix, val name: String, var version: Long,
+    )
+    private var session: TransformSession? = null
+
+    /** The current direct-transform frame of the active layer: corners of its original pixels, in doc coordinates. */
+    fun transformFrame(): FloatArray? {
+        val ss = session?.takeIf { it.version == version && it.layerId == stack.activeId && floating == null } ?: return null
+        val w = ss.bitmap.width.toFloat(); val h = ss.bitmap.height.toFloat()
+        return floatArrayOf(0f, 0f, w, 0f, w, h, 0f, h).also { ss.matrix.mapPoints(it) }
+    }
+
+    /**
+     * Lifts the active layer (or the selected part of it) for transforming; [wholeImage]: the whole
+     * image instead. With [continueSession], a direct transform continues from the original pixels.
+     */
+    fun liftActive(wholeImage: Boolean = false, continueSession: Boolean = false) = post {
+        if (floating != null) return@post
+        if (wholeImage) { session = null; liftImage(); return@post }
+        val ss = session
+        if (continueSession && ss != null && ss.version == version && ss.layerId == stack.activeId) {
+            floating = Floating(ss.bitmap, Matrix(ss.matrix), ss.layerId, ss.name, remainder = ss.remainder)
+            publish(); invalidate(); return@post
+        }
+        val sel = stack.selection
+        liftNow()
+        val f = floating
+        val l = stack.active
+        session = if (continueSession && f != null && f.targetLayerId != null && l?.text == null) TransformSession(f.targetLayerId, f.bitmap, f.remainder, sel, Matrix(f.matrix), f.name, -1) else null
+    }
 
     private fun liftImage() {
         if (floating != null) return
@@ -1396,7 +1430,9 @@ class Engine {
                 f.remainder?.let { Compositor.drawTiles(c, it, null, null) }
                 c.drawBitmap(f.bitmap, f.matrix, fp)
                 floating = null
-                val moved = f.selectionMoved(s)
+                val ss = session?.takeIf { it.bitmap === f.bitmap }
+                // In a direct-transform series the selection, too, is moved from where it started.
+                val moved = if (ss != null) f.selectionMoved(s.copy(selection = ss.selection)) else f.selectionMoved(s)
                 // What lands beyond the canvas is kept (layers can be larger than the image).
                 val keepOld = f.remainder != null
                 val area = RectF(0f, 0f, f.bitmap.width.toFloat(), f.bitmap.height.toFloat()).also { f.matrix.mapRect(it) }.let { val r = Rect(); it.roundOut(r); r }
@@ -1416,6 +1452,7 @@ class Engine {
                 }
                 stack = next
                 replaceLayerPixels(s, target, TiledBitmap.fromBitmap(out), name)
+                if (ss != null) { ss.matrix.set(f.matrix); ss.version = version }
             } else {
                 c.drawBitmap(f.bitmap, f.matrix, Paint().apply { isFilterBitmap = true; isAntiAlias = true })
                 floating = null
