@@ -303,8 +303,8 @@ class EditorViewModel(app: Application) : AndroidViewModel(app) {
         val size = 120f
         val spec = io.github.nielstron.brushkin.engine.TextSpec(
             "", size,
-            when (preset) { "Title" -> "serif"; "hello" -> "cursive"; "POP" -> "sans-serif-black"; else -> "sans-serif" },
-            bold = preset == "Title" || preset == "hello", color = fg, outline = preset == "POP",
+            when (preset) { "Title" -> "serif"; "hello" -> "cursive"; else -> "sans-serif" },
+            bold = preset == "Title" || preset == "hello", color = fg,
         )
         // The tap marks the first line's baseline-ish top-left, like GIMP.
         val pad = size * 0.15f

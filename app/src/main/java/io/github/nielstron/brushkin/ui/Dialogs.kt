@@ -93,7 +93,6 @@ val TEXT_STYLES = listOf(
     "Aa" to TextStyleSpec(Typeface.create("sans-serif", Typeface.NORMAL), TextStyle(fontSize = 18.sp, fontWeight = FontWeight.SemiBold)),
     "Title" to TextStyleSpec(Typeface.create("serif", Typeface.BOLD), TextStyle(fontSize = 20.sp, fontWeight = FontWeight.Bold, fontFamily = FontFamily.Serif)),
     "hello" to TextStyleSpec(Typeface.create("cursive", Typeface.BOLD), TextStyle(fontSize = 24.sp, fontFamily = FontFamily.Cursive, color = Color(0xFFFBD38D))),
-    "POP" to TextStyleSpec(Typeface.create("sans-serif-black", Typeface.NORMAL), TextStyle(fontSize = 17.sp, fontWeight = FontWeight.Black), outline = true),
 )
 
 @Composable
