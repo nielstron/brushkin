@@ -190,7 +190,7 @@ fun EditorScreen(vm: EditorViewModel, files: FileActions) {
                 if (lifted) Row(Modifier.padding(bottom = 8.dp).horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     if (vm.tool != Tool.WARP && vm.tool != Tool.CAGE) TargetChips(!vm.transformWhole) { vm.changeTransformTarget(!it) }
                     if (vm.tool == Tool.SCALE) Chip("Keep ratio", vm.keepRatio) { vm.keepRatio = !vm.keepRatio }
-                    if (vm.tool == Tool.ROTATE) Chip("Snap 15°", vm.snapRotation) { vm.snapRotation = !vm.snapRotation }
+                    if (vm.tool == Tool.MOVE) Chip("Snap 15°", vm.snapRotation) { vm.snapRotation = !vm.snapRotation }
                     when (vm.tool) {
                         Tool.SHEAR -> Text("Drag sideways or up and down", color = Ui.muted, fontSize = 13.sp, modifier = Modifier.padding(8.dp))
                         Tool.PERSPECTIVE -> Text("Drag the corners", color = Ui.muted, fontSize = 13.sp, modifier = Modifier.padding(8.dp))
@@ -335,12 +335,12 @@ private fun ContextChips(vm: EditorViewModel, hasSelection: Boolean, holder: Can
                 Chip(if (vm.path.closed) "Open" else "Close", vm.path.closed) { vm.path.closed = !vm.path.closed; vm.pathVersion++; holder?.view?.invalidate() }
                 Chip("Clear", false) { vm.path.clear(); vm.pathVersion++; holder?.view?.invalidate() }
             }
-            t == Tool.MOVE || t == Tool.SCALE || t == Tool.ROTATE -> {
+            t == Tool.MOVE || t == Tool.SCALE -> {
                 val name = vm.engine.info.collectAsState().value.let { i -> i.layers.firstOrNull { it.id == i.activeId }?.name ?: "" }
                 val what = if (vm.transformWhole) "the image" else if (hasSelection) "the selection on “$name”" else "“$name”"
                 TargetChips(!vm.transformWhole) { vm.changeTransformTarget(!it) }
                 Text(
-                    when (t) { Tool.MOVE -> "Drag to move $what"; Tool.SCALE -> "Scaling $what"; else -> "Drag inside to move, outside to rotate $what" },
+                    when (t) { Tool.SCALE -> "Scaling $what"; else -> "Drag inside to move, outside to rotate $what" },
                     color = Ui.muted, fontSize = 13.sp, modifier = Modifier.padding(8.dp), maxLines = 1,
                 )
             }
