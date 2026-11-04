@@ -43,4 +43,4 @@ Device tests: `./gradlew :app:connectedDebugAndroidTest`. `tools/export_mobilesa
 
 ## License
 
-GPL-3.0-or-later. Emoji names and keywords come from Unicode CLDR (Unicode License v3); the downloadable models are Apache-2.0 (MobileSAM) and MIT (the others).
+GPL-3.0-or-later. Emoji names and keywords come from Unicode CLDR (Unicode License v3); the meme font is Anton (SIL Open Font License 1.1); the downloadable models are Apache-2.0 (MobileSAM) and MIT (the others).

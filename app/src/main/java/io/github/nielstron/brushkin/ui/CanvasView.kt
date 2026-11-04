@@ -751,6 +751,12 @@ class CanvasView(context: Context, private val vm: EditorViewModel) : View(conte
 
     private fun startSingle(e: MotionEvent) {
         if (vm.pipette) { mode = Mode.PICK; pick(e.x, e.y); return }
+        // A filter panel is picking a color from the image.
+        vm.filterPicking?.let { cb ->
+            mode = Mode.IGNORE
+            engine.pickColor(downDoc.x.toInt(), downDoc.y.toInt(), merged = true) { c -> post { cb(c) } }
+            return
+        }
         // Depth of field: touching the image moves the focus point.
         if (vm.dofOpen) { mode = Mode.FOCUS; vm.dofFocus = PointF(downDoc.x, downDoc.y); invalidate(); return }
         val f = engine.floating
@@ -914,6 +920,7 @@ class CanvasView(context: Context, private val vm: EditorViewModel) : View(conte
                         engine.gradient(downDoc.x, downDoc.y, d.x, d.y, cols, pos, vm.gradientShape, vm.settings.opacity, vm.settings.mode)
                     }
                     vm.tool == Tool.TEXT -> if (isTap) vm.textToolTap(d.x, d.y)
+                    vm.tool == Tool.MEME -> if (isTap) vm.memeTap(d.x, d.y)
                 }
                 preview = null; lasso = null
             }

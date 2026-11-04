@@ -1,5 +1,6 @@
 package io.github.nielstron.brushkin.ui
 
+import androidx.compose.material.icons.rounded.Colorize
 import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.draw.drawBehind
@@ -280,7 +281,7 @@ private fun SizeDialog(title: String, w0: Int, h0: Int, keepRatioDefault: Boolea
     )
 }
 
-val FONTS = listOf("Sans" to "sans-serif", "Serif" to "serif", "Mono" to "monospace", "Script" to "cursive", "Casual" to "casual", "Condensed" to "sans-serif-condensed", "Black" to "sans-serif-black")
+val FONTS = listOf("Sans" to "sans-serif", "Serif" to "serif", "Mono" to "monospace", "Script" to "cursive", "Casual" to "casual", "Condensed" to "sans-serif-condensed", "Black" to "sans-serif-black", "Meme" to io.github.nielstron.brushkin.engine.TextSpec.MEME_FONT)
 
 // ---------------------------------------------------------------------------- filters
 
@@ -298,7 +299,6 @@ private fun specs(fg: Int, bg: Int): Map<String, FilterSpec> = BASE_SPECS + mapO
         VignetteFilter(it[0], it[1], it[2], android.graphics.Color.BLACK)
     },
     "Motion Blur" to FilterSpec(listOf(Param("Length", 1f..200f, 30f) { "${it.roundToInt()} px" }, Param("Angle", -180f..180f, 0f) { "${it.roundToInt()}°" })) { MotionBlurFilter(it[0], it[1]) },
-    "Color to Alpha" to FilterSpec(emptyList()) { ColorToAlphaFilter(bg) },
     "Shadows-Highlights" to FilterSpec(listOf(Param("Shadows", 0f..1f, 0.4f), Param("Highlights", 0f..1f, 0.2f), Param("Radius", 2f..200f, 40f) { "${it.roundToInt()} px" })) {
         ShadowsHighlightsFilter(it[0], it[1], it[2])
     },
@@ -306,6 +306,8 @@ private fun specs(fg: Int, bg: Int): Map<String, FilterSpec> = BASE_SPECS + mapO
     "Colorize" to FilterSpec(listOf(Param("Hue", 0f..360f, 200f) { "${it.roundToInt()}°" }, Param("Saturation", 0f..1f, 0.5f), Param("Lightness", -1f..1f, 0f))) {
         ColorizeFilter(it[0], it[1], it[2])
     },
+    // Kept for "Color to Alpha" effects in saved documents; the panel picks its own color.
+    "Color to Alpha" to FilterSpec(emptyList()) { ColorToAlphaFilter(bg) },
     "Channel Mixer" to FilterSpec(listOf(
         Param("Red ← red", -2f..2f, 1f), Param("Red ← green", -2f..2f, 0f), Param("Red ← blue", -2f..2f, 0f),
         Param("Green ← red", -2f..2f, 0f), Param("Green ← green", -2f..2f, 1f), Param("Green ← blue", -2f..2f, 0f),
@@ -350,9 +352,16 @@ private fun FilterPanel(vm: EditorViewModel, name: String, close: () -> Unit) {
     val spec = specs(vm.fg, vm.bg)[name]
     val values = remember { mutableStateMapOf<Int, Float>() }
     var curves by remember { mutableStateOf(mapOf<Channel, Curve>()) }
-    fun build(): Filter = spec?.build(spec.params.indices.map { values[it] ?: spec.params[it].default }) ?: LutFilter.curves(curves)
+    val toAlpha = name == "Color to Alpha"
+    var color by remember { mutableStateOf(android.graphics.Color.WHITE) }
+    fun build(): Filter = when {
+        toAlpha -> io.github.nielstron.brushkin.engine.ColorToAlphaFilter(color)
+        spec != null -> spec.build(spec.params.indices.map { values[it] ?: spec.params[it].default })
+        else -> LutFilter.curves(curves)
+    }
     LaunchedEffect(Unit) { e.filterBegin() }
-    LaunchedEffect(values.toMap(), curves) { e.filterPreview(build()) }
+    LaunchedEffect(values.toMap(), curves, color) { e.filterPreview(build()) }
+    androidx.compose.runtime.DisposableEffect(Unit) { onDispose { vm.filterPicking = null } }
     val cancel = { e.filterCancel(); close() }
     BackHandler { cancel() }
 
@@ -363,8 +372,9 @@ private fun FilterPanel(vm: EditorViewModel, name: String, close: () -> Unit) {
         ) {
             Row(verticalAlignment = Alignment.CenterVertically) {
                 TextButton(onClick = cancel) { Text("Cancel", color = Ui.text) }
-                Text(name, color = Ui.text, fontWeight = FontWeight.Bold, fontSize = 17.sp, modifier = Modifier.weight(1f), textAlign = androidx.compose.ui.text.style.TextAlign.Center)
-                if (spec != null) Box(
+                // Long names break after their hyphen ("Brightness-/Contrast"), not mid-word.
+                Text(name.replace("-", "-\u200B"), color = Ui.text, fontWeight = FontWeight.Bold, fontSize = 17.sp, modifier = Modifier.weight(1f), textAlign = androidx.compose.ui.text.style.TextAlign.Center)
+                if (spec != null && !toAlpha) Box(
                     // GIMP 3: keep the filter editable on the layer instead of changing its pixels.
                     Modifier.padding(end = 8.dp).clip(RoundedCornerShape(12.dp)).border(1.dp, Ui.border, RoundedCornerShape(12.dp))
                         .clickable { e.filterAsEffect(io.github.nielstron.brushkin.engine.LayerEffect(name, spec.params.indices.map { values[it] ?: spec.params[it].default }, vm.fg, vm.bg)); close() }
@@ -375,7 +385,18 @@ private fun FilterPanel(vm: EditorViewModel, name: String, close: () -> Unit) {
                 ) { Text("Apply", color = Ui.onAccent, fontWeight = FontWeight.SemiBold) }
             }
             Spacer(Modifier.height(8.dp))
-            if (spec != null) {
+            if (toAlpha) {
+                // The color to make transparent: presets or one picked from the image.
+                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.horizontalScroll(rememberScrollState())) {
+                    Box(Modifier.size(36.dp).clip(RoundedCornerShape(10.dp)).background(Color(color)).border(2.dp, Ui.border, RoundedCornerShape(10.dp)))
+                    val picking = vm.filterPicking != null
+                    Chip("Pick from image", picking, androidx.compose.material.icons.Icons.Rounded.Colorize) { vm.filterPicking = if (picking) null else { c -> color = c } }
+                    Chip("White", !picking && color == android.graphics.Color.WHITE) { vm.filterPicking = null; color = android.graphics.Color.WHITE }
+                    Chip("Black", !picking && color == android.graphics.Color.BLACK) { vm.filterPicking = null; color = android.graphics.Color.BLACK }
+                    Chip("Background color", !picking && color == vm.bg) { vm.filterPicking = null; color = vm.bg }
+                }
+                if (vm.filterPicking != null) Text("Touch the image to pick the color to remove", color = Ui.muted, fontSize = 13.sp, modifier = Modifier.padding(top = 8.dp))
+            } else if (spec != null) {
                 spec.params.forEachIndexed { i, p ->
                     val v = values[i] ?: p.default
                     LabeledSlider(p.label, v, p.range, p.fmt(v), { values[i] = it })

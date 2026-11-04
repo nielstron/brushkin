@@ -359,6 +359,7 @@ private fun ContextChips(vm: EditorViewModel, hasSelection: Boolean, holder: Can
                 if (hasSelection) Chip("Crop to selection", false, ToolIcons.crop) { vm.engine.cropToSelection() }
                 Text("Drag to choose the area to keep", color = Ui.muted, fontSize = 13.sp, modifier = Modifier.padding(8.dp))
             }
+            t == Tool.MEME -> Text("Tap the top or bottom of the image", color = Ui.muted, fontSize = 13.sp, modifier = Modifier.padding(8.dp))
             t == Tool.TEXT -> Text("Tap the canvas to add text", color = Ui.muted, fontSize = 13.sp, modifier = Modifier.padding(8.dp))
             t == Tool.PICKER -> Text("Touch the canvas to pick a color", color = Ui.muted, fontSize = 13.sp, modifier = Modifier.padding(8.dp))
         }
