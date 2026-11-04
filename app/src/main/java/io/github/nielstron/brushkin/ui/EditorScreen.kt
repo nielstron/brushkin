@@ -340,7 +340,7 @@ private fun ContextChips(vm: EditorViewModel, hasSelection: Boolean, holder: Can
                 val what = if (vm.transformWhole) "the image" else if (hasSelection) "the selection on “$name”" else "“$name”"
                 TargetChips(!vm.transformWhole) { vm.changeTransformTarget(!it) }
                 Text(
-                    when (t) { Tool.MOVE -> "Drag to move $what"; Tool.SCALE -> "Scaling $what"; else -> "Drag to rotate $what" },
+                    when (t) { Tool.MOVE -> "Drag to move $what"; Tool.SCALE -> "Scaling $what"; else -> "Drag inside to move, outside to rotate $what" },
                     color = Ui.muted, fontSize = 13.sp, modifier = Modifier.padding(8.dp), maxLines = 1,
                 )
             }
