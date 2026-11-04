@@ -556,6 +556,18 @@ class CanvasView(context: Context, private val vm: EditorViewModel) : View(conte
         }
     }
 
+    /** Whether (x, y) lies inside the convex quad [pts] (screen corners in order). */
+    private fun insideQuad(pts: FloatArray, x: Float, y: Float): Boolean {
+        var sign = 0
+        for (i in 0 until 4) {
+            val ax = pts[i * 2]; val ay = pts[i * 2 + 1]; val bx = pts[(i + 1) % 4 * 2]; val by = pts[(i + 1) % 4 * 2 + 1]
+            val c = (bx - ax) * (y - ay) - (by - ay) * (x - ax)
+            val s = if (c > 0) 1 else if (c < 0) -1 else 0
+            if (s != 0) { if (sign == 0) sign = s else if (s != sign) return false }
+        }
+        return true
+    }
+
     private fun drawFloatingHandles(canvas: Canvas, f: Floating) {
         val pts = f.corners(); viewMatrix.mapPoints(pts)
         val path = Path().apply { moveTo(pts[0], pts[1]); lineTo(pts[2], pts[3]); lineTo(pts[4], pts[5]); lineTo(pts[6], pts[7]); close() }
@@ -566,6 +578,10 @@ class CanvasView(context: Context, private val vm: EditorViewModel) : View(conte
             Tool.ROTATE -> {
                 val cx = (pts[0] + pts[4]) / 2; val cy = (pts[1] + pts[5]) / 2; val r = 10 * density
                 for (p in listOf(guideDark, accent)) { canvas.drawLine(cx - r, cy, cx + r, cy, p); canvas.drawLine(cx, cy - r, cx, cy + r, p) }
+                // Rotation handle above the top edge.
+                val h = rotateHandle(pts); val tx = (pts[0] + pts[2]) / 2; val ty = (pts[1] + pts[3]) / 2
+                canvas.drawLine(tx, ty, h.x, h.y, guideDark); canvas.drawLine(tx, ty, h.x, h.y, accent)
+                canvas.drawCircle(h.x, h.y, hr * 1.3f, handleFill); canvas.drawCircle(h.x, h.y, hr * 1.3f, accent)
                 return
             }
             Tool.SCALE, Tool.PERSPECTIVE -> {
@@ -1081,8 +1097,13 @@ class CanvasView(context: Context, private val vm: EditorViewModel) : View(conte
                 if (!cageEditing) engine.cageAdd(downDoc.x, downDoc.y)
                 mode = Mode.IGNORE; return
             }
-            // Dedicated tools: Rotate turns around the center from anywhere; Move only moves.
-            Tool.ROTATE -> { mode = Mode.FLOAT_ROTATE; fPivotDoc = centerDoc; return }
+            // Rotate: drag inside to move, outside (or on the handle) to rotate; both apply as one step.
+            Tool.ROTATE -> {
+                val h = rotateHandle(pts)
+                val onHandle = hypot(e.x - h.x, e.y - h.y) < hit * 1.5f
+                mode = if (!onHandle && insideQuad(pts, e.x, e.y)) Mode.FLOAT_MOVE else Mode.FLOAT_ROTATE
+                fPivotDoc = centerDoc; return
+            }
             Tool.MOVE -> { mode = Mode.FLOAT_MOVE; return }
             Tool.SCALE -> {
                 for (i in 0 until 4) if (hypot(e.x - pts[i * 2], e.y - pts[i * 2 + 1]) < hit) {
