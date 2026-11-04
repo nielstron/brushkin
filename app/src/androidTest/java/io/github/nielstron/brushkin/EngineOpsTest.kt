@@ -63,4 +63,23 @@ class EngineOpsTest {
         assertTrue("3 × 10° differs from 30° by $maxDiff", maxDiff <= 2)
         a.shutdown(); b.shutdown()
     }
+
+    /** "All layers" in a filter panel: one undo step for every layer, as effects or on the pixels. */
+    @Test fun filtersOnAllLayers() = runBlocking {
+        val e = Engine()
+        e.newDocument(100, 100, Color.WHITE).join()
+        e.addLayer("Top", Color.BLACK).join()
+        e.addEffectToAll(io.github.nielstron.brushkin.engine.LayerEffect("Gaussian Blur", listOf(4f))).join()
+        assertEquals(listOf(1, 1), e.snapshot().layers.map { it.effects.size })
+        e.undo().join()
+        assertEquals(listOf(0, 0), e.snapshot().layers.map { it.effects.size })
+        // Invert on the pixels of both layers.
+        e.filterApplyAll(io.github.nielstron.brushkin.engine.LutFilter.invert()).join()
+        val s = e.snapshot()
+        assertEquals(Color.BLACK, s.layers[0].pixels.toBitmap().getPixel(50, 50))
+        assertEquals(Color.WHITE, s.layers[1].pixels.toBitmap().getPixel(50, 50))
+        e.undo().join()
+        assertEquals(Color.WHITE, e.snapshot().layers[0].pixels.toBitmap().getPixel(50, 50))
+        e.shutdown()
+    }
 }
