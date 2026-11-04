@@ -694,6 +694,19 @@ private fun InsertSheet(vm: EditorViewModel, files: FileActions) {
                     contentAlignment = Alignment.Center,
                 ) { Text(label, color = Ui.text, style = style.preview) }
             }
+            // Meme captions: white capitals with a black outline (the Meme Text tool).
+            Box(
+                Modifier.weight(1f).height(64.dp).clip(RoundedCornerShape(14.dp)).background(Ui.panel2)
+                    .clickable { vm.sheet = Sheet.NONE; vm.selectTool(Tool.MEME); vm.messages.tryEmit("Tap the top or bottom of the image") },
+                contentAlignment = Alignment.Center,
+            ) {
+                val meme = io.github.nielstron.brushkin.engine.TextSpec.bundledFonts[io.github.nielstron.brushkin.engine.TextSpec.MEME_FONT]
+                    ?.let { androidx.compose.ui.text.font.FontFamily(it) } ?: androidx.compose.ui.text.font.FontFamily.SansSerif
+                val style = TextStyle(fontSize = 20.sp, fontFamily = meme, color = Color.White)
+                // Outline: the same text stroked in black underneath.
+                Text("MEME", style = style.copy(color = Color.Black, drawStyle = androidx.compose.ui.graphics.drawscope.Stroke(width = 6f, join = androidx.compose.ui.graphics.StrokeJoin.Round)))
+                Text("MEME", style = style)
+            }
         }
         Spacer(Modifier.height(18.dp))
         SectionLabel("Stickers")
