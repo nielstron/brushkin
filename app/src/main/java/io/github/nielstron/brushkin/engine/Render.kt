@@ -7,7 +7,13 @@ import android.graphics.Paint
 import android.graphics.RectF
 
 /** Live filter result shown in place of a layer's pixels or mask. */
-class Preview(val layerId: Long, val mask: Boolean, val tiles: TiledBitmap, /** Doc pixels per preview pixel. */ val scale: Float = 1f)
+class Preview(
+    val layerId: Long, val mask: Boolean, val tiles: TiledBitmap, /** Doc pixels per preview pixel. */ val scale: Float = 1f,
+    /** Filtering every layer: the previews of the other layers' pixels. */
+    val others: Map<Long, TiledBitmap> = emptyMap(),
+) {
+    fun forLayer(id: Long): Preview? = if (id == layerId) this else others[id]?.let { Preview(id, false, it, scale) }
+}
 
 /** A bitmap being placed or transformed (Insert, Paste, Transform tool). */
 class Floating(
@@ -81,7 +87,7 @@ object Compositor {
         val w = stack.width.toFloat(); val h = stack.height.toFloat()
         for (layer in Stack.expandPassThrough(list)) {
             if (!layer.visible || layer.id == hiddenId) continue
-            val pv = preview?.takeIf { it.layerId == layer.id }
+            val pv = preview?.forLayer(layer.id)
             val mask = if (!layer.masked) null else if (pv != null && pv.mask) pv.tiles else layer.mask
             val isGroup = layer.isGroup
             // Groups are always composited in isolation (GIMP's default, non pass-through).

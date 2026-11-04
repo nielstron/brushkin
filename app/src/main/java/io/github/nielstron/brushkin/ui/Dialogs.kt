@@ -362,13 +362,31 @@ private fun FilterPanel(vm: EditorViewModel, name: String, close: () -> Unit) {
         spec != null -> spec.build(spec.params.indices.map { values[it] ?: spec.params[it].default })
         else -> LutFilter.curves(curves)
     }
-    LaunchedEffect(Unit) { e.filterBegin() }
-    LaunchedEffect(values.toMap(), curves, color) { e.filterPreview(build()) }
     // No Apply step: what's previewed is kept when the panel closes (undo takes it back). With the
-    // defaults (no change) closing just drops the preview.
+    // defaults (no change) closing just drops the preview. Filters with parameters become an
+    // editable layer effect (merge it into the pixels later); with a selection, or for filters an
+    // effect can't hold (curves, a picked color), the pixels change directly.
     val unchanged = { !toAlpha && values.all { (i, v) -> spec?.params?.getOrNull(i)?.default == v } && curves.isEmpty() }
     var finished by remember { mutableStateOf(false) }
-    fun finish() { if (finished) return; finished = true; if (unchanged()) e.filterCancel() else e.filterApply(build()) }
+    var allLayers by remember { mutableStateOf(false) }
+    // The preview shows exactly what closing applies: this layer, or with "All layers" every layer.
+    LaunchedEffect(allLayers) { e.filterBegin(allLayers) }
+    LaunchedEffect(values.toMap(), curves, color, allLayers) { e.filterPreview(build()) }
+    fun finish() {
+        if (finished) return; finished = true
+        val effect = spec?.let { io.github.nielstron.brushkin.engine.LayerEffect(name, it.params.indices.map { i -> values[i] ?: it.params[i].default }, vm.fg, vm.bg) }
+        when {
+            unchanged() -> e.filterCancel()
+            allLayers && effect != null && !toAlpha && !e.info.value.hasSelection -> { e.filterCancel(); e.addEffectToAll(effect) }
+            allLayers -> e.filterApplyAll(build())
+            spec != null && !toAlpha && !e.info.value.hasSelection &&
+                e.info.value.let { i -> i.layers.firstOrNull { it.id == i.activeId }?.editMask != true } -> {
+                e.filterCancel()
+                e.filterAsEffect(io.github.nielstron.brushkin.engine.LayerEffect(name, spec.params.indices.map { values[it] ?: spec.params[it].default }, vm.fg, vm.bg))
+            }
+            else -> e.filterApply(build())
+        }
+    }
     fun reset() { values.clear(); curves = emptyMap(); color = android.graphics.Color.WHITE; vm.filterPicking = null }
     androidx.compose.runtime.DisposableEffect(Unit) { onDispose { vm.filterPicking = null; finish() } }
     BackHandler { finish(); close() }
@@ -381,12 +399,7 @@ private fun FilterPanel(vm: EditorViewModel, name: String, close: () -> Unit) {
             Row(verticalAlignment = Alignment.CenterVertically) {
                 // Long names break after their hyphen ("Brightness-/Contrast"), not mid-word.
                 Text(name.replace("-", "-\u200B"), color = Ui.text, fontWeight = FontWeight.Bold, fontSize = 17.sp, modifier = Modifier.weight(1f).padding(start = 4.dp))
-                if (spec != null && !toAlpha) Box(
-                    // GIMP 3: keep the filter editable on the layer instead of changing its pixels.
-                    Modifier.padding(end = 4.dp).clip(RoundedCornerShape(12.dp)).border(1.dp, Ui.border, RoundedCornerShape(12.dp))
-                        .clickable { finished = true; e.filterCancel(); e.filterAsEffect(io.github.nielstron.brushkin.engine.LayerEffect(name, spec.params.indices.map { values[it] ?: spec.params[it].default }, vm.fg, vm.bg)); close() }
-                        .padding(horizontal = 12.dp, vertical = 8.dp)
-                ) { Text("As effect", color = Ui.text, fontSize = 13.sp) }
+                Chip("All layers", allLayers) { allLayers = !allLayers }
                 IconButton(onClick = { reset() }) { Icon(androidx.compose.material.icons.Icons.Rounded.Refresh, "Reset", tint = Ui.text) }
                 IconButton(onClick = { finish(); close() }) { Icon(androidx.compose.material.icons.Icons.Rounded.ExpandMore, "Close (keeps the result)", tint = Ui.text) }
             }
