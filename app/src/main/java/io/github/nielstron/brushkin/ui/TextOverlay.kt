@@ -95,12 +95,18 @@ fun TextOverlay(vm: EditorViewModel, holder: CanvasHolder, viewVersion: Int) {
             BasicTextField(
                 value = spec.text,
                 onValueChange = { vm.updateTextEdit(spec.copy(text = it)) },
+                // Meme text shows in capitals (same length per character, so the cursor maps 1:1).
+                visualTransformation = if (spec.family == io.github.nielstron.brushkin.engine.TextSpec.MEME_FONT)
+                    androidx.compose.ui.text.input.VisualTransformation { s ->
+                        androidx.compose.ui.text.input.TransformedText(androidx.compose.ui.text.AnnotatedString(String(s.text.map { it.uppercaseChar() }.toCharArray())), androidx.compose.ui.text.input.OffsetMapping.Identity)
+                    } else androidx.compose.ui.text.input.VisualTransformation.None,
                 textStyle = TextStyle(
                     color = Color(spec.color), fontSize = fontSp,
                     fontFamily = FontFamily(spec.typeface),
                     fontWeight = if (spec.bold) FontWeight.Bold else FontWeight.Normal,
                     fontStyle = if (spec.italic) FontStyle.Italic else FontStyle.Normal,
-                    shadow = if (spec.outline) Shadow(Color.White, Offset.Zero, 6f) else null,
+                    shadow = if (spec.outline) Shadow(Color(spec.outlineColor), Offset.Zero, 6f) else null,
+                    textAlign = if (spec.center) androidx.compose.ui.text.style.TextAlign.Center else androidx.compose.ui.text.style.TextAlign.Start,
                 ),
                 cursorBrush = SolidColor(Ui.accent),
                 modifier = (if (boxW != null) Modifier.width(boxW) else Modifier)

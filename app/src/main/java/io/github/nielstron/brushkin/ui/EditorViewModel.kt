@@ -28,7 +28,7 @@ import kotlinx.coroutines.withContext
 import java.io.File
 import kotlin.math.roundToInt
 
-enum class ToolGroup(val label: String) { SELECT("Select"), PAINT("Paint"), TRANSFORM("Transform"), FILTER("Filters"), OTHER("Other") }
+enum class ToolGroup(val label: String) { SELECT("Select"), PAINT("Paint"), TRANSFORM("Transform"), COLORS("Colors"), FILTER("Filters"), OTHER("Other") }
 
 enum class Tool(val label: String, val group: ToolGroup, val paint: PaintTool? = null, /** Opens this filter (live preview panel). */ val filter: String? = null) {
     RECT_SELECT("Rectangle", ToolGroup.SELECT),
@@ -58,22 +58,31 @@ enum class Tool(val label: String, val group: ToolGroup, val paint: PaintTool? =
     UPSCALE("Upscale", ToolGroup.FILTER),
     DENOISE("Denoise", ToolGroup.FILTER),
     DEBLUR("Deblur", ToolGroup.FILTER),
-    CURVES("Curves", ToolGroup.FILTER, filter = "Curves"),
-    BRIGHTNESS_CONTRAST("Bright./Contrast", ToolGroup.FILTER, filter = "Brightness-Contrast"),
-    HUE_SATURATION("Hue/Saturation", ToolGroup.FILTER, filter = "Hue-Saturation"),
     GAUSSIAN_BLUR("Gaussian Blur", ToolGroup.FILTER, filter = "Gaussian Blur"),
-    LEVELS("Levels", ToolGroup.FILTER, filter = "Levels"),
     UNSHARP_MASK("Unsharp Mask", ToolGroup.FILTER, filter = "Unsharp Mask"),
-    COLOR_BALANCE("Color Balance", ToolGroup.FILTER, filter = "Color Balance"),
-    EXPOSURE("Exposure", ToolGroup.FILTER, filter = "Exposure"),
-    SHADOWS_HIGHLIGHTS("Shadows/Highl.", ToolGroup.FILTER, filter = "Shadows-Highlights"),
-    COLORIZE("Colorize", ToolGroup.FILTER, filter = "Colorize"),
     NOISE_REDUCTION("Noise Reduct.", ToolGroup.FILTER, filter = "Noise Reduction"),
     MOTION_BLUR("Motion Blur", ToolGroup.FILTER, filter = "Motion Blur"),
     VIGNETTE("Vignette", ToolGroup.FILTER, filter = "Vignette"),
     DROP_SHADOW("Drop Shadow", ToolGroup.FILTER, filter = "Drop Shadow"),
     PIXELIZE("Pixelize", ToolGroup.FILTER, filter = "Pixelize"),
-    THRESHOLD("Threshold", ToolGroup.FILTER, filter = "Threshold"),
+    RIPPLE("Ripple", ToolGroup.FILTER, filter = "Ripple"),
+    WHIRL_PINCH("Whirl/Pinch", ToolGroup.FILTER, filter = "Whirl and Pinch"),
+    LENS_DISTORTION("Lens Distortion", ToolGroup.FILTER, filter = "Lens Distortion"),
+    RGB_NOISE("RGB Noise", ToolGroup.FILTER, filter = "RGB Noise"),
+    // Color adjustments (each opens its live-preview panel).
+    CURVES("Curves", ToolGroup.COLORS, filter = "Curves"),
+    LEVELS("Levels", ToolGroup.COLORS, filter = "Levels"),
+    BRIGHTNESS_CONTRAST("Bright./Contrast", ToolGroup.COLORS, filter = "Brightness-Contrast"),
+    HUE_SATURATION("Hue/Saturation", ToolGroup.COLORS, filter = "Hue-Saturation"),
+    COLOR_TO_ALPHA("Color to Alpha", ToolGroup.COLORS, filter = "Color to Alpha"),
+    REMOVE_BACKGROUND("Remove Backgr.", ToolGroup.COLORS, filter = "Color to Alpha"),
+    COLOR_BALANCE("Color Balance", ToolGroup.COLORS, filter = "Color Balance"),
+    EXPOSURE("Exposure", ToolGroup.COLORS, filter = "Exposure"),
+    SHADOWS_HIGHLIGHTS("Shadows/Highl.", ToolGroup.COLORS, filter = "Shadows-Highlights"),
+    COLORIZE("Colorize", ToolGroup.COLORS, filter = "Colorize"),
+    CHANNEL_MIXER("Channel Mixer", ToolGroup.COLORS, filter = "Channel Mixer"),
+    THRESHOLD("Threshold", ToolGroup.COLORS, filter = "Threshold"),
+    POSTERIZE("Posterize", ToolGroup.COLORS, filter = "Posterize"),
     MOVE("Move", ToolGroup.TRANSFORM),
     SCALE("Scale", ToolGroup.TRANSFORM),
     ROTATE("Rotate", ToolGroup.TRANSFORM),
@@ -88,7 +97,8 @@ enum class Tool(val label: String, val group: ToolGroup, val paint: PaintTool? =
     CROP("Crop", ToolGroup.TRANSFORM),
     PATHS("Paths", ToolGroup.OTHER),
     PICKER("Color Picker", ToolGroup.OTHER),
-    TEXT("Text", ToolGroup.OTHER);
+    TEXT("Text", ToolGroup.OTHER),
+    MEME("Meme Text", ToolGroup.OTHER);
 
     val isSelect get() = group == ToolGroup.SELECT
     /** Taps pick an object (MobileSAM). */
@@ -302,6 +312,29 @@ class EditorViewModel(app: Application) : AndroidViewModel(app) {
         textEdit = TextEdit(null, spec.withMatrix(android.graphics.Matrix().apply { setTranslate(x - pad, y - pad) }))
     }
 
+    /**
+     * Meme tool tap: edit the text layer under the finger, else start the top (upper half) or
+     * bottom caption: white capitals in Anton with a black outline, centered across the image.
+     */
+    fun memeTap(x: Float, y: Float) {
+        if (textEdit != null) { finishText(); return }
+        val hit = engine.stack.all.lastOrNull { l -> l.visible && l.text?.let { textHit(it, x, y) } == true }
+        if (hit != null) { editTextLayer(hit.id); return }
+        val i = engine.info.value
+        val size = minOf(i.width / 9f, i.height / 7f)
+        val pad = size * 0.15f
+        val box = i.width * 0.94f
+        val top = y < i.height / 2f
+        // Rough height of one line, so the bottom caption sits just above the bottom edge.
+        val lineH = size * 1.25f + pad * 2
+        val spec = io.github.nielstron.brushkin.engine.TextSpec(
+            "", size, io.github.nielstron.brushkin.engine.TextSpec.MEME_FONT, color = android.graphics.Color.WHITE,
+            outline = true, outlineColor = android.graphics.Color.BLACK, boxWidth = box, center = true,
+        )
+        val ty = if (top) i.height * 0.02f else i.height * 0.98f - lineH
+        textEdit = TextEdit(null, spec.withMatrix(android.graphics.Matrix().apply { setTranslate((i.width - box) / 2f, ty) }))
+    }
+
     fun editTextLayer(id: Long) {
         val l = engine.stack.find(id) ?: return
         val spec = l.text ?: return
@@ -409,6 +442,10 @@ class EditorViewModel(app: Application) : AndroidViewModel(app) {
 
     init {
         engine.onMessage = { messages.tryEmit(it) }
+        runCatching {
+            io.github.nielstron.brushkin.engine.TextSpec.bundledFonts = mapOf(
+                io.github.nielstron.brushkin.engine.TextSpec.MEME_FONT to android.graphics.Typeface.createFromAsset(app.assets, "fonts/Anton-Regular.ttf"))
+        }
         io.github.nielstron.brushkin.engine.Effects.factory = { buildEffect(it) }
         viewModelScope.launch(Dispatchers.IO) { resources.load() }
         // Posted, not immediate: the clipboard property is declared further down.
@@ -698,6 +735,9 @@ class EditorViewModel(app: Application) : AndroidViewModel(app) {
         toolPrefs.edit().putString("favorites", favorites.joinToString(",") { it.name }).apply()
     }
 
+    /** While set, a touch on the canvas picks the color under it for an open filter panel. */
+    var filterPicking by mutableStateOf<((Int) -> Unit)?>(null)
+
     /** Picks [t] from the tool list: a tool becomes current, an action runs. */
     fun pickTool(t: Tool) {
         toolUses[t] = toolUses(t) + 1
@@ -741,7 +781,7 @@ class EditorViewModel(app: Application) : AndroidViewModel(app) {
         if (t != Tool.SCISSORS) scissorsClear()
         // Compile the object selection model in the background so the first tap is quick.
         if (t.picksObjects) viewModelScope.launch { objects.prewarm() }
-        if (t != Tool.TEXT) finishText()
+        if (t != Tool.TEXT && t != Tool.MEME) finishText()
         settingSource = (t == Tool.CLONE || t == Tool.HEAL || t == Tool.PERSPECTIVE_CLONE) && cloneSource == null
         if (t == Tool.PERSPECTIVE_CLONE && perspPlane == null) {
             // Start with a plane inset from the image corners; the user drags it onto a surface.

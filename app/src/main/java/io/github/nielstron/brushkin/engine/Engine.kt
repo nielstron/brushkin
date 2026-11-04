@@ -1094,8 +1094,11 @@ class Engine {
                 val sf = f.scaled(p.k)
                 val out = maskBlend(p.px, sf.apply(p.px, p.w, p.h), p.mask, p.w, p.h)
                 val tiles = TiledBitmap.fromPixels(out, p.w, p.h, if (filterOnMask) MASK_WHITE else 0)
+                // Show every finished preview: requests are handled in order, so it's never older than
+                // what's on screen. (Waiting for the latest request meant nothing updated while a
+                // slider was being dragged.)
                 withContext(dispatcher) {
-                    if (proxy === p && previewRequests.value === f) {
+                    if (proxy === p) {
                         preview = Preview(filterLayer, filterOnMask, tiles, 1f / p.k)
                         invalidate()
                     }
