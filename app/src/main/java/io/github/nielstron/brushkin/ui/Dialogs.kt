@@ -1,5 +1,6 @@
 package io.github.nielstron.brushkin.ui
 
+import androidx.compose.material.icons.rounded.Check
 import androidx.compose.material.icons.rounded.Close
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -404,7 +405,7 @@ private fun FilterPanel(vm: EditorViewModel, name: String, close: () -> Unit) {
                 Chip("All layers", allLayers) { allLayers = !allLayers }
                 IconButton(onClick = { reset() }) { Icon(androidx.compose.material.icons.Icons.Rounded.Refresh, "Reset", tint = Ui.text) }
                 IconButton(onClick = { finished = true; e.filterCancel(); close() }) { Icon(androidx.compose.material.icons.Icons.Rounded.Close, "Cancel (no change)", tint = Ui.text) }
-                IconButton(onClick = { finish(); close() }) { Icon(androidx.compose.material.icons.Icons.Rounded.ExpandMore, "Close (keeps the result)", tint = Ui.text) }
+                IconButton(onClick = { finish(); close() }) { Icon(androidx.compose.material.icons.Icons.Rounded.Check, "Done (keeps the result)", tint = Ui.accent) }
             }
             Spacer(Modifier.height(8.dp))
             if (toAlpha) {
@@ -698,7 +699,7 @@ private fun DepthOfFieldPanel(vm: EditorViewModel, close: () -> Unit) {
                 Text("Depth of field", color = Ui.text, fontWeight = FontWeight.Bold, fontSize = 17.sp, modifier = Modifier.weight(1f).padding(start = 4.dp))
                 IconButton(onClick = { reset() }) { Icon(androidx.compose.material.icons.Icons.Rounded.Refresh, "Reset", tint = Ui.text) }
                 IconButton(onClick = { finished = true; e.filterCancel(); vm.dofOpen = false; vm.depthMap = null; vm.dofFocus = null; close() }) { Icon(androidx.compose.material.icons.Icons.Rounded.Close, "Cancel (no change)", tint = Ui.text) }
-                IconButton(onClick = { finish(); close() }) { Icon(androidx.compose.material.icons.Icons.Rounded.ExpandMore, "Close (keeps the result)", tint = Ui.text) }
+                IconButton(onClick = { finish(); close() }) { Icon(androidx.compose.material.icons.Icons.Rounded.Check, "Done (keeps the result)", tint = Ui.accent) }
             }
             Text("Touch the image to choose what stays sharp", color = Ui.muted, fontSize = 13.sp, modifier = Modifier.padding(vertical = 6.dp))
             LabeledSlider("Blur", strength, 0f..1f, "${(strength * 100).roundToInt()}%", { strength = it })
