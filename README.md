@@ -3,6 +3,7 @@
 </div>
 
 <p align="center"><strong>Brushkin</strong></p>
+<div align="center"><a href="https://komistore.app/app/?repo=nielstron/brushkin"><img src="https://img.shields.io/github/v/release/nielstron/brushkin?label=komi%20store"></a></div>
 
 -----
 
@@ -28,9 +29,6 @@ A layered image editor for Android with GIMP's toolbox, redesigned for fingers a
 </div>
 
 ## Installation
-
-<a href="https://komistore.app/app/?repo=nielstron/brushkin"><img src="https://img.shields.io/badge/Get_it_on-Komi_Store-3DDC84?style=for-the-badge&logo=android&logoColor=white" alt="Get it on Komi Store" height="40"></a>
-<a href="https://github.com/nielstron/brushkin/releases/latest"><img src="https://img.shields.io/badge/Get_it_on-GitHub-24292F?style=for-the-badge&logo=github&logoColor=white" alt="Get it on GitHub" height="40"></a>
 
 Install it with [Komi Store](https://komistore.app) (formerly GitHub Store), which also keeps it updated, or download the APK from the [Releases page](https://github.com/nielstron/brushkin/releases). F-Droid submission pending.
 
