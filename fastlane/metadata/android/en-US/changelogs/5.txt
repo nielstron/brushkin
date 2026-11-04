@@ -1,0 +1,5 @@
+Filters are editable layer effects by default, with an "All layers" option. The preview shows exactly what closing the panel keeps; ✓ keeps it, × cancels, reset returns to no change.
+Colors group, Color to Alpha with a pipette, Meme Text tool and a MEME preset in Insert.
+Text: move, scale and rotate the box, font and color menus, the view follows the text while typing.
+Move and Rotate merged into one tool. Move, Scale, Shear and 3D apply each drag directly (undo to revert) without adding blur.
+Remove Background removed (use Color to Alpha).
