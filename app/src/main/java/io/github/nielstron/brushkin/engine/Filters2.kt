@@ -139,6 +139,7 @@ class NoiseReductionFilter(private val strength: Int) : Filter {
     override val name = "Noise Reduction"
     override val margin get() = strength * 2 + 2
     override fun apply(src: IntArray, w: Int, h: Int): IntArray {
+        if (strength < 1) return src.copyOf()
         var cur = src
         repeat(strength.coerceIn(1, 10)) {
             val prev = cur
