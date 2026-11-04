@@ -1,5 +1,9 @@
 package io.github.nielstron.brushkin.ui
 
+import androidx.compose.foundation.layout.height
+import androidx.compose.ui.draw.drawBehind
+import androidx.compose.ui.layout.positionInRoot
+import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -24,6 +28,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.foundation.gestures.detectDragGestures
+import androidx.compose.foundation.gestures.detectTransformGestures
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
@@ -81,9 +86,28 @@ fun TextOverlay(vm: EditorViewModel, holder: CanvasHolder, viewVersion: Int) {
     val pad = spec.size * 0.15f * scale
     val fontSp = with(density) { (spec.size * scale).toSp() }
     val focus = remember { FocusRequester() }
-    LaunchedEffect(te.layerId) { focus.requestFocus() }
+    // Move & scale mode: the keyboard goes away and the text box follows one or two fingers.
+    var moving by remember { mutableStateOf(false) }
+    LaunchedEffect(te.layerId, moving) { if (!moving) focus.requestFocus() }
+    val focusManager = androidx.compose.ui.platform.LocalFocusManager.current
 
     Box(Modifier.fillMaxSize()) {
+        // Keep the text being typed in view: above the keyboard and the style bar, below the top bar.
+        var barTop by remember { mutableStateOf(Float.MAX_VALUE) }
+        var fieldH by remember { mutableStateOf(0) }
+        val topLimit = with(density) { 96.dp.toPx() }
+        LaunchedEffect(barTop, fieldH, te.layerId) {
+            if (barTop == Float.MAX_VALUE || fieldH == 0) return@LaunchedEffect
+            val cos = kotlin.math.abs(kotlin.math.cos(Math.toRadians(angle.toDouble()))).toFloat().coerceAtLeast(0.3f)
+            val top = v[5]; val bottom = v[5] + fieldH * cos
+            val margin = with(density) { 16.dp.toPx() }
+            val dy = when {
+                bottom > barTop - margin && bottom - top < barTop - margin - topLimit -> (barTop - margin) - bottom
+                top < topLimit -> topLimit - top
+                else -> 0f
+            }
+            if (kotlin.math.abs(dy) > 1f) view.panBy(0f, dy)
+        }
         Box(
             Modifier
                 .offset { IntOffset(v[2].roundToInt(), v[5].roundToInt()) }
@@ -110,8 +134,14 @@ fun TextOverlay(vm: EditorViewModel, holder: CanvasHolder, viewVersion: Int) {
                 ),
                 cursorBrush = SolidColor(Ui.accent),
                 modifier = (if (boxW != null) Modifier.width(boxW) else Modifier)
-                    .onSizeChanged { fieldSize = it }
-                    .border(1.dp, Ui.accent.copy(alpha = 0.8f))
+                    .onSizeChanged { fieldSize = it; fieldH = it.height }
+                    // Move mode: a thicker dashed outline shows the box can be dragged.
+                    .then(
+                        if (moving) Modifier.drawBehind {
+                            drawRect(Ui.accent, style = androidx.compose.ui.graphics.drawscope.Stroke(
+                                width = 3.dp.toPx(), pathEffect = androidx.compose.ui.graphics.PathEffect.dashPathEffect(floatArrayOf(10.dp.toPx(), 6.dp.toPx()))))
+                        } else Modifier.border(1.dp, Ui.accent.copy(alpha = 0.8f))
+                    )
                     .padding(with(density) { pad.toDp() })
                     .focusRequester(focus),
             )
@@ -144,14 +174,56 @@ fun TextOverlay(vm: EditorViewModel, holder: CanvasHolder, viewVersion: Int) {
             }
         }
 
+        // On top of the text field, so a drag starting on the text moves it too.
+        if (moving) Box(
+            Modifier.fillMaxSize().pointerInput(Unit) {
+                detectTransformGestures { centroid, pan, zoom, _ ->
+                    val latest = vm.textEdit?.spec ?: return@detectTransformGestures
+                    // Screen → document: the inverse of the view transform.
+                    val inv = android.graphics.Matrix(); view.viewMatrix.invert(inv)
+                    val pts = floatArrayOf(centroid.x - pan.x, centroid.y - pan.y, centroid.x, centroid.y)
+                    inv.mapPoints(pts)
+                    val tm = latest.matrix().apply { postTranslate(pts[2] - pts[0], pts[3] - pts[1]) }
+                    var s = latest
+                    if (zoom != 1f) {
+                        // Scale the text (and a fixed box) around the fingers.
+                        val z = zoom.coerceIn(0.5f, 2f)
+                        val newSize = (latest.size * z).coerceIn(8f, 2000f); val k = newSize / latest.size
+                        val o = floatArrayOf(0f, 0f); tm.mapPoints(o)
+                        tm.postTranslate((pts[2] - o[0]) * (1 - k), (pts[3] - o[1]) * (1 - k))
+                        s = s.copy(size = newSize, boxWidth = latest.boxWidth?.let { it * k })
+                    }
+                    vm.updateTextEdit(s.withMatrix(tm))
+                }
+            },
+        )
+
         // Style bar, riding on top of the keyboard.
-        Column(Modifier.align(Alignment.BottomCenter).fillMaxWidth().imePadding().navigationBarsPadding().background(Ui.panel)) {
+        Column(Modifier.align(Alignment.BottomCenter).fillMaxWidth().imePadding().navigationBarsPadding().background(Ui.panel)
+            .onGloballyPositioned { barTop = it.positionInRoot().y }) {
             Row(Modifier.horizontalScroll(rememberScrollState()).padding(horizontal = 8.dp, vertical = 6.dp), horizontalArrangement = Arrangement.spacedBy(6.dp), verticalAlignment = Alignment.CenterVertically) {
                 IconButton(onClick = { vm.finishText(cancel = true) }) { Icon(Icons.Rounded.Close, "Cancel text", tint = Ui.text) }
-                for ((label, f) in FONTS) Chip(label, spec.family == f) { vm.updateTextEdit(spec.copy(family = f)) }
+                // Each font chip is set in its own font.
+                for ((label, f) in FONTS) {
+                    val sel = spec.family == f
+                    val face = remember(f) { FontFamily(io.github.nielstron.brushkin.engine.TextSpec("", 1f, f).typeface) }
+                    Box(
+                        Modifier.height(40.dp).clip(RoundedCornerShape(20.dp)).background(if (sel) Ui.accentSoft else Ui.panel)
+                            .border(1.dp, if (sel) Ui.accent else Ui.border, RoundedCornerShape(20.dp))
+                            .clickable { vm.updateTextEdit(spec.copy(family = f)) }.padding(horizontal = 14.dp),
+                        contentAlignment = Alignment.Center,
+                    ) { Text(label, color = if (sel) Ui.accent else Ui.text, fontSize = 15.sp, fontFamily = face) }
+                }
             }
             Row(Modifier.fillMaxWidth().padding(horizontal = 8.dp).padding(bottom = 6.dp), verticalAlignment = Alignment.CenterVertically) {
             Row(Modifier.weight(1f).horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(6.dp), verticalAlignment = Alignment.CenterVertically) {
+                // Move & scale: drag the box, pinch to resize (keyboard hidden meanwhile).
+                Box(
+                    Modifier.size(40.dp).clip(CircleShape).background(if (moving) Ui.accentSoft else Ui.panel)
+                        .border(1.dp, if (moving) Ui.accent else Ui.border, CircleShape)
+                        .clickable(onClickLabel = "Move and scale") { moving = !moving; if (moving) focusManager.clearFocus() },
+                    contentAlignment = Alignment.Center,
+                ) { Icon(ToolIcons.move, "Move and scale", tint = if (moving) Ui.accent else Ui.text, modifier = Modifier.size(20.dp)) }
                 Chip("−", false) { vm.updateTextEdit(spec.copy(size = (spec.size / 1.15f).coerceAtLeast(8f))) }
                 Text("${spec.size.roundToInt()} px", color = Ui.text, fontSize = 13.sp, fontFamily = Ui.mono)
                 Chip("+", false) { vm.updateTextEdit(spec.copy(size = (spec.size * 1.15f).coerceAtMost(2000f))) }

@@ -312,26 +312,21 @@ class EditorViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     /**
-     * Meme tool tap: edit the text layer under the finger, else start the top (upper half) or
-     * bottom caption: white capitals in Anton with a black outline, centered across the image.
+     * Meme tool tap: edit the text layer under the finger, else start meme text where tapped
+     * (like the Text tool): white capitals in Anton with a black outline, lines centered.
      */
     fun memeTap(x: Float, y: Float) {
         if (textEdit != null) { finishText(); return }
         val hit = engine.stack.all.lastOrNull { l -> l.visible && l.text?.let { textHit(it, x, y) } == true }
         if (hit != null) { editTextLayer(hit.id); return }
         val i = engine.info.value
-        val size = minOf(i.width / 9f, i.height / 7f)
+        val size = minOf(i.width / 9f, i.height / 7f).coerceAtLeast(24f)
         val pad = size * 0.15f
-        val box = i.width * 0.94f
-        val top = y < i.height / 2f
-        // Rough height of one line, so the bottom caption sits just above the bottom edge.
-        val lineH = size * 1.25f + pad * 2
         val spec = io.github.nielstron.brushkin.engine.TextSpec(
             "", size, io.github.nielstron.brushkin.engine.TextSpec.MEME_FONT, color = android.graphics.Color.WHITE,
-            outline = true, outlineColor = android.graphics.Color.BLACK, boxWidth = box, center = true,
+            outline = true, outlineColor = android.graphics.Color.BLACK, center = true,
         )
-        val ty = if (top) i.height * 0.02f else i.height * 0.98f - lineH
-        textEdit = TextEdit(null, spec.withMatrix(android.graphics.Matrix().apply { setTranslate((i.width - box) / 2f, ty) }))
+        textEdit = TextEdit(null, spec.withMatrix(android.graphics.Matrix().apply { setTranslate(x - pad, y - pad) }))
     }
 
     fun editTextLayer(id: Long) {

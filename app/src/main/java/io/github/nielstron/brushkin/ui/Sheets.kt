@@ -694,10 +694,10 @@ private fun InsertSheet(vm: EditorViewModel, files: FileActions) {
                     contentAlignment = Alignment.Center,
                 ) { Text(label, color = Ui.text, style = style.preview) }
             }
-            // Meme captions: white capitals with a black outline (the Meme Text tool).
+            // Meme text: white capitals with a black outline (the Meme Text tool).
             Box(
                 Modifier.weight(1f).height(64.dp).clip(RoundedCornerShape(14.dp)).background(Ui.panel2)
-                    .clickable { vm.sheet = Sheet.NONE; vm.selectTool(Tool.MEME); vm.messages.tryEmit("Tap the top or bottom of the image") },
+                    .clickable { vm.sheet = Sheet.NONE; vm.selectTool(Tool.MEME); vm.messages.tryEmit("Tap where the text should go") },
                 contentAlignment = Alignment.Center,
             ) {
                 val meme = io.github.nielstron.brushkin.engine.TextSpec.bundledFonts[io.github.nielstron.brushkin.engine.TextSpec.MEME_FONT]
