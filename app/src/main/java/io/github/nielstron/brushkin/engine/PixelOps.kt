@@ -404,20 +404,3 @@ fun applyFilterBanded(target: TiledBitmap, f: Filter, sel: android.graphics.Bitm
     result.dropEmpty()
     return result
 }
-
-/** [inner] mixed into the original by [amount] (0 = unchanged, 1 = fully applied). */
-class BlendFilter(private val inner: Filter, private val amount: Float) : Filter {
-    override val name get() = inner.name
-    override fun scaled(k: Float) = BlendFilter(inner.scaled(k), amount)
-    override val margin get() = inner.margin
-    override val bandAlign get() = inner.bandAlign
-    override val wholeImage get() = inner.wholeImage
-    override fun apply(src: IntArray, w: Int, h: Int): IntArray {
-        if (amount <= 0f) return src.copyOf()
-        val out = inner.apply(src, w, h)
-        if (amount >= 1f) return out
-        val a = (amount * 255).roundToInt()
-        parallelRows(h) { y0, y1 -> for (i in y0 * w until y1 * w) out[i] = lerpArgb(src[i], out[i], a) }
-        return out
-    }
-}

@@ -1,5 +1,6 @@
 package io.github.nielstron.brushkin.ui
 
+import androidx.compose.material.icons.rounded.Close
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material.icons.rounded.ExpandMore
@@ -288,11 +289,8 @@ val FONTS = listOf("Sans" to "sans-serif", "Serif" to "serif", "Mono" to "monosp
 
 // ---------------------------------------------------------------------------- filters
 
-/**
- * A filter parameter. [default] is always "no change" (what Reset goes back to); [missing] is used
- * for effects saved before the parameter existed.
- */
-private data class Param(val label: String, val range: ClosedFloatingPointRange<Float>, val default: Float, val missing: Float? = null, val fmt: (Float) -> String = { "%.2f".format(it) })
+/** A filter parameter; [default] is "no change" wherever the filter has such a setting (what Reset goes back to). */
+private data class Param(val label: String, val range: ClosedFloatingPointRange<Float>, val default: Float, val fmt: (Float) -> String = { "%.2f".format(it) })
 
 private class FilterSpec(val params: List<Param>, val build: (List<Float>) -> Filter)
 
@@ -310,8 +308,8 @@ private fun specs(fg: Int, bg: Int): Map<String, FilterSpec> = BASE_SPECS + mapO
         ShadowsHighlightsFilter(it[0], it[1], it[2])
     },
     "Exposure" to FilterSpec(listOf(Param("Exposure", -3f..3f, 0f) { "%+.2f EV".format(it) }, Param("Black level", -0.1f..0.1f, 0f) { "%.3f".format(it) })) { ExposureFilter(it[0], it[1]) },
-    "Colorize" to FilterSpec(listOf(Param("Hue", 0f..360f, 200f) { "${it.roundToInt()}°" }, Param("Saturation", 0f..1f, 0.5f), Param("Lightness", -1f..1f, 0f), Param("Amount", 0f..1f, 0f, missing = 1f))) {
-        BlendFilter(ColorizeFilter(it[0], it[1], it[2]), it[3])
+    "Colorize" to FilterSpec(listOf(Param("Hue", 0f..360f, 200f) { "${it.roundToInt()}°" }, Param("Saturation", 0f..1f, 0.5f), Param("Lightness", -1f..1f, 0f))) {
+        ColorizeFilter(it[0], it[1], it[2])
     },
     // Kept for "Color to Alpha" effects in saved documents; the panel picks its own color.
     "Color to Alpha" to FilterSpec(emptyList()) { ColorToAlphaFilter(bg) },
@@ -344,11 +342,8 @@ private val BASE_SPECS: Map<String, FilterSpec> = mapOf(
         listOf(Param("Hue", -180f..180f, 0f) { "${it.roundToInt()}°" }, Param("Saturation", -1f..1f, 0f), Param("Lightness", -1f..1f, 0f))
     ) { HueSaturationFilter(it[0], it[1], it[2]) },
     "Color Balance" to FilterSpec(listOf(Param("Cyan ↔ Red", -1f..1f, 0f), Param("Magenta ↔ Green", -1f..1f, 0f), Param("Yellow ↔ Blue", -1f..1f, 0f))) { ColorBalanceFilter(it[0], it[1], it[2]) },
-    // No setting of these leaves the image as it is, so they have an Amount (0 = unchanged).
-    "Threshold" to FilterSpec(listOf(Param("Low", 0f..255f, 127f) { "${it.roundToInt()}" }, Param("High", 0f..255f, 255f) { "${it.roundToInt()}" }, Param("Amount", 0f..1f, 0f, missing = 1f))) {
-        BlendFilter(ThresholdFilter(it[0].roundToInt(), it[1].roundToInt()), it[2])
-    },
-    "Posterize" to FilterSpec(listOf(Param("Levels", 2f..32f, 4f) { "${it.roundToInt()}" }, Param("Amount", 0f..1f, 0f, missing = 1f))) { BlendFilter(LutFilter.posterize(it[0].roundToInt()), it[1]) },
+    "Threshold" to FilterSpec(listOf(Param("Low", 0f..255f, 127f) { "${it.roundToInt()}" }, Param("High", 0f..255f, 255f) { "${it.roundToInt()}" })) { ThresholdFilter(it[0].roundToInt(), it[1].roundToInt()) },
+    "Posterize" to FilterSpec(listOf(Param("Levels", 2f..32f, 4f) { "${it.roundToInt()}" })) { LutFilter.posterize(it[0].roundToInt()) },
     "Gaussian Blur" to FilterSpec(listOf(Param("Radius", 0f..200f, 0f) { "${it.roundToInt()} px" })) { GaussianBlurFilter(it[0]) },
     "Unsharp Mask" to FilterSpec(listOf(Param("Radius", 1f..60f, 3f) { "${it.roundToInt()} px" }, Param("Amount", 0f..5f, 0f))) { UnsharpMaskFilter(it[0], it[1]) },
     "Pixelize" to FilterSpec(listOf(Param("Block size", 1f..128f, 1f) { "${it.roundToInt()} px" })) { PixelizeFilter(it[0].roundToInt()) },
@@ -408,6 +403,7 @@ private fun FilterPanel(vm: EditorViewModel, name: String, close: () -> Unit) {
                 Text(name.replace("-", "-\u200B"), color = Ui.text, fontWeight = FontWeight.Bold, fontSize = 17.sp, modifier = Modifier.weight(1f).padding(start = 4.dp))
                 Chip("All layers", allLayers) { allLayers = !allLayers }
                 IconButton(onClick = { reset() }) { Icon(androidx.compose.material.icons.Icons.Rounded.Refresh, "Reset", tint = Ui.text) }
+                IconButton(onClick = { finished = true; e.filterCancel(); close() }) { Icon(androidx.compose.material.icons.Icons.Rounded.Close, "Cancel (no change)", tint = Ui.text) }
                 IconButton(onClick = { finish(); close() }) { Icon(androidx.compose.material.icons.Icons.Rounded.ExpandMore, "Close (keeps the result)", tint = Ui.text) }
             }
             Spacer(Modifier.height(8.dp))
@@ -559,12 +555,15 @@ fun GradientEditor(vm: EditorViewModel, close: () -> Unit) {
 }
 
 /** Rebuilds a layer effect's filter (non-destructive filters store only name and parameters). */
-/** Every filter with parameters at its defaults (which must change nothing; tested). */
-internal fun filtersAtDefaults(): Map<String, Filter> = specs(0xFF000000.toInt(), -1).filterKeys { it != "Color to Alpha" }
+/**
+ * Every filter with parameters at its defaults, which must change nothing (tested) — except those
+ * no setting of which leaves the image as it is.
+ */
+internal fun filtersAtDefaults(): Map<String, Filter> = specs(0xFF000000.toInt(), -1).filterKeys { it !in setOf("Color to Alpha", "Colorize", "Threshold", "Posterize") }
     .mapValues { (_, sp) -> sp.build(sp.params.map { it.default }) }
 
 fun buildEffect(e: io.github.nielstron.brushkin.engine.LayerEffect): Filter? = specs(e.fg, e.bg)[e.name]?.let { sp ->
-    sp.build(sp.params.indices.map { e.params.getOrNull(it) ?: sp.params[it].missing ?: sp.params[it].default })
+    sp.build(sp.params.indices.map { e.params.getOrNull(it) ?: sp.params[it].default })
 }
 
 /**
@@ -698,6 +697,7 @@ private fun DepthOfFieldPanel(vm: EditorViewModel, close: () -> Unit) {
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Text("Depth of field", color = Ui.text, fontWeight = FontWeight.Bold, fontSize = 17.sp, modifier = Modifier.weight(1f).padding(start = 4.dp))
                 IconButton(onClick = { reset() }) { Icon(androidx.compose.material.icons.Icons.Rounded.Refresh, "Reset", tint = Ui.text) }
+                IconButton(onClick = { finished = true; e.filterCancel(); vm.dofOpen = false; vm.depthMap = null; vm.dofFocus = null; close() }) { Icon(androidx.compose.material.icons.Icons.Rounded.Close, "Cancel (no change)", tint = Ui.text) }
                 IconButton(onClick = { finish(); close() }) { Icon(androidx.compose.material.icons.Icons.Rounded.ExpandMore, "Close (keeps the result)", tint = Ui.text) }
             }
             Text("Touch the image to choose what stays sharp", color = Ui.muted, fontSize = 13.sp, modifier = Modifier.padding(vertical = 6.dp))
