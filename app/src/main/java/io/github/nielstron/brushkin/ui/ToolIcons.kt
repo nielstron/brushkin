@@ -44,7 +44,6 @@ object ToolIcons {
     val levels get() = stroke("M4 20V14M8 20V8M12 20V11M16 20V5M20 20V13")
     val filterFx get() = stroke("M4 6h16M7 12h10M10 18h4")
     val alphaChecker get() = stroke("M4 4h16v16H4zM4 12h16M12 4v16M4 4l8 8M12 12l8 8")
-    val removeBg get() = stroke("M12 3a4 4 0 1 0 0 8a4 4 0 1 0 0-8M5 21c0-4 3-6 7-6s7 2 7 6M3 3l18 18")
     val ripple get() = stroke("M3 8c3-3 6 3 9 0s6 3 9 0M3 16c3-3 6 3 9 0s6 3 9 0")
     val meme get() = stroke("M3 4h18v16H3zM7 8h10M7 16h10M9 8v0M12 8v0")
     val paths get() = stroke("M5 17a2 2 0 1 0 0 4a2 2 0 1 0 0-4M19 3a2 2 0 1 0 0 4a2 2 0 1 0 0-4M7 19c7 0 3-14 10-14")
@@ -85,7 +84,7 @@ object ToolIcons {
         Tool.GAUSSIAN_BLUR -> blur; Tool.MOTION_BLUR -> blur; Tool.NOISE_REDUCTION -> denoise; Tool.UNSHARP_MASK -> sharpen; Tool.LEVELS -> levels
         Tool.EXPOSURE -> dodge; Tool.SHADOWS_HIGHLIGHTS -> contrast; Tool.VIGNETTE -> depthBlur; Tool.DROP_SHADOW -> filterFx; Tool.PIXELIZE -> denoise; Tool.THRESHOLD -> contrast;
         Tool.RIPPLE -> ripple; Tool.WHIRL_PINCH -> warp; Tool.LENS_DISTORTION -> perspective; Tool.RGB_NOISE -> denoise
-        Tool.COLOR_TO_ALPHA -> alphaChecker; Tool.REMOVE_BACKGROUND -> removeBg; Tool.CHANNEL_MIXER -> levels; Tool.POSTERIZE -> levels; Tool.SCISSORS -> scissors
+        Tool.COLOR_TO_ALPHA -> alphaChecker; Tool.CHANNEL_MIXER -> levels; Tool.POSTERIZE -> levels; Tool.SCISSORS -> scissors
         Tool.BRUSH -> brush; Tool.PENCIL -> pencil; Tool.AIRBRUSH -> airbrush; Tool.ERASER -> eraser
         Tool.SMUDGE -> smudge; Tool.CLONE -> clone; Tool.HEAL -> heal; Tool.DODGE_BURN -> dodge; Tool.BLUR_SHARPEN -> blur; Tool.INK -> ink; Tool.MYPAINT -> mypaint; Tool.PERSPECTIVE_CLONE -> perspClone; Tool.BUCKET -> bucket; Tool.GRADIENT -> gradient
         Tool.MOVE -> move; Tool.SCALE -> transform; Tool.ROTATE -> rotate; Tool.FLIP -> mirror; Tool.SHEAR -> shear; Tool.PERSPECTIVE -> perspective; Tool.TRANSFORM_3D -> cube; Tool.HANDLE -> handle; Tool.WARP -> warp; Tool.CAGE -> cage; Tool.ALIGN -> align; Tool.CROP -> crop; Tool.PICKER -> picker; Tool.TEXT -> text; Tool.MEME -> meme; Tool.PATHS -> paths
