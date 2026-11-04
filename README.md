@@ -29,7 +29,10 @@ A layered image editor for Android with GIMP's toolbox, redesigned for fingers a
 
 ## Installation
 
-Install the APK from the [Releases page](https://github.com/nielstron/brushkin/releases) (F-Droid submission pending).
+<a href="https://komistore.app/app/?repo=nielstron/brushkin"><img src="https://img.shields.io/badge/Get_it_on-Komi_Store-3DDC84?style=for-the-badge&logo=android&logoColor=white" alt="Get it on Komi Store" height="40"></a>
+<a href="https://github.com/nielstron/brushkin/releases/latest"><img src="https://img.shields.io/badge/Get_it_on-GitHub-24292F?style=for-the-badge&logo=github&logoColor=white" alt="Get it on GitHub" height="40"></a>
+
+Install it with [Komi Store](https://komistore.app) (formerly GitHub Store), which also keeps it updated, or download the APK from the [Releases page](https://github.com/nielstron/brushkin/releases). F-Droid submission pending.
 
 The AI tools use open models that aren't part of the APK. Each one is downloaded the first time its tool is used, after asking, and kept in the app's cache: [MobileSAM](https://github.com/ChaoningZhang/MobileSAM) (object selection), [MI-GAN](https://github.com/Picsart-AI-Research/MI-GAN) (object removal), [ZipDepth](https://github.com/fabiotosi92/ZipDepth) (depth of field), [PLKSR-Rep](https://github.com/Innocentlove321/ntire2026-mobile-realworld-sr-vipsl19) (upscaling) and [NAFNet](https://github.com/megvii-research/NAFNet) (denoise, deblur). They run on the GPU where possible.
 
