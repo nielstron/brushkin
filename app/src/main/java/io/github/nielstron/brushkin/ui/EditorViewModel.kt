@@ -75,7 +75,6 @@ enum class Tool(val label: String, val group: ToolGroup, val paint: PaintTool? =
     BRIGHTNESS_CONTRAST("Bright./Contrast", ToolGroup.COLORS, filter = "Brightness-Contrast"),
     HUE_SATURATION("Hue/Saturation", ToolGroup.COLORS, filter = "Hue-Saturation"),
     COLOR_TO_ALPHA("Color to Alpha", ToolGroup.COLORS, filter = "Color to Alpha"),
-    REMOVE_BACKGROUND("Remove Backgr.", ToolGroup.COLORS, filter = "Color to Alpha"),
     COLOR_BALANCE("Color Balance", ToolGroup.COLORS, filter = "Color Balance"),
     EXPOSURE("Exposure", ToolGroup.COLORS, filter = "Exposure"),
     SHADOWS_HIGHLIGHTS("Shadows/Highl.", ToolGroup.COLORS, filter = "Shadows-Highlights"),
