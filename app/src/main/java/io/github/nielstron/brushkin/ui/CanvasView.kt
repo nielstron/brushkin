@@ -101,6 +101,9 @@ class CanvasView(context: Context, private val vm: EditorViewModel) : View(conte
         viewMatrix.postRotate(-r, width / 2f, height / 2f); changed()
     }
 
+    /** Moves the view by ([dx], [dy]) screen pixels. */
+    fun panBy(dx: Float, dy: Float) { viewMatrix.postTranslate(dx, dy); changed() }
+
     fun flipView() {
         viewMatrix.postScale(-1f, 1f, width / 2f, height / 2f); flipped = !flipped; changed()
     }
