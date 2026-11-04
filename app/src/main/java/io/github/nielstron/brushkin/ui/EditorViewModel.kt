@@ -108,7 +108,9 @@ enum class Tool(val label: String, val group: ToolGroup, val paint: PaintTool? =
     val liftsLayer get() = this == MOVE || this == SCALE || this == SHEAR || this == PERSPECTIVE ||
         this == TRANSFORM_3D || this == HANDLE || this == WARP || this == CAGE
     /** Transform tools with handles and Apply/Cancel (everything that lifts except Move). */
-    val confirmTransform get() = liftsLayer && this != MOVE
+    val confirmTransform get() = liftsLayer && !directTransform
+    /** One drag finishes the edit, so it's applied right away (undo takes it back); no Apply step. */
+    val directTransform get() = this == MOVE || this == SCALE || this == SHEAR || this == TRANSFORM_3D
 }
 
 enum class Sheet { NONE, TOOLS, OPTIONS, COLOR, LAYERS, INSERT, HISTORY }

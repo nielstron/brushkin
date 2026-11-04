@@ -185,7 +185,7 @@ fun EditorScreen(vm: EditorViewModel, files: FileActions) {
         }
 
         Column(Modifier.align(Alignment.BottomCenter).navigationBarsPadding().padding(horizontal = 12.dp).padding(bottom = 12.dp)) {
-            if (info.floating && vm.tool != Tool.MOVE) {
+            if (info.floating && !vm.tool.directTransform) {
                 val lifted = vm.tool.confirmTransform
                 if (lifted) Row(Modifier.padding(bottom = 8.dp).horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     if (vm.tool != Tool.WARP && vm.tool != Tool.CAGE) TargetChips(!vm.transformWhole) { vm.changeTransformTarget(!it) }
@@ -335,12 +335,18 @@ private fun ContextChips(vm: EditorViewModel, hasSelection: Boolean, holder: Can
                 Chip(if (vm.path.closed) "Open" else "Close", vm.path.closed) { vm.path.closed = !vm.path.closed; vm.pathVersion++; holder?.view?.invalidate() }
                 Chip("Clear", false) { vm.path.clear(); vm.pathVersion++; holder?.view?.invalidate() }
             }
-            t == Tool.MOVE || t == Tool.SCALE -> {
+            t.directTransform -> {
                 val name = vm.engine.info.collectAsState().value.let { i -> i.layers.firstOrNull { it.id == i.activeId }?.name ?: "" }
                 val what = if (vm.transformWhole) "the image" else if (hasSelection) "the selection on “$name”" else "“$name”"
                 TargetChips(!vm.transformWhole) { vm.changeTransformTarget(!it) }
+                if (t == Tool.SCALE) Chip("Keep ratio", vm.keepRatio) { vm.keepRatio = !vm.keepRatio }
                 Text(
-                    when (t) { Tool.SCALE -> "Scaling $what"; else -> "Drag inside to move, outside to rotate $what" },
+                    when (t) {
+                        Tool.SCALE -> "Drag a corner to scale, inside to move"
+                        Tool.SHEAR -> "Drag sideways or up and down to shear"
+                        Tool.TRANSFORM_3D -> "Drag to tilt"
+                        else -> "Drag inside to move, outside to rotate"
+                    },
                     color = Ui.muted, fontSize = 13.sp, modifier = Modifier.padding(8.dp), maxLines = 1,
                 )
             }

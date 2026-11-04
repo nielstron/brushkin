@@ -11,6 +11,7 @@ import android.graphics.Matrix
 import android.graphics.Paint
 import android.graphics.Path
 import android.graphics.PointF
+import android.graphics.Rect
 import android.graphics.RectF
 import android.graphics.Shader
 import android.view.MotionEvent
@@ -510,14 +511,19 @@ class CanvasView(context: Context, private val vm: EditorViewModel) : View(conte
             canvas.drawPath(vr, accent)
         }
         engine.floating?.let { drawFloatingHandles(canvas, it) }
+        if (engine.floating != null || !vm.tool.directTransform) updateGestureExclusion()
         // Move/Rotate while idle: the outline of what moves, and the rotation handle.
-        if (vm.tool == Tool.MOVE && engine.floating == null) moveQuad()?.let { pts ->
+        if (vm.tool.directTransform && engine.floating == null) moveQuad()?.let { pts ->
             val path = Path().apply { moveTo(pts[0], pts[1]); lineTo(pts[2], pts[3]); lineTo(pts[4], pts[5]); lineTo(pts[6], pts[7]); close() }
             canvas.drawPath(path, guideDark); canvas.drawPath(path, accent)
-            val h = rotateHandle(pts); val tx = (pts[0] + pts[2]) / 2; val ty = (pts[1] + pts[3]) / 2
-            canvas.drawLine(tx, ty, h.x, h.y, guideDark); canvas.drawLine(tx, ty, h.x, h.y, accent)
-            canvas.drawCircle(h.x, h.y, 9 * density, handleFill); canvas.drawCircle(h.x, h.y, 9 * density, accent)
+            if (vm.tool == Tool.MOVE) {
+                val h = rotateHandle(pts); val tx = (pts[0] + pts[2]) / 2; val ty = (pts[1] + pts[3]) / 2
+                canvas.drawLine(tx, ty, h.x, h.y, guideDark); canvas.drawLine(tx, ty, h.x, h.y, accent)
+                canvas.drawCircle(h.x, h.y, 9 * density, handleFill); canvas.drawCircle(h.x, h.y, 9 * density, accent)
+            }
+            if (vm.tool == Tool.SCALE) for (i in 0 until 4) { canvas.drawCircle(pts[i * 2], pts[i * 2 + 1], 7 * density, handleFill); canvas.drawCircle(pts[i * 2], pts[i * 2 + 1], 7 * density, accent) }
         }
+        updateGestureExclusion()
         drawPath(canvas)
         if (vm.tool == Tool.SCISSORS) drawScissors(canvas)
         if (vm.tool.picksObjects) for (p in vm.objPoints) {
@@ -574,6 +580,27 @@ class CanvasView(context: Context, private val vm: EditorViewModel) : View(conte
             if (s != 0) { if (sign == 0) sign = s else if (s != sign) return false }
         }
         return true
+    }
+
+    /**
+     * Transform handles near the screen's left or right edge would trigger the system Back gesture:
+     * keep small areas around them for the app (Android allows a limited amount per edge).
+     */
+    private var exclusionKey = 0
+    private fun updateGestureExclusion() {
+        val pts = when {
+            engine.floating != null -> engine.floating!!.corners().also { viewMatrix.mapPoints(it) }
+            vm.tool.directTransform -> moveQuad()
+            else -> null
+        }
+        val rects = ArrayList<Rect>()
+        if (pts != null) {
+            val r = (24 * density).toInt(); val edge = 48 * density
+            val handles = (0 until 4).map { PointF(pts[it * 2], pts[it * 2 + 1]) } + rotateHandle(pts)
+            for (h in handles) if (h.x < edge || h.x > width - edge) rects.add(Rect(h.x.toInt() - r, h.y.toInt() - r, h.x.toInt() + r, h.y.toInt() + r))
+        }
+        val key = rects.hashCode()
+        if (key != exclusionKey) { exclusionKey = key; systemGestureExclusionRects = rects }
     }
 
     private fun drawFloatingHandles(canvas: Canvas, f: Floating) {
@@ -788,15 +815,31 @@ class CanvasView(context: Context, private val vm: EditorViewModel) : View(conte
         val f = engine.floating
         val tool = vm.tool
         if (f != null) { startFloating(e, f); return }
-        // Move/Rotate: each drag applies when the finger lifts (undo takes it back). Inside the
-        // content moves it; outside or on the handle rotates it around its center.
-        if (tool == Tool.MOVE) {
+        // Direct transforms: each drag applies when the finger lifts (undo takes it back), redrawn
+        // from the original pixels so a series of drags doesn't blur. Move/Rotate: inside moves,
+        // outside or the handle rotates. Scale: corners scale, inside moves.
+        if (tool.directTransform) {
             val q = moveQuad()
-            rotating = q != null && (rotateHandle(q).let { h -> hypot(e.x - h.x, e.y - h.y) < 36 * density } || !insideQuad(q, e.x, e.y))
             q?.let { fPivotDoc = toDoc((it[0] + it[4]) / 2, (it[1] + it[5]) / 2) }
-            engine.liftActive(vm.transformWhole)
-            mode = if (rotating) Mode.FLOAT_ROTATE else Mode.FLOAT_MOVE
-            moving = !rotating
+            rotating = false; moving = false; direct = true
+            mode = when (tool) {
+                Tool.MOVE -> {
+                    rotating = q != null && (rotateHandle(q).let { h -> hypot(e.x - h.x, e.y - h.y) < 36 * density } || !insideQuad(q, e.x, e.y))
+                    moving = !rotating
+                    if (rotating) Mode.FLOAT_ROTATE else Mode.FLOAT_MOVE
+                }
+                Tool.SCALE -> {
+                    val i = if (q == null) -1 else (0 until 4).firstOrNull { hypot(e.x - q[it * 2], e.y - q[it * 2 + 1]) < 32 * density } ?: -1
+                    if (i >= 0) {
+                        val opp = (i + 2) % 4
+                        fPivotDoc = toDoc(q!![opp * 2], q[opp * 2 + 1]); fAnchorDoc = toDoc(q[i * 2], q[i * 2 + 1])
+                        Mode.FLOAT_SCALE
+                    } else { moving = true; Mode.FLOAT_MOVE }
+                }
+                Tool.SHEAR -> Mode.FLOAT_SHEAR
+                else -> Mode.FLOAT_3D
+            }
+            engine.liftActive(vm.transformWhole, continueSession = true)
             return
         }
         if (tool == Tool.PATHS) { startPath(); return }
@@ -975,6 +1018,11 @@ class CanvasView(context: Context, private val vm: EditorViewModel) : View(conte
                 moving = false
                 val m = engine.floating?.let { moveDelta(it, toDoc(e.x, e.y)) } ?: PointF(d.x - downDoc.x, d.y - downDoc.y)
                 engine.commitMove(m.x, m.y)
+            }
+            Mode.FLOAT_SCALE, Mode.FLOAT_SHEAR, Mode.FLOAT_3D -> if (direct) {
+                direct = false
+                val f = engine.floating
+                if (f == null || f.matrix == f.initial) engine.cancelFloating() else engine.commitFloating(Matrix(f.matrix), vm.tool.label)
             }
             Mode.FLOAT_ROTATE -> if (rotating) {
                 rotating = false
@@ -1161,6 +1209,8 @@ class CanvasView(context: Context, private val vm: EditorViewModel) : View(conte
     private var moving = false
     /** Move/Rotate tool: this drag rotates (applied on release). */
     private var rotating = false
+    /** The current drag belongs to a direct transform (applied on release). */
+    private var direct = false
 
     private fun rotationDeg(d: PointF): Float {
         val a0 = atan2(downDoc.y - fPivotDoc.y, downDoc.x - fPivotDoc.x)
@@ -1184,6 +1234,8 @@ class CanvasView(context: Context, private val vm: EditorViewModel) : View(conte
                 else -> s.active?.takeIf { !it.isGroup }?.let { io.github.nielstron.brushkin.engine.LayerExtent.bounds(it) }?.let { RectF(it) }
             }
         }
+        // In a series of direct transforms: the transformed frame of the original pixels.
+        engine.transformFrame()?.let { fr -> return fr.also { viewMatrix.mapPoints(it) } }
         val r = moveBounds ?: return null
         return floatArrayOf(r.left, r.top, r.right, r.top, r.right, r.bottom, r.left, r.bottom).also { viewMatrix.mapPoints(it) }
     }
@@ -1198,6 +1250,7 @@ class CanvasView(context: Context, private val vm: EditorViewModel) : View(conte
     private fun dragFloating(e: MotionEvent) {
         val f = engine.floating ?: return
         val d = toDoc(e.x, e.y)
+        if (direct) fStart.set(f.initial)
         if (moving) { val m = moveDelta(f, d); f.matrix.set(f.initial); f.matrix.postTranslate(m.x, m.y); return }
         if (rotating) { f.matrix.set(f.initial); f.matrix.postRotate(rotationDeg(d), fPivotDoc.x, fPivotDoc.y); return }
         when (mode) {
