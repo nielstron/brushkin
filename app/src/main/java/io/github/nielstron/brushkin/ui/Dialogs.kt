@@ -1,5 +1,9 @@
 package io.github.nielstron.brushkin.ui
 
+import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
+import androidx.compose.material.icons.rounded.ExpandMore
+import androidx.compose.material.icons.rounded.Refresh
 import androidx.compose.material.icons.rounded.Colorize
 import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.ui.graphics.asImageBitmap
@@ -360,9 +364,14 @@ private fun FilterPanel(vm: EditorViewModel, name: String, close: () -> Unit) {
     }
     LaunchedEffect(Unit) { e.filterBegin() }
     LaunchedEffect(values.toMap(), curves, color) { e.filterPreview(build()) }
-    androidx.compose.runtime.DisposableEffect(Unit) { onDispose { vm.filterPicking = null } }
-    val cancel = { e.filterCancel(); close() }
-    BackHandler { cancel() }
+    // No Apply step: what's previewed is kept when the panel closes (undo takes it back). With the
+    // defaults (no change) closing just drops the preview.
+    val unchanged = { !toAlpha && values.all { (i, v) -> spec?.params?.getOrNull(i)?.default == v } && curves.isEmpty() }
+    var finished by remember { mutableStateOf(false) }
+    fun finish() { if (finished) return; finished = true; if (unchanged()) e.filterCancel() else e.filterApply(build()) }
+    fun reset() { values.clear(); curves = emptyMap(); color = android.graphics.Color.WHITE; vm.filterPicking = null }
+    androidx.compose.runtime.DisposableEffect(Unit) { onDispose { vm.filterPicking = null; finish() } }
+    BackHandler { finish(); close() }
 
     Box(Modifier.fillMaxSize()) {
         Column(
@@ -370,18 +379,16 @@ private fun FilterPanel(vm: EditorViewModel, name: String, close: () -> Unit) {
                 .background(Ui.panel).navigationBarsPadding().padding(16.dp)
         ) {
             Row(verticalAlignment = Alignment.CenterVertically) {
-                TextButton(onClick = cancel) { Text("Cancel", color = Ui.text) }
                 // Long names break after their hyphen ("Brightness-/Contrast"), not mid-word.
-                Text(name.replace("-", "-\u200B"), color = Ui.text, fontWeight = FontWeight.Bold, fontSize = 17.sp, modifier = Modifier.weight(1f), textAlign = androidx.compose.ui.text.style.TextAlign.Center)
+                Text(name.replace("-", "-\u200B"), color = Ui.text, fontWeight = FontWeight.Bold, fontSize = 17.sp, modifier = Modifier.weight(1f).padding(start = 4.dp))
                 if (spec != null && !toAlpha) Box(
                     // GIMP 3: keep the filter editable on the layer instead of changing its pixels.
-                    Modifier.padding(end = 8.dp).clip(RoundedCornerShape(12.dp)).border(1.dp, Ui.border, RoundedCornerShape(12.dp))
-                        .clickable { e.filterAsEffect(io.github.nielstron.brushkin.engine.LayerEffect(name, spec.params.indices.map { values[it] ?: spec.params[it].default }, vm.fg, vm.bg)); close() }
-                        .padding(horizontal = 12.dp, vertical = 10.dp)
-                ) { Text("As effect", color = Ui.text) }
-                Box(
-                    Modifier.clip(RoundedCornerShape(12.dp)).background(Ui.accent).clickable { e.filterApply(build()); close() }.padding(horizontal = 18.dp, vertical = 10.dp)
-                ) { Text("Apply", color = Ui.onAccent, fontWeight = FontWeight.SemiBold) }
+                    Modifier.padding(end = 4.dp).clip(RoundedCornerShape(12.dp)).border(1.dp, Ui.border, RoundedCornerShape(12.dp))
+                        .clickable { finished = true; e.filterCancel(); e.filterAsEffect(io.github.nielstron.brushkin.engine.LayerEffect(name, spec.params.indices.map { values[it] ?: spec.params[it].default }, vm.fg, vm.bg)); close() }
+                        .padding(horizontal = 12.dp, vertical = 8.dp)
+                ) { Text("As effect", color = Ui.text, fontSize = 13.sp) }
+                IconButton(onClick = { reset() }) { Icon(androidx.compose.material.icons.Icons.Rounded.Refresh, "Reset", tint = Ui.text) }
+                IconButton(onClick = { finish(); close() }) { Icon(androidx.compose.material.icons.Icons.Rounded.ExpandMore, "Close (keeps the result)", tint = Ui.text) }
             }
             Spacer(Modifier.height(8.dp))
             if (toAlpha) {
@@ -646,25 +653,28 @@ private fun DepthOfFieldPanel(vm: EditorViewModel, close: () -> Unit) {
         // Strongest blur: up to 4% of the image's long side.
         return io.github.nielstron.brushkin.engine.DepthBlurFilter(map.values, map.side, map.side, f.x / info.width, f.y / info.height, strength * longSide * 0.04f, range)
     }
-    var applied by remember { mutableStateOf(false) }
-    fun done() { vm.dofOpen = false; vm.depthMap = null; vm.dofFocus = null; close() }
+    // No Apply step: the previewed blur is kept when the panel closes (undo takes it back);
+    // with no blur, closing changes nothing.
+    var finished by remember { mutableStateOf(false) }
+    fun finish() {
+        if (finished) return; finished = true
+        if (strength < 0.005f) e.filterCancel() else e.filterApply(build())
+        vm.dofOpen = false; vm.depthMap = null; vm.dofFocus = null
+    }
+    fun reset() { strength = 0.5f; range = 0.15f; vm.dofFocus = android.graphics.PointF(info.width / 2f, info.height / 2f) }
     LaunchedEffect(Unit) { e.filterBegin() }
-    // Replaced by another dialog (e.g. a tool picked meanwhile): drop the preview.
-    androidx.compose.runtime.DisposableEffect(Unit) { onDispose { if (!applied) { e.filterCancel(); vm.dofOpen = false; vm.depthMap = null } } }
+    androidx.compose.runtime.DisposableEffect(Unit) { onDispose { finish() } }
     LaunchedEffect(vm.dofFocus, strength, range) { e.filterPreview(build()) }
-    val cancel = { e.filterCancel(); done() }
-    BackHandler { cancel() }
+    BackHandler { finish(); close() }
     Box(Modifier.fillMaxSize()) {
         Column(
             Modifier.align(Alignment.BottomCenter).fillMaxWidth().clip(RoundedCornerShape(topStart = 24.dp, topEnd = 24.dp))
                 .background(Ui.panel).navigationBarsPadding().padding(16.dp)
         ) {
             Row(verticalAlignment = Alignment.CenterVertically) {
-                TextButton(onClick = cancel) { Text("Cancel", color = Ui.text) }
-                Text("Depth of field", color = Ui.text, fontWeight = FontWeight.Bold, fontSize = 17.sp, modifier = Modifier.weight(1f), textAlign = androidx.compose.ui.text.style.TextAlign.Center)
-                Box(
-                    Modifier.clip(RoundedCornerShape(12.dp)).background(Ui.accent).clickable { applied = true; e.filterApply(build()); done() }.padding(horizontal = 18.dp, vertical = 10.dp)
-                ) { Text("Apply", color = Ui.onAccent, fontWeight = FontWeight.SemiBold) }
+                Text("Depth of field", color = Ui.text, fontWeight = FontWeight.Bold, fontSize = 17.sp, modifier = Modifier.weight(1f).padding(start = 4.dp))
+                IconButton(onClick = { reset() }) { Icon(androidx.compose.material.icons.Icons.Rounded.Refresh, "Reset", tint = Ui.text) }
+                IconButton(onClick = { finish(); close() }) { Icon(androidx.compose.material.icons.Icons.Rounded.ExpandMore, "Close (keeps the result)", tint = Ui.text) }
             }
             Text("Touch the image to choose what stays sharp", color = Ui.muted, fontSize = 13.sp, modifier = Modifier.padding(vertical = 6.dp))
             LabeledSlider("Blur", strength, 0f..1f, "${(strength * 100).roundToInt()}%", { strength = it })
