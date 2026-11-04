@@ -189,7 +189,7 @@ class CanvasView(context: Context, private val vm: EditorViewModel) : View(conte
         val s = engine.stack
         if (vm.showRulers && e.y >= rulerTop && e.y < rulerTop + rulerSize) { guideDrag = -1 to io.github.nielstron.brushkin.engine.Guide(false, toDoc(e.x, e.y).y.roundToInt()); mode = Mode.GUIDE; return true }
         if (vm.showRulers && e.x < rulerSize && e.y >= rulerTop) { guideDrag = -1 to io.github.nielstron.brushkin.engine.Guide(true, toDoc(e.x, e.y).x.roundToInt()); mode = Mode.GUIDE; return true }
-        if (vm.tool == Tool.MOVE && engine.floating == null && s.guides.isNotEmpty()) {
+        if (vm.tool == Tool.MOVE && s.guides.isNotEmpty()) {
             val d = toDoc(e.x, e.y); val th = 14 * density / scale
             val i = s.guides.indexOfFirst { abs((if (it.vertical) d.x else d.y) - it.pos) < th }
             if (i >= 0) { guideDrag = i to s.guides[i]; mode = Mode.GUIDE; return true }
@@ -510,6 +510,14 @@ class CanvasView(context: Context, private val vm: EditorViewModel) : View(conte
             canvas.drawPath(vr, accent)
         }
         engine.floating?.let { drawFloatingHandles(canvas, it) }
+        // Move/Rotate while idle: the outline of what moves, and the rotation handle.
+        if (vm.tool == Tool.MOVE && engine.floating == null) moveQuad()?.let { pts ->
+            val path = Path().apply { moveTo(pts[0], pts[1]); lineTo(pts[2], pts[3]); lineTo(pts[4], pts[5]); lineTo(pts[6], pts[7]); close() }
+            canvas.drawPath(path, guideDark); canvas.drawPath(path, accent)
+            val h = rotateHandle(pts); val tx = (pts[0] + pts[2]) / 2; val ty = (pts[1] + pts[3]) / 2
+            canvas.drawLine(tx, ty, h.x, h.y, guideDark); canvas.drawLine(tx, ty, h.x, h.y, accent)
+            canvas.drawCircle(h.x, h.y, 9 * density, handleFill); canvas.drawCircle(h.x, h.y, 9 * density, accent)
+        }
         drawPath(canvas)
         if (vm.tool == Tool.SCISSORS) drawScissors(canvas)
         if (vm.tool.picksObjects) for (p in vm.objPoints) {
@@ -574,8 +582,7 @@ class CanvasView(context: Context, private val vm: EditorViewModel) : View(conte
         canvas.drawPath(path, guideDark); canvas.drawPath(path, accent)
         val hr = 7 * density
         if (f.targetLayerId != null) when (vm.tool) {
-            Tool.MOVE -> return
-            Tool.ROTATE -> {
+            Tool.MOVE -> {
                 val cx = (pts[0] + pts[4]) / 2; val cy = (pts[1] + pts[5]) / 2; val r = 10 * density
                 for (p in listOf(guideDark, accent)) { canvas.drawLine(cx - r, cy, cx + r, cy, p); canvas.drawLine(cx, cy - r, cx, cy + r, p) }
                 // Rotation handle above the top edge.
@@ -781,7 +788,17 @@ class CanvasView(context: Context, private val vm: EditorViewModel) : View(conte
         val f = engine.floating
         val tool = vm.tool
         if (f != null) { startFloating(e, f); return }
-        if (tool == Tool.MOVE) { engine.liftActive(vm.transformWhole); mode = Mode.FLOAT_MOVE; moving = true; return }
+        // Move/Rotate: each drag applies when the finger lifts (undo takes it back). Inside the
+        // content moves it; outside or on the handle rotates it around its center.
+        if (tool == Tool.MOVE) {
+            val q = moveQuad()
+            rotating = q != null && (rotateHandle(q).let { h -> hypot(e.x - h.x, e.y - h.y) < 36 * density } || !insideQuad(q, e.x, e.y))
+            q?.let { fPivotDoc = toDoc((it[0] + it[4]) / 2, (it[1] + it[5]) / 2) }
+            engine.liftActive(vm.transformWhole)
+            mode = if (rotating) Mode.FLOAT_ROTATE else Mode.FLOAT_MOVE
+            moving = !rotating
+            return
+        }
         if (tool == Tool.PATHS) { startPath(); return }
         if (tool == Tool.CROP) { mode = Mode.CROP; vm.cropRect = RectF(downDoc.x, downDoc.y, downDoc.x, downDoc.y); return }
         if (vm.pickMode || tool == Tool.PICKER) { mode = Mode.PICK; pick(e.x, e.y); return }
@@ -954,10 +971,17 @@ class CanvasView(context: Context, private val vm: EditorViewModel) : View(conte
                 }
                 if (back) postDelayed({ if (vm.sheet == io.github.nielstron.brushkin.ui.Sheet.NONE) vm.sheet = io.github.nielstron.brushkin.ui.Sheet.COLOR }, 300)
             }
-            Mode.FLOAT_MOVE -> if (moving || vm.tool == Tool.MOVE) {
+            Mode.FLOAT_MOVE -> if (moving) {
                 moving = false
                 val m = engine.floating?.let { moveDelta(it, toDoc(e.x, e.y)) } ?: PointF(d.x - downDoc.x, d.y - downDoc.y)
                 engine.commitMove(m.x, m.y)
+            }
+            Mode.FLOAT_ROTATE -> if (rotating) {
+                rotating = false
+                val deg = rotationDeg(d)
+                val f = engine.floating
+                if (f == null || kotlin.math.abs(deg) < 0.05f) engine.cancelFloating()
+                else engine.commitFloating(Matrix(f.initial).apply { postRotate(deg, fPivotDoc.x, fPivotDoc.y) }, "Rotate Layer")
             }
             else -> {}
         }
@@ -1098,13 +1122,12 @@ class CanvasView(context: Context, private val vm: EditorViewModel) : View(conte
                 mode = Mode.IGNORE; return
             }
             // Rotate: drag inside to move, outside (or on the handle) to rotate; both apply as one step.
-            Tool.ROTATE -> {
+            Tool.MOVE -> {
                 val h = rotateHandle(pts)
                 val onHandle = hypot(e.x - h.x, e.y - h.y) < hit * 1.5f
                 mode = if (!onHandle && insideQuad(pts, e.x, e.y)) Mode.FLOAT_MOVE else Mode.FLOAT_ROTATE
                 fPivotDoc = centerDoc; return
             }
-            Tool.MOVE -> { mode = Mode.FLOAT_MOVE; return }
             Tool.SCALE -> {
                 for (i in 0 until 4) if (hypot(e.x - pts[i * 2], e.y - pts[i * 2 + 1]) < hit) {
                     mode = Mode.FLOAT_SCALE
@@ -1136,6 +1159,34 @@ class CanvasView(context: Context, private val vm: EditorViewModel) : View(conte
 
     /** Move tool drag in progress (the layer is lifted on touch and applied on release). */
     private var moving = false
+    /** Move/Rotate tool: this drag rotates (applied on release). */
+    private var rotating = false
+
+    private fun rotationDeg(d: PointF): Float {
+        val a0 = atan2(downDoc.y - fPivotDoc.y, downDoc.x - fPivotDoc.x)
+        val a1 = atan2(d.y - fPivotDoc.y, d.x - fPivotDoc.x)
+        var deg = Math.toDegrees((a1 - a0).toDouble()).toFloat()
+        if (vm.snapRotation) deg = Math.round(deg / 15f) * 15f
+        return deg
+    }
+
+    // What the Move/Rotate tool acts on while idle: the selection, the layer's content or the image.
+    private var moveBoundsKey = Long.MIN_VALUE
+    private var moveBounds: RectF? = null
+    private fun moveQuad(): FloatArray? {
+        val s = engine.stack
+        val key = (engine.info.value.version * 31 + s.activeId) * 2 + (if (vm.transformWhole) 1 else 0)
+        if (key != moveBoundsKey) {
+            moveBoundsKey = key
+            moveBounds = when {
+                vm.transformWhole -> RectF(0f, 0f, s.width.toFloat(), s.height.toFloat())
+                s.selection != null -> RectF(s.selection.bounds)
+                else -> s.active?.takeIf { !it.isGroup }?.let { io.github.nielstron.brushkin.engine.LayerExtent.bounds(it) }?.let { RectF(it) }
+            }
+        }
+        val r = moveBounds ?: return null
+        return floatArrayOf(r.left, r.top, r.right, r.top, r.right, r.bottom, r.left, r.bottom).also { viewMatrix.mapPoints(it) }
+    }
     private var cornerIndex = 0
     private var cornersDoc = FloatArray(8)
     private var handleBase = Matrix()
@@ -1148,6 +1199,7 @@ class CanvasView(context: Context, private val vm: EditorViewModel) : View(conte
         val f = engine.floating ?: return
         val d = toDoc(e.x, e.y)
         if (moving) { val m = moveDelta(f, d); f.matrix.set(f.initial); f.matrix.postTranslate(m.x, m.y); return }
+        if (rotating) { f.matrix.set(f.initial); f.matrix.postRotate(rotationDeg(d), fPivotDoc.x, fPivotDoc.y); return }
         when (mode) {
             Mode.WARP_PUSH -> {
                 engine.meshPush(lastWarp.x, lastWarp.y, d.x - lastWarp.x, d.y - lastWarp.y, vm.warpRadius, vm.warpStrength)

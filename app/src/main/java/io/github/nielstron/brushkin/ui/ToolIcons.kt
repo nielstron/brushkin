@@ -87,6 +87,6 @@ object ToolIcons {
         Tool.COLOR_TO_ALPHA -> alphaChecker; Tool.CHANNEL_MIXER -> levels; Tool.POSTERIZE -> levels; Tool.SCISSORS -> scissors
         Tool.BRUSH -> brush; Tool.PENCIL -> pencil; Tool.AIRBRUSH -> airbrush; Tool.ERASER -> eraser
         Tool.SMUDGE -> smudge; Tool.CLONE -> clone; Tool.HEAL -> heal; Tool.DODGE_BURN -> dodge; Tool.BLUR_SHARPEN -> blur; Tool.INK -> ink; Tool.MYPAINT -> mypaint; Tool.PERSPECTIVE_CLONE -> perspClone; Tool.BUCKET -> bucket; Tool.GRADIENT -> gradient
-        Tool.MOVE -> move; Tool.SCALE -> transform; Tool.ROTATE -> rotate; Tool.FLIP -> mirror; Tool.SHEAR -> shear; Tool.PERSPECTIVE -> perspective; Tool.TRANSFORM_3D -> cube; Tool.HANDLE -> handle; Tool.WARP -> warp; Tool.CAGE -> cage; Tool.ALIGN -> align; Tool.CROP -> crop; Tool.PICKER -> picker; Tool.TEXT -> text; Tool.MEME -> meme; Tool.PATHS -> paths
+        Tool.MOVE -> move; Tool.SCALE -> transform; Tool.FLIP -> mirror; Tool.SHEAR -> shear; Tool.PERSPECTIVE -> perspective; Tool.TRANSFORM_3D -> cube; Tool.HANDLE -> handle; Tool.WARP -> warp; Tool.CAGE -> cage; Tool.ALIGN -> align; Tool.CROP -> crop; Tool.PICKER -> picker; Tool.TEXT -> text; Tool.MEME -> meme; Tool.PATHS -> paths
     }
 }

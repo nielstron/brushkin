@@ -237,9 +237,8 @@ fun commands(vm: EditorViewModel, info: DocInfo, files: FileActions, view: () ->
         Cmd("Layer", "Apply layer mask", run = { e.applyMask() }),
         Cmd("Layer", "Delete layer mask", run = { e.deleteMask() }),
         Cmd("Layer", "Edit layer mask", run = { e.setEditMask(info.activeId, true) }),
-        Cmd("Layer", "Move layer", run = { vm.selectTool(Tool.MOVE) }),
+        Cmd("Layer", "Move or rotate layer", run = { vm.selectTool(Tool.MOVE) }),
         Cmd("Layer", "Scale layer", run = { vm.selectTool(Tool.SCALE) }),
-        Cmd("Layer", "Rotate layer", run = { vm.selectTool(Tool.ROTATE) }),
         Cmd("Layer", "Layers…", run = { vm.sheet = Sheet.LAYERS }),
 
         Cmd("Colors", "Curves…", "live preview", run = dlg("filter:Curves")),

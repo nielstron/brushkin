@@ -82,9 +82,9 @@ enum class Tool(val label: String, val group: ToolGroup, val paint: PaintTool? =
     CHANNEL_MIXER("Channel Mixer", ToolGroup.COLORS, filter = "Channel Mixer"),
     THRESHOLD("Threshold", ToolGroup.COLORS, filter = "Threshold"),
     POSTERIZE("Posterize", ToolGroup.COLORS, filter = "Posterize"),
-    MOVE("Move", ToolGroup.TRANSFORM),
+    /** Move and rotate: drag inside to move, outside or on the handle to rotate, then apply. */
+    MOVE("Move/Rotate", ToolGroup.TRANSFORM),
     SCALE("Scale", ToolGroup.TRANSFORM),
-    ROTATE("Rotate", ToolGroup.TRANSFORM),
     FLIP("Flip", ToolGroup.TRANSFORM),
     SHEAR("Shear", ToolGroup.TRANSFORM),
     PERSPECTIVE("Perspective", ToolGroup.TRANSFORM),
@@ -105,7 +105,7 @@ enum class Tool(val label: String, val group: ToolGroup, val paint: PaintTool? =
     /** One-shot commands listed with the tools: picking one runs it and keeps the current tool. */
     val isAction get() = this == DEPTH_BLUR || this == UPSCALE || this == DENOISE || this == DEBLUR || filter != null
     /** Tools that work on a lifted copy of the layer (applied or cancelled as a whole). */
-    val liftsLayer get() = this == MOVE || this == SCALE || this == ROTATE || this == SHEAR || this == PERSPECTIVE ||
+    val liftsLayer get() = this == MOVE || this == SCALE || this == SHEAR || this == PERSPECTIVE ||
         this == TRANSFORM_3D || this == HANDLE || this == WARP || this == CAGE
     /** Transform tools with handles and Apply/Cancel (everything that lifts except Move). */
     val confirmTransform get() = liftsLayer && this != MOVE
