@@ -241,8 +241,8 @@ fun EditorScreen(vm: EditorViewModel, files: FileActions) {
                 val canCancel = vm.engine.cancellable.collectAsState().value || (busy == null && vm.mlBusy != null)
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Text("$anyBusy…", color = Ui.text, fontSize = 13.sp, modifier = Modifier.weight(1f))
-                    if (canCancel) Text("Cancel", color = Ui.accent, fontSize = 13.sp, fontWeight = FontWeight.SemiBold,
-                        modifier = Modifier.clip(RoundedCornerShape(8.dp)).clickable { vm.cancelWork() }.padding(horizontal = 8.dp, vertical = 4.dp))
+                    if (canCancel) Icon(Icons.Rounded.Close, "Cancel", tint = Ui.text,
+                        modifier = Modifier.clip(CircleShape).clickable { vm.cancelWork() }.padding(4.dp).size(20.dp))
                 }
                 val p = progress.takeIf { busy != null }
                 val mod = Modifier.fillMaxWidth().height(6.dp).clip(RoundedCornerShape(3.dp))
@@ -282,7 +282,11 @@ private fun ContextChips(vm: EditorViewModel, hasSelection: Boolean, holder: Can
         if (quickMask) Chip("Quick mask", true) { vm.engine.quickMaskToggle() }
         if (vm.pipette) {
             Text("Touch the image to pick a color", color = Ui.text, fontSize = 13.sp, modifier = Modifier.align(Alignment.CenterVertically).padding(horizontal = 4.dp))
-            Chip("Cancel", false) { vm.pipette = false; vm.sheet = Sheet.COLOR }
+            Box(
+                Modifier.size(40.dp).clip(CircleShape).background(Ui.panel).border(1.dp, Ui.border, CircleShape)
+                    .clickable(onClickLabel = "Cancel") { vm.pipette = false; vm.sheet = Sheet.COLOR },
+                contentAlignment = Alignment.Center,
+            ) { Icon(Icons.Rounded.Close, "Cancel", tint = Ui.text, modifier = Modifier.size(20.dp)) }
         } else when {
             t == Tool.PERSPECTIVE_CLONE -> {
                 Chip("Modify plane", vm.perspEditing) { vm.perspEditing = true; holder?.view?.invalidate() }
