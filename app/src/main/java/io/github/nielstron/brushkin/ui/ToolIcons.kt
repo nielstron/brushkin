@@ -1,5 +1,7 @@
 package io.github.nielstron.brushkin.ui
 
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.rounded.*
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.graphics.StrokeCap
@@ -8,7 +10,7 @@ import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.graphics.vector.PathParser
 import androidx.compose.ui.unit.dp
 
-/** Line icons on a 24-unit grid, matching the mockup. */
+/** Material Rounded icons, with custom glyphs only for specialized tools without a clear equivalent. */
 object ToolIcons {
     private val cache = HashMap<String, ImageVector>()
 
@@ -21,61 +23,61 @@ object ToolIcons {
             ).build()
     }
 
-    val brush get() = stroke("M18 3l3 3-8.5 8.5-3-3zM9.5 11.5C6.5 11.5 5 13.5 5 16c0 1.5-1 3-2.5 3.5 3.5 1.5 8 .5 9-2 .6-1.6.3-3.6-2-6z")
-    val pencil get() = stroke("M4 20l1-5L16 4l4 4L9 19zM14 6l4 4")
-    val airbrush get() = stroke("M4 20l7-7M11 13l4-4 3 3-4 4zM17 4h.01M20 6h.01M19 2h.01")
+    val brush get() = Icons.Rounded.Brush
+    val pencil get() = Icons.Rounded.Edit
+    val airbrush get() = Icons.Rounded.Air
     val eraser get() = stroke("M7 21h13M5 15l9-9 5 5-9 9H8z")
-    val smudge get() = stroke("M8 13V5a2 2 0 0 1 4 0v6M12 10a2 2 0 0 1 4 0v2M16 11a2 2 0 0 1 4 0v4a7 7 0 0 1-7 7h-1a7 7 0 0 1-6-4l-2-4a2 2 0 0 1 3-2l1 2")
+    val smudge get() = Icons.Rounded.Gesture
     val clone get() = stroke("M9 3h6v5l3 3v3H6v-3l3-3zM4 18h16M7 21h10")
-    val heal get() = stroke("M4 15L15 4a3 3 0 0 1 5 5L9 20a3 3 0 0 1-5-5zM10 10l4 4")
-    val dodge get() = stroke("M12 3a5 5 0 1 0 0 10a5 5 0 1 0 0-10M12 13v8")
-    val blur get() = stroke("M12 3c3 4 6 7.5 6 11a6 6 0 0 1-12 0c0-3.5 3-7 6-11z")
-    val scissors get() = stroke("M6 9a3 3 0 1 0 0-6 3 3 0 0 0 0 6zM6 21a3 3 0 1 0 0-6 3 3 0 0 0 0 6zM20 4L8.1 15.9M14.5 14.5L20 20M8.1 8.1L12 12")
-    val objectSel get() = stroke("M12 2l1.2 3.3L16.5 6.5l-3.3 1.2L12 11l-1.2-3.3L7.5 6.5l3.3-1.2zM5 13h14v8H5z")
-    val removeObj get() = stroke("M12 2l1.2 3.3L16.5 6.5l-3.3 1.2L12 11l-1.2-3.3L7.5 6.5l3.3-1.2zM5 14l5 5M10 14l-5 5M14 15h6M14 19h6")
-    val depthBlur get() = stroke("M12 9a3 3 0 1 0 0 6a3 3 0 1 0 0-6M4 6h.01M7 3h.01M20 6h.01M17 3h.01M4 18h.01M7 21h.01M20 18h.01M17 21h.01M2 12h.01M22 12h.01")
-    val upscale get() = stroke("M4 14v6h6M20 10V4h-6M4 20l7-7M20 4l-7 7")
-    val denoise get() = stroke("M4 4h16v16H4zM8 8h.01M12 9h.01M16 8h.01M9 12h.01M15 13h.01M8 16h.01M12 15h.01M16 16h.01")
-    val deblur get() = stroke("M12 3a9 9 0 1 0 0 18a9 9 0 1 0 0-18M12 7a5 5 0 1 0 0 10a5 5 0 1 0 0-10M12 11a1 1 0 1 0 0 2a1 1 0 1 0 0-2")
-    val curves get() = stroke("M4 4v16h16M4 20C10 20 10 6 20 4")
-    val contrast get() = stroke("M12 3a9 9 0 1 0 0 18a9 9 0 1 0 0-18M12 3v18M12 8h9M12 13h9")
-    val hue get() = stroke("M12 3a9 9 0 1 0 0 18a9 9 0 1 0 0-18M12 12L12 3M12 12l7.8 4.5M12 12l-7.8 4.5")
-    val sharpen get() = stroke("M12 3l9 17H3zM12 9v6")
-    val levels get() = stroke("M4 20V14M8 20V8M12 20V11M16 20V5M20 20V13")
-    val filterFx get() = stroke("M4 6h16M7 12h10M10 18h4")
-    val alphaChecker get() = stroke("M4 4h16v16H4zM4 12h16M12 4v16M4 4l8 8M12 12l8 8")
-    val ripple get() = stroke("M3 8c3-3 6 3 9 0s6 3 9 0M3 16c3-3 6 3 9 0s6 3 9 0")
-    val meme get() = stroke("M3 4h18v16H3zM7 8h10M7 16h10M9 8v0M12 8v0")
-    val paths get() = stroke("M5 17a2 2 0 1 0 0 4a2 2 0 1 0 0-4M19 3a2 2 0 1 0 0 4a2 2 0 1 0 0-4M7 19c7 0 3-14 10-14")
-    val move get() = stroke("M12 2v20M2 12h20M9 5l3-3 3 3M9 19l3 3 3-3M5 9l-3 3 3 3M19 9l3 3-3 3")
-    val rotate get() = stroke("M20 12a8 8 0 1 1-3-6.2M20 4v5h-5")
+    val heal get() = Icons.Rounded.Healing
+    val dodge get() = Icons.Rounded.Exposure
+    val blur get() = Icons.Rounded.BlurOn
+    val scissors get() = Icons.Rounded.ContentCut
+    val objectSel get() = Icons.Rounded.AutoAwesome
+    val removeObj get() = Icons.Rounded.AutoFixHigh
+    val depthBlur get() = Icons.Rounded.CenterFocusStrong
+    val upscale get() = Icons.Rounded.OpenInFull
+    val denoise get() = Icons.Rounded.Grain
+    val deblur get() = Icons.Rounded.FilterCenterFocus
+    val curves get() = Icons.Rounded.ShowChart
+    val contrast get() = Icons.Rounded.Contrast
+    val hue get() = Icons.Rounded.Palette
+    val sharpen get() = Icons.Rounded.ChangeHistory
+    val levels get() = Icons.Rounded.BarChart
+    val filterFx get() = Icons.Rounded.FilterAlt
+    val alphaChecker get() = Icons.Rounded.GridOn
+    val ripple get() = Icons.Rounded.Waves
+    val meme get() = Icons.Rounded.TextFields
+    val paths get() = Icons.Rounded.Timeline
+    val move get() = Icons.Rounded.OpenWith
+    val rotate get() = Icons.Rounded.RotateRight
     val shear get() = stroke("M8 5h13l-5 14H3z")
     val perspective get() = stroke("M7 5h10l4 14H3zM12 5v14")
-    val cube get() = stroke("M12 3l8 4.5v9L12 21l-8-4.5v-9zM12 12l8-4.5M12 12v9M12 12L4 7.5")
+    val cube get() = Icons.Rounded.ViewInAr
     val handle get() = stroke("M6 6h.01M18 6h.01M12 18h.01M6 6l6 12 6-12z")
     val warp get() = stroke("M3 12c3-6 6 6 9 0s6 6 9 0M3 6c3-4 6 4 9 0s6 4 9 0M3 18c3-4 6 4 9 0s6 4 9 0")
     val cage get() = stroke("M5 5l7 2 7-2-2 7 2 7-7-2-7 2 2-7z")
-    val align get() = stroke("M4 3v18M8 7h12M8 17h8")
-    val target get() = stroke("M12 3v6M12 15v6M3 12h6M15 12h6")
-    val bucket get() = stroke("M4 12l7-7 7 7-7 7zM19.5 15c1 1.5 1.8 2.5 1.8 3.4a1.8 1.8 0 0 1-3.6 0c0-.9.8-1.9 1.8-3.4z")
-    val gradient get() = stroke("M4 4h16v16H4zM4 14L14 4M4 20L20 4M10 20L20 10")
-    val rect get() = stroke("M4 6h16v12H4z")
-    val ellipse get() = stroke("M3 12a9 6 0 1 0 18 0a9 6 0 1 0-18 0")
+    val align get() = Icons.Rounded.FormatAlignLeft
+    val target get() = Icons.Rounded.MyLocation
+    val bucket get() = Icons.Rounded.FormatColorFill
+    val gradient get() = Icons.Rounded.Gradient
+    val rect get() = Icons.Rounded.CropLandscape
+    val ellipse get() = Icons.Rounded.PanoramaFishEye
     val lasso get() = stroke("M7 17c-3-1-4-4-3-7 2-5 12-6 15-2 2 3-1 7-6 7-2 0-4-.5-5-1M7 17l-1 4")
-    val fuzzy get() = stroke("M4 20L14 10M15 3v3M19.5 4.5l-2 2M21 9h-3")
-    val byColor get() = stroke("M4 4h7v7H4zM13 13h7v7h-7zM13 4h7v7h-7z")
-    val transform get() = stroke("M3 7V3h4M17 3h4v4M21 17v4h-4M7 21H3v-4M8 8h8v8H8z")
-    val crop get() = stroke("M6 2v16h16M2 6h16v16")
-    val picker get() = stroke("M14.5 4.5l5 5-2 2-5-5zM12.5 8.5L4 17v3h3l8.5-8.5")
-    val text get() = stroke("M5 5h14M12 5v14M9 19h6")
-    val line get() = stroke("M5 19L19 5", 2f)
-    val angle get() = stroke("M4 20h16M4 20L16 6")
-    val layers get() = stroke("M12 3l9 5-9 5-9-5zM3 13l9 5 9-5")
-    val sliders get() = stroke("M4 7h10M18 7h2M4 17h4M12 17h8M16 5v4M10 15v4")
-    val ink get() = stroke("M12 2l4 7-4 13-4-13zM12 9v5M5 22h14")
-    val mypaint get() = stroke("M4 20c4 0 5-3 5-5 0-3 3-4 5-2M14 13l6-9M8 20c2-1 4-1 6 0")
+    val fuzzy get() = Icons.Rounded.AutoFixNormal
+    val byColor get() = Icons.Rounded.Palette
+    val transform get() = Icons.Rounded.Transform
+    val crop get() = Icons.Rounded.Crop
+    val picker get() = Icons.Rounded.Colorize
+    val text get() = Icons.Rounded.TextFields
+    val line get() = Icons.Rounded.HorizontalRule
+    val angle get() = Icons.Rounded.SquareFoot
+    val layers get() = Icons.Rounded.Layers
+    val sliders get() = Icons.Rounded.Tune
+    val ink get() = Icons.Rounded.Create
+    val mypaint get() = Icons.Rounded.Draw
     val perspClone get() = stroke("M3 8l6-3v14l-6-3zM12 6l9-3v18l-9-3zM9 12h3")
-    val mirror get() = stroke("M12 3v18M8 7L3 17h5zM16 7l5 10h-5z")
+    val mirror get() = Icons.Rounded.Flip
 
     fun of(t: Tool): ImageVector = when (t) {
         Tool.RECT_SELECT -> rect; Tool.ELLIPSE_SELECT -> ellipse; Tool.FREE_SELECT -> lasso
