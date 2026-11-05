@@ -8,6 +8,12 @@ import androidx.compose.foundation.gestures.detectVerticalDragGestures
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
+import androidx.compose.foundation.layout.WindowInsets
+import androidx.compose.foundation.layout.WindowInsetsSides
+import androidx.compose.foundation.layout.only
+import androidx.compose.foundation.layout.safeDrawing
+import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -59,21 +65,30 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.onSizeChanged
+import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.unit.Dp
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.progressBarRangeInfo
+import androidx.compose.ui.semantics.ProgressBarRangeInfo
+import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.semantics.setProgress
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.viewinterop.AndroidView
 import io.github.nielstron.brushkin.engine.SelectMode
+import io.github.nielstron.brushkin.store.StoreIntegration
 import kotlin.math.pow
 import kotlin.math.roundToInt
 
 class CanvasHolder { var view: CanvasView? = null }
 
 @Composable
-fun EditorScreen(vm: EditorViewModel, files: FileActions) {
+fun EditorScreen(vm: EditorViewModel, files: FileActions, store: StoreIntegration) {
     val info by vm.engine.info.collectAsState()
     val busy by vm.engine.busy.collectAsState()
     val holder = remember { CanvasHolder() }
+    var adSpace by remember { androidx.compose.runtime.mutableIntStateOf(0) }
     var viewVersion by remember { androidx.compose.runtime.mutableIntStateOf(0) }
     val snack = remember { SnackbarHostState() }
     LaunchedEffect(Unit) { vm.messages.collect { snack.showSnackbar(it) } }
@@ -94,7 +109,26 @@ fun EditorScreen(vm: EditorViewModel, files: FileActions) {
     // Tool-dependent overlays (paths, clone source, crop) must redraw when the tool changes.
     LaunchedEffect(vm.tool, vm.pathVersion, vm.cloneSource, vm.perspPlane, vm.perspEditing) { holder.view?.invalidate() }
 
-    Box(Modifier.fillMaxSize().background(Ui.ground)) {
+    BoxWithConstraints(Modifier.fillMaxSize().background(Ui.ground)) {
+        val landscape = maxWidth > maxHeight
+        val density = LocalDensity.current
+        val safeInsets = WindowInsets.safeDrawing
+        val safeTop = with(density) { safeInsets.getTop(this).toDp() }
+        val safeLeft = with(density) { safeInsets.getLeft(this, androidx.compose.ui.unit.LayoutDirection.Ltr).toDp() }
+        val safeRight = with(density) { safeInsets.getRight(this, androidx.compose.ui.unit.LayoutDirection.Ltr).toDp() }
+        var bottomBarHeight by remember(landscape) { androidx.compose.runtime.mutableIntStateOf(0) }
+        val bottomSpace = if (bottomBarHeight == 0) (if (landscape) 104.dp else 180.dp)
+            else with(density) { bottomBarHeight.toDp() }
+        val topSpace = safeTop + (76 + adSpace + if (vm.showRulers) 18 else 0).dp
+        val hasSliders = vm.strokeTool.paint != null && !info.floating
+        val sliderStart = if (vm.showRulers) 26.dp else 10.dp
+        val contentBounds = with(density) {
+            android.graphics.RectF(
+                (safeLeft + if (landscape && hasSliders) sliderStart + 108.dp else 24.dp).toPx(),
+                topSpace.toPx(), (maxWidth - safeRight - 24.dp).toPx(),
+                (maxHeight - bottomSpace - 12.dp).toPx(),
+            )
+        }
         AndroidView(
             factory = { ctx ->
                 val canvasView = CanvasView(ctx, vm).also { holder.view = it; it.onViewChanged = { viewVersion++ } }
@@ -116,14 +150,31 @@ fun EditorScreen(vm: EditorViewModel, files: FileActions) {
                         canvasView.gl = CanvasView.Gl(glView, renderer)
                     }
                     addView(canvasView)
+                    addOnLayoutChangeListener { v, _, _, _, _, _, _, _, _ ->
+                        val space = canvasView.adSpaceDp
+                        val inset = if (space > 0) ((76 + space) * v.resources.displayMetrics.density).toInt() +
+                            (androidx.core.view.ViewCompat.getRootWindowInsets(v)?.getInsets(androidx.core.view.WindowInsetsCompat.Type.statusBars())?.top ?: 0) else 0
+                        v.clipBounds = if (inset > 0) android.graphics.Rect(0, inset, v.width, v.height) else null
+                    }
                 }
             },
             modifier = Modifier.fillMaxSize(),
+            update = { frame ->
+                holder.view?.adSpaceDp = adSpace
+                holder.view?.contentBounds = contentBounds
+                // Clip the drawing surface, without changing document or overlay coordinates.
+                val inset = if (adSpace > 0) ((76 + adSpace) * frame.resources.displayMetrics.density).toInt() +
+                    (androidx.core.view.ViewCompat.getRootWindowInsets(frame)?.getInsets(androidx.core.view.WindowInsetsCompat.Type.statusBars())?.top ?: 0) else 0
+                frame.clipBounds = if (inset > 0) android.graphics.Rect(0, inset, frame.width, frame.height) else null
+            },
         )
+
+        store.Banner(Modifier.align(Alignment.TopCenter).statusBarsPadding().padding(top = 76.dp),
+            covered = vm.showMenu || vm.dialog != null || vm.sheet != Sheet.NONE) { adSpace = it }
 
         // Top bar
         Row(
-            Modifier.statusBarsPadding().padding(12.dp).fillMaxWidth().height(52.dp)
+            Modifier.windowInsetsPadding(safeInsets.only(WindowInsetsSides.Top + WindowInsetsSides.Horizontal)).padding(12.dp).fillMaxWidth().height(52.dp)
                 .clip(RoundedCornerShape(16.dp)).background(Ui.panel.copy(alpha = 0.94f))
                 .border(1.dp, Ui.border, RoundedCornerShape(16.dp)).padding(horizontal = 4.dp),
             verticalAlignment = Alignment.CenterVertically,
@@ -147,7 +198,7 @@ fun EditorScreen(vm: EditorViewModel, files: FileActions) {
         if ((info.hasSelection || vm.clipHasImage) && !info.floating) {
             var menu by remember { mutableStateOf(false) }
             Row(
-                Modifier.align(Alignment.TopEnd).statusBarsPadding().padding(top = if (vm.showRulers) 94.dp else 72.dp, end = 12.dp)
+                Modifier.align(Alignment.TopEnd).statusBarsPadding().padding(top = (adSpace + if (vm.showRulers) 94 else 72).dp, end = 12.dp)
                     .clip(RoundedCornerShape(14.dp)).background(Ui.panel.copy(alpha = 0.94f))
                     .border(1.dp, Ui.border, RoundedCornerShape(14.dp)),
             ) {
@@ -176,15 +227,22 @@ fun EditorScreen(vm: EditorViewModel, files: FileActions) {
         androidx.compose.runtime.LaunchedEffect(vm.showGrid, vm.gridSize, vm.showRulers, vm.symmetryKind, vm.symmetrySegments) { holder.view?.invalidate() }
 
         // Side sliders for size and opacity, within reach of the holding thumb.
-        if (vm.strokeTool.paint != null && info.floating.not()) {
-            SideSliders(vm, Modifier.align(Alignment.CenterStart).padding(start = if (vm.showRulers) 26.dp else 10.dp))
+        if (hasSliders) {
+            if (landscape) {
+                val labelsAndSpacing = with(density) { 28.sp.toDp() } + 36.dp
+                val sliderHeight = (maxHeight - topSpace - bottomSpace - labelsAndSpacing).coerceIn(48.dp, 130.dp)
+                Box(Modifier.fillMaxSize().padding(top = topSpace, bottom = bottomSpace)) {
+                    SideSliders(vm, Modifier.align(Alignment.CenterStart).padding(start = safeLeft + sliderStart),
+                        sideBySide = true, sliderHeight = sliderHeight)
+                }
+            } else SideSliders(vm, Modifier.align(Alignment.CenterStart).padding(start = sliderStart))
         }
         // Picking an object: whether taps add to it or take away from it, apart from the chips below.
         if (vm.tool.picksObjects && vm.objPoints.isNotEmpty()) {
             ObjectSidePanel(vm, holder, Modifier.align(Alignment.CenterStart).padding(start = if (vm.showRulers) 26.dp else 10.dp))
         }
 
-        Column(Modifier.align(Alignment.BottomCenter).navigationBarsPadding().padding(horizontal = 12.dp).padding(bottom = 12.dp)) {
+        val actions: @Composable () -> Unit = {
             if (info.floating && !vm.tool.directTransform) {
                 val lifted = vm.tool.confirmTransform
                 if (lifted) Row(Modifier.padding(bottom = 8.dp).horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -225,8 +283,23 @@ fun EditorScreen(vm: EditorViewModel, files: FileActions) {
                 if (vm.favorites.isNotEmpty()) FavoriteBar(vm)
                 ContextChips(vm, info.hasSelection, holder)
             }
-            Spacer(Modifier.height(10.dp))
-            Dock(vm, info.layers.size)
+        }
+        val bottomModifier = Modifier.align(Alignment.BottomCenter)
+            .onSizeChanged { bottomBarHeight = it.height }
+            .windowInsetsPadding(safeInsets.only(WindowInsetsSides.Horizontal + WindowInsetsSides.Bottom))
+            .padding(horizontal = 12.dp, vertical = 12.dp)
+        if (landscape) {
+            Row(bottomModifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(16.dp),
+                verticalAlignment = Alignment.Bottom) {
+                Column(Modifier.weight(1f)) { actions() }
+                Box(Modifier.width(300.dp)) { Dock(vm, info.layers.size) }
+            }
+        } else {
+            Column(bottomModifier) {
+                actions()
+                Spacer(Modifier.height(10.dp))
+                Dock(vm, info.layers.size)
+            }
         }
 
         val anyBusy = busy ?: vm.mlBusy
@@ -234,7 +307,7 @@ fun EditorScreen(vm: EditorViewModel, files: FileActions) {
         if (anyBusy != null) {
             // Full-width card: what's happening, and a bar that fills when the progress is known.
             Column(
-                Modifier.align(Alignment.TopCenter).statusBarsPadding().padding(top = 76.dp).padding(horizontal = 16.dp).fillMaxWidth()
+                Modifier.align(Alignment.TopCenter).statusBarsPadding().padding(top = (76 + adSpace).dp).padding(horizontal = 16.dp).fillMaxWidth()
                     .clip(RoundedCornerShape(16.dp)).background(Ui.panel).padding(horizontal = 16.dp, vertical = 12.dp),
                 verticalArrangement = Arrangement.spacedBy(8.dp),
             ) {
@@ -255,8 +328,9 @@ fun EditorScreen(vm: EditorViewModel, files: FileActions) {
 
         TextOverlay(vm, holder, viewVersion)
         Sheets(vm, info, files)
-        if (vm.showMenu) MenuScreen(vm, info, files, holder)
+        if (vm.showMenu) MenuScreen(vm, info, files, holder, store.commands)
         Dialogs(vm, info, files)
+        store.PurchaseDialog()
     }
 }
 
@@ -421,28 +495,48 @@ fun sizeToPos(s: Float) = ((s / 1000f).toDouble().pow(1 / 3.0)).toFloat()
 fun posToSize(p: Float) = (1000f * p.toDouble().pow(3.0).toFloat()).coerceIn(1f, 1000f)
 
 @Composable
-private fun SideSliders(vm: EditorViewModel, modifier: Modifier) {
-    Column(
-        modifier.width(44.dp).clip(RoundedCornerShape(22.dp)).background(Ui.panel.copy(alpha = 0.94f)).border(1.dp, Ui.border, RoundedCornerShape(22.dp)).padding(vertical = 12.dp),
-        horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(8.dp),
-    ) {
-        val s = vm.settings
-        Text("${s.size.roundToInt()}", color = Ui.muted, fontSize = 10.sp, fontFamily = Ui.mono)
-        VerticalSlider(sizeToPos(s.size), Ui.accent, "Brush size") { vm.settings = vm.settings.copy(size = posToSize(it)) }
-        Box(Modifier.size(20.dp, 1.dp).background(Ui.border))
-        VerticalSlider(s.opacity, Ui.text, "Opacity") { vm.settings = vm.settings.copy(opacity = it.coerceIn(0.01f, 1f)) }
-        Text("${(s.opacity * 100).roundToInt()}%", color = Ui.muted, fontSize = 10.sp, fontFamily = Ui.mono)
+private fun SideSliders(vm: EditorViewModel, modifier: Modifier, sideBySide: Boolean = false, sliderHeight: Dp = 130.dp) {
+    val panel = modifier.clip(RoundedCornerShape(22.dp)).background(Ui.panel.copy(alpha = 0.94f))
+        .border(1.dp, Ui.border, RoundedCornerShape(22.dp)).padding(vertical = if (sideBySide) 8.dp else 12.dp)
+    val s = vm.settings
+    if (sideBySide) {
+        Row(panel, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            Column(horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                Text("Size", color = Ui.muted, fontSize = 10.sp, lineHeight = 14.sp)
+                VerticalSlider(sizeToPos(s.size), Ui.accent, "Brush size", sliderHeight) { vm.settings = vm.settings.copy(size = posToSize(it)) }
+                Text("${s.size.roundToInt()}", color = Ui.muted, fontSize = 10.sp, lineHeight = 14.sp, fontFamily = Ui.mono)
+            }
+            Column(horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                Text("Opacity", color = Ui.muted, fontSize = 10.sp, lineHeight = 14.sp)
+                VerticalSlider(s.opacity, Ui.text, "Opacity", sliderHeight) { vm.settings = vm.settings.copy(opacity = it.coerceIn(0.01f, 1f)) }
+                Text("${(s.opacity * 100).roundToInt()}%", color = Ui.muted, fontSize = 10.sp, lineHeight = 14.sp, fontFamily = Ui.mono)
+            }
+        }
+    } else {
+        Column(panel.width(44.dp), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            Text("${s.size.roundToInt()}", color = Ui.muted, fontSize = 10.sp, fontFamily = Ui.mono)
+            VerticalSlider(sizeToPos(s.size), Ui.accent, "Brush size", sliderHeight) { vm.settings = vm.settings.copy(size = posToSize(it)) }
+            Box(Modifier.size(20.dp, 1.dp).background(Ui.border))
+            VerticalSlider(s.opacity, Ui.text, "Opacity", sliderHeight) { vm.settings = vm.settings.copy(opacity = it.coerceIn(0.01f, 1f)) }
+            Text("${(s.opacity * 100).roundToInt()}%", color = Ui.muted, fontSize = 10.sp, fontFamily = Ui.mono)
+        }
     }
 }
 
 @Composable
-private fun VerticalSlider(value: Float, fill: Color, label: String, onChange: (Float) -> Unit) {
+private fun VerticalSlider(value: Float, fill: Color, label: String, height: Dp, onChange: (Float) -> Unit) {
     var h by remember { mutableStateOf(1) }
+    val currentOnChange by androidx.compose.runtime.rememberUpdatedState(onChange)
     Box(
-        Modifier.width(44.dp).height(130.dp).onSizeChanged { h = it.height }
+        Modifier.width(44.dp).height(height).onSizeChanged { h = it.height }
+            .semantics {
+                contentDescription = label
+                progressBarRangeInfo = ProgressBarRangeInfo(value, 0f..1f)
+                setProgress { currentOnChange(it.coerceIn(0f, 1f)); true }
+            }
             .pointerInput(Unit) {
-                detectVerticalDragGestures(onDragStart = { o -> onChange(1f - (o.y / h).coerceIn(0f, 1f)) }) { change, _ ->
-                    onChange(1f - (change.position.y / h).coerceIn(0f, 1f))
+                detectVerticalDragGestures(onDragStart = { o -> currentOnChange(1f - (o.y / h).coerceIn(0f, 1f)) }) { change, _ ->
+                    currentOnChange(1f - (change.position.y / h).coerceIn(0f, 1f))
                 }
             },
         contentAlignment = Alignment.Center,
@@ -451,7 +545,7 @@ private fun VerticalSlider(value: Float, fill: Color, label: String, onChange: (
             Box(Modifier.align(Alignment.BottomCenter).fillMaxWidth().fillMaxHeight(value.coerceIn(0f, 1f)).background(fill))
         }
         Box(
-            Modifier.align(Alignment.BottomCenter).offset(y = (-(value.coerceIn(0f, 1f)) * 110).dp).size(20.dp).clip(CircleShape).background(Ui.text)
+            Modifier.align(Alignment.BottomCenter).offset(y = -(height - 20.dp) * value.coerceIn(0f, 1f)).size(20.dp).clip(CircleShape).background(Ui.text)
         )
     }
 }

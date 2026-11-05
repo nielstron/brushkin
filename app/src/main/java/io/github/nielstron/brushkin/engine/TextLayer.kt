@@ -34,7 +34,12 @@ data class TextSpec(
     val outlineColor: Int = 0xFFFFFFFF.toInt(),
 ) {
     val typeface: Typeface get() {
-        val style = (if (bold) Typeface.BOLD else 0) or (if (italic) Typeface.ITALIC else 0)
+        val style = when {
+            bold && italic -> Typeface.BOLD_ITALIC
+            bold -> Typeface.BOLD
+            italic -> Typeface.ITALIC
+            else -> Typeface.NORMAL
+        }
         return bundledFonts[family]?.let { Typeface.create(it, style) } ?: Typeface.create(family, style)
     }
 

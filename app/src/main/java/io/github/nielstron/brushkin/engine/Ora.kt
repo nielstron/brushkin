@@ -187,7 +187,12 @@ object Ora {
                 Canvas(flat).apply { drawColor(Color.WHITE); drawBitmap(bmp, 0f, 0f, null) }
                 flat.compress(Bitmap.CompressFormat.JPEG, 92, out)
             }
-            "webp" -> bmp.compress(Bitmap.CompressFormat.WEBP_LOSSLESS, 100, out)
+            "webp" -> {
+                // Android 10 uses quality 100 for lossless WebP; the named format arrived in 11.
+                @Suppress("DEPRECATION")
+                val webp = if (android.os.Build.VERSION.SDK_INT >= 30) Bitmap.CompressFormat.WEBP_LOSSLESS else Bitmap.CompressFormat.WEBP
+                bmp.compress(webp, 100, out)
+            }
             else -> bmp.compress(Bitmap.CompressFormat.PNG, 100, out)
         }
         return out.toByteArray()
