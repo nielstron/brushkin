@@ -113,11 +113,15 @@ enum class Tool(val label: String, val group: ToolGroup, val paint: PaintTool? =
     val directTransform get() = this == MOVE || this == SCALE || this == SHEAR || this == TRANSFORM_3D
 }
 
+data class ExportedImage(val uri: android.net.Uri, val mime: String)
+
 enum class Sheet { NONE, TOOLS, OPTIONS, COLOR, LAYERS, INSERT, HISTORY }
 
 class EditorViewModel(app: Application) : AndroidViewModel(app) {
     val engine = Engine()
     val messages = MutableSharedFlow<String>(extraBufferCapacity = 8)
+    var exportStatus by mutableStateOf<String?>(null)
+    var exportedImage by mutableStateOf<ExportedImage?>(null)
 
     var tool by mutableStateOf(Tool.BRUSH)
     var lastPaintTool by mutableStateOf(Tool.BRUSH)

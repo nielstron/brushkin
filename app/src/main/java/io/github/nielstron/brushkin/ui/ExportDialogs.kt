@@ -8,6 +8,9 @@ import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.rounded.SaveAs
+import androidx.compose.material.icons.rounded.Image
+import androidx.compose.material.icons.rounded.StickyNote2
 import androidx.compose.material.icons.rounded.Close
 import androidx.compose.material.icons.rounded.ExpandMore
 import androidx.compose.material3.*
@@ -30,8 +33,16 @@ import kotlin.math.roundToInt
 fun SaveMenuDialog(close: () -> Unit, open: (String) -> Unit) {
     AlertDialog(onDismissRequest = close, containerColor = Ui.panel, title = { Text("Save") },
         text = { Column {
-            for ((label, action) in listOf("Save as…" to "save-project", "Export image…" to "export-image", "Export as sticker…" to "export-sticker")) {
-                Text(label, color = Ui.text, modifier = Modifier.fillMaxWidth().clickable { open(action) }.padding(vertical = 16.dp))
+            for ((label, action, icon) in listOf(
+                Triple("Save as…", "save-project", Icons.Rounded.SaveAs),
+                Triple("Export image…", "export-image", Icons.Rounded.Image),
+                Triple("Export as sticker…", "export-sticker", Icons.Rounded.StickyNote2),
+            )) {
+                Row(Modifier.fillMaxWidth().clickable { open(action) }.padding(vertical = 16.dp),
+                    verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(16.dp)) {
+                    Icon(icon, null, tint = Ui.text)
+                    Text(label, color = Ui.text)
+                }
             }
         } }, confirmButton = { TextButton(onClick = close) { Text("Close") } })
 }
@@ -79,11 +90,7 @@ fun ImageExportDialog(info: DocInfo, close: () -> Unit, save: (ImageExportOption
             if (format == ImageFormat.JPEG || (format == ImageFormat.WEBP && !lossless)) {
                 Text("Quality: $quality%")
                 Slider(quality.toFloat(), { quality = it.roundToInt() }, valueRange = 1f..100f)
-                Text("Lower quality makes smaller files.", color = Ui.muted)
-            } else Text("Lossless compression preserves image detail.", color = Ui.muted)
-            Text("${info.width} × ${info.height} px", color = Ui.muted)
-            Text(if (format == ImageFormat.JPEG) "JPEG uses a white background for transparent areas." else "Transparency is preserved.", color = Ui.muted)
-            Text("Saves to Pictures/Brushkin", color = Ui.muted)
+            }
         } }, confirmButton = { TextButton(onClick = { save(options) }) { Text("Export") } },
         dismissButton = { TextButton(onClick = close) { Text("Cancel") } })
 }

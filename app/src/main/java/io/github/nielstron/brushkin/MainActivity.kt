@@ -138,13 +138,19 @@ class MainActivity : ComponentActivity(), FileActions {
     override fun saveProject() = createProject.launch("${vm.engine.docName.substringBeforeLast('.')}.ora")
 
     override fun export(options: ImageExportOptions) {
+        if (vm.exportStatus != null) return
+        vm.exportedImage = null
+        vm.exportStatus = "Preparing image"
         val format = options.format.extension
         lifecycleScope.launch {
+            var pending: Uri? = null
             try {
                 val bmp = vm.engine.flattened()
                 val name = "${vm.engine.docName.substringBeforeLast('.')}-${System.currentTimeMillis() / 1000}.$format"
-                withContext(Dispatchers.IO) {
+                vm.exportStatus = "Encoding ${options.format.label}"
+                val uri = withContext(Dispatchers.IO) {
                     val bytes = try { options.encode(bmp) } finally { bmp.recycle() }
+                    withContext(Dispatchers.Main) { vm.exportStatus = "Writing image" }
                     val values = ContentValues().apply {
                         put(MediaStore.Images.Media.DISPLAY_NAME, name)
                         put(MediaStore.Images.Media.MIME_TYPE, mime(format))
@@ -152,14 +158,24 @@ class MainActivity : ComponentActivity(), FileActions {
                         put(MediaStore.Images.Media.IS_PENDING, 1)
                     }
                     val uri = contentResolver.insert(MediaStore.Images.Media.EXTERNAL_CONTENT_URI, values) ?: error("Couldn't create file")
+                    pending = uri
                     contentResolver.openOutputStream(uri)!!.use { it.write(bytes) }
                     contentResolver.update(uri, ContentValues().apply { put(MediaStore.Images.Media.IS_PENDING, 0) }, null, null)
+                    uri
                 }
-                vm.messages.tryEmit("Saved to Pictures/Brushkin/$name")
+                pending = null
+                vm.exportedImage = io.github.nielstron.brushkin.ui.ExportedImage(uri, options.format.mime)
             } catch (t: Throwable) {
+                pending?.let { withContext(Dispatchers.IO) { contentResolver.delete(it, null, null) } }
                 vm.messages.tryEmit("Export failed: ${t.message}")
-            }
+            } finally { vm.exportStatus = null }
         }
+    }
+
+    override fun openExport(uri: Uri, mime: String) {
+        try {
+            startActivity(Intent(Intent.ACTION_VIEW).setDataAndType(uri, mime).addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION))
+        } catch (_: ActivityNotFoundException) { vm.messages.tryEmit("No app is installed to open this file") }
     }
 
     override fun share() {

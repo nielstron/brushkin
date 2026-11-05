@@ -94,6 +94,7 @@ interface FileActions {
     suspend fun removeSticker(packId: String, file: String): io.github.nielstron.brushkin.export.StickerPack
     fun importWhatsApp(packId: String)
     fun exportTelegram(emoji: String)
+    fun openExport(uri: android.net.Uri, mime: String)
     fun share()
     fun importResources()
 }
