@@ -120,6 +120,7 @@ enum class Sheet { NONE, TOOLS, OPTIONS, COLOR, LAYERS, INSERT, HISTORY }
 class EditorViewModel(app: Application) : AndroidViewModel(app) {
     val engine = Engine()
     val messages = MutableSharedFlow<String>(extraBufferCapacity = 8)
+    var importStatus by mutableStateOf<String?>(null)
     var exportStatus by mutableStateOf<String?>(null)
     var exportedImage by mutableStateOf<ExportedImage?>(null)
 

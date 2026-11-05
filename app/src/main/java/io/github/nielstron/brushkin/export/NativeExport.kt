@@ -10,7 +10,7 @@ object NativeExport {
     external fun gifAdd(handle: Long, pixels: IntArray, width: Int, height: Int, delay: Int, disposal: Int, interlace: Boolean)
     external fun gifFinish(handle: Long): ByteArray
     external fun gifClose(handle: Long)
-    external fun animationStart(width: Int, height: Int, loop: Boolean, minimize: Boolean, distance: Int): Long
+    external fun animationStart(width: Int, height: Int, loops: Int, minimize: Boolean, distance: Int): Long
     external fun animationAdd(handle: Long, pixels: IntArray, width: Int, height: Int, timestamp: Int, lossless: Boolean, quality: Int, alphaQuality: Int, preset: Int, sharp: Boolean)
     external fun animationFinish(handle: Long, timestamp: Int): ByteArray
     external fun animationClose(handle: Long)

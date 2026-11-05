@@ -15,17 +15,17 @@ import java.util.zip.InflaterInputStream
 
 /** Original metadata is kept with the document, independently of image pixels. */
 data class ExportMetadata(val exif: ByteArray? = null, val xmp: ByteArray? = null, val iptc: ByteArray? = null,
-    val jpegHeader: ByteArray? = null, val comment: String = "", val resolution: Int = 72) {
+    val jpegHeader: ByteArray? = null, val comment: String = "", val resolution: Int = 72, val animationLoops: Int? = null) {
     fun toJson() = JSONObject().apply {
         for ((name, value) in listOf("exif" to exif,"xmp" to xmp,"iptc" to iptc,"jpeg" to jpegHeader))
             value?.let { put(name, Base64.encodeToString(it, Base64.NO_WRAP)) }
-        put("comment", comment); put("resolution", resolution)
+        put("comment", comment); put("resolution", resolution); animationLoops?.let { put("animationLoops",it) }
     }.toString()
     companion object {
         fun fromJson(text: String): ExportMetadata {
             val j=JSONObject(text)
             fun read(k:String)=if(j.has(k)) Base64.decode(j.getString(k),Base64.NO_WRAP) else null
-            return ExportMetadata(read("exif"),read("xmp"),read("iptc"),read("jpeg"),j.optString("comment"), j.optInt("resolution",72))
+            return ExportMetadata(read("exif"),read("xmp"),read("iptc"),read("jpeg"),j.optString("comment"), j.optInt("resolution",72), if(j.has("animationLoops")) j.getInt("animationLoops") else null)
         }
         fun read(data: ByteArray): ExportMetadata {
             var exif:ByteArray?=null;var xmp:ByteArray?=null;var iptc:ByteArray?=null;var jpeg:ByteArray?=null;var comment="";var resolution=72

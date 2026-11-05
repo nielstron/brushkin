@@ -7,7 +7,7 @@ import io.github.nielstron.brushkin.engine.Stack
 private fun gifHandle(width:Int,height:Int,options:ImageExportOptions,animated:Boolean):Long {
     val comment=options.comment.takeIf{options.saveComment}.orEmpty()
     require(comment.all{it.code<=127}) { "GIF comments support ASCII characters only" }
-    return NativeExport.gifStart(width,height,if(!animated)-1 else if(options.loopForever)0 else options.repeats-1,comment)
+    return NativeExport.gifStart(width,height,if(!animated || (!options.loopForever && options.repeats==1))-1 else if(options.loopForever)0 else options.repeats-1,comment)
 }
 private fun gifFrame(handle:Long,frame:Bitmap,options:ImageExportOptions,delay:Int,disposal:Int) {
     val pixels=IntArray(frame.width*frame.height);frame.getPixels(pixels,0,frame.width,0,0,frame.width,frame.height)
