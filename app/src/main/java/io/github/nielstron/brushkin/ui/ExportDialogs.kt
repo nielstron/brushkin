@@ -150,7 +150,7 @@ fun ImageExportDialog(info: DocInfo, files: FileActions, close: () -> Unit, save
                     ExportToggle("Save resolution", options.saveResolution) { options = options.copy(saveResolution = it) }
                     ExportToggle("Save creation time", options.saveCreationTime) { options = options.copy(saveCreationTime = it) }
                     ExportToggle("Save comment", options.saveComment) { options = options.copy(saveComment = it) }
-                
+
                 }
                 ImageFormat.JPEG -> {
                     ExportToggle("Use quality settings from original image", options.useOriginalQuality && info.exportMetadata.jpegHeader != null, info.exportMetadata.jpegHeader != null) { options = options.copy(useOriginalQuality = it) }
@@ -165,7 +165,7 @@ fun ImageExportDialog(info: DocInfo, files: FileActions, close: () -> Unit, save
                         if (options.restartRows > 0) ExportSlider("Interval (MCU rows)", options.restartRows, 1..64) { options = options.copy(restartRows = it) }
                         Choice("Subsampling", options.subsampling, JpegSampling.entries, { it.label }, enabled = !options.cmyk) { options = options.copy(subsampling = it) }
                         Choice("DCT method", options.dct, JpegDct.entries, { it.label }) { options = options.copy(dct = it) }
-                    
+
                 }
                 ImageFormat.GIF -> {
                     ExportToggle("Interlace", options.interlace) { options = options.copy(interlace = it) }
@@ -179,7 +179,7 @@ fun ImageExportDialog(info: DocInfo, files: FileActions, close: () -> Unit, save
                         ExportToggle("Use delay for all frames", options.forceFrameDelay) { options = options.copy(forceFrameDelay = it) }
                         ExportToggle("Use disposal for all frames", options.forceDisposal) { options = options.copy(forceDisposal = it) }
                     }
-                
+
                 }
                 ImageFormat.WEBP -> {
                     Choice("Source type", options.webpSource, WebpSource.entries, { it.label }) { options = options.copy(webpSource = it) }
@@ -192,7 +192,7 @@ fun ImageExportDialog(info: DocInfo, files: FileActions, close: () -> Unit, save
                         ExportSlider("Delay between frames (ms)", options.frameDelay, 1..10000) { options = options.copy(frameDelay = it) }
                         ExportToggle("Use delay for all frames", options.forceFrameDelay) { options = options.copy(forceFrameDelay = it) }
                     }
-                
+
                 }
             }
             if (previewBusy) LinearProgressIndicator(Modifier.fillMaxWidth())
