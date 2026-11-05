@@ -88,7 +88,12 @@ interface FileActions {
     fun openProject()
     fun saveProject()
     fun saveXcf()
-    fun export(format: String)
+    fun export(options: io.github.nielstron.brushkin.export.ImageExportOptions)
+    suspend fun stickerPacks(): List<io.github.nielstron.brushkin.export.StickerPack>
+    suspend fun addSticker(packId: String?, name: String, emoji: String): io.github.nielstron.brushkin.export.StickerPack
+    suspend fun removeSticker(packId: String, file: String): io.github.nielstron.brushkin.export.StickerPack
+    fun importWhatsApp(packId: String)
+    fun exportTelegram(emoji: String)
     fun share()
     fun importResources()
 }
@@ -120,21 +125,10 @@ fun Dialogs(vm: EditorViewModel, info: DocInfo, files: FileActions) {
     val close = { vm.dialog = null }
     val e = vm.engine
     when {
-        d == "export" -> AlertDialog(
-            onDismissRequest = close, containerColor = Ui.panel,
-            title = { Text("Export") },
-            text = {
-                Column {
-                    for ((label, fmt) in listOf("PNG (lossless)" to "png", "JPEG" to "jpg", "WebP" to "webp")) {
-                        Text(label, color = Ui.text, modifier = Modifier.fillMaxWidth().clickable { close(); files.export(fmt) }.padding(vertical = 14.dp))
-                    }
-                    Text("Share…", color = Ui.text, modifier = Modifier.fillMaxWidth().clickable { close(); files.share() }.padding(vertical = 14.dp))
-                    Text("Save project with layers (.ora)…", color = Ui.text, modifier = Modifier.fillMaxWidth().clickable { close(); files.saveProject() }.padding(vertical = 14.dp))
-                    Text("Save for GIMP (.xcf)…", color = Ui.text, modifier = Modifier.fillMaxWidth().clickable { close(); files.saveXcf() }.padding(vertical = 14.dp))
-                }
-            },
-            confirmButton = { TextButton(onClick = close) { Text("Close") } },
-        )
+        d == "save" -> SaveMenuDialog(close) { vm.dialog = it }
+        d == "export-image" -> ImageExportDialog(info, close) { options -> close(); files.export(options) }
+        d == "save-project" -> SaveProjectDialog(close) { xcf -> close(); if (xcf) files.saveXcf() else files.saveProject() }
+        d == "export-sticker" -> StickerExportDialog(info, files, close)
         d == "new" -> NewImageDialog(vm, close)
         d == "emoji" -> EmojiDialog(vm, close)
         d == "text" -> { close(); vm.selectTool(Tool.TEXT); vm.messages.tryEmit("Tap where the text should go") }

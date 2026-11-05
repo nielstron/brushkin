@@ -1552,6 +1552,22 @@ class Engine {
 
     suspend fun flattened(background: Int? = null): Bitmap = withContext(dispatcher) { Compositor.flatten(stack, background) }
 
+    /** Sticker exports use the current selection as a transparent cutout when present. */
+    suspend fun stickerImage(): Bitmap = withContext(dispatcher) {
+        val s = stack
+        val flat = Compositor.flatten(s)
+        val selection = s.selection ?: return@withContext flat
+        val b = selection.bounds
+        val out = Bitmap.createBitmap(b.width(), b.height(), Bitmap.Config.ARGB_8888)
+        Canvas(out).apply {
+            translate(-b.left.toFloat(), -b.top.toFloat())
+            drawBitmap(flat, 0f, 0f, null)
+            MaskOps.apply(this, selection.mask, 0f, 0f)
+        }
+        flat.recycle()
+        out
+    }
+
     suspend fun snapshot(): Stack = withContext(dispatcher) {
         // Tiles are copy-on-write, so a shallow copy of each layer's tile array is a consistent snapshot.
         val s = stack

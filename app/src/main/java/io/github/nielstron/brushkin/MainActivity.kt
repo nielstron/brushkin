@@ -1,5 +1,8 @@
 package io.github.nielstron.brushkin
 
+import android.content.ActivityNotFoundException
+import android.content.ClipData
+import io.github.nielstron.brushkin.export.*
 import android.content.ContentValues
 import android.content.Intent
 import android.graphics.Bitmap
@@ -134,13 +137,14 @@ class MainActivity : ComponentActivity(), FileActions {
     override fun saveXcf() = createXcf.launch("${vm.engine.docName.substringBeforeLast('.')}.xcf")
     override fun saveProject() = createProject.launch("${vm.engine.docName.substringBeforeLast('.')}.ora")
 
-    override fun export(format: String) {
+    override fun export(options: ImageExportOptions) {
+        val format = options.format.extension
         lifecycleScope.launch {
             try {
                 val bmp = vm.engine.flattened()
                 val name = "${vm.engine.docName.substringBeforeLast('.')}-${System.currentTimeMillis() / 1000}.$format"
                 withContext(Dispatchers.IO) {
-                    val bytes = Ora.encode(bmp, format)
+                    val bytes = try { options.encode(bmp) } finally { bmp.recycle() }
                     val values = ContentValues().apply {
                         put(MediaStore.Images.Media.DISPLAY_NAME, name)
                         put(MediaStore.Images.Media.MIME_TYPE, mime(format))
@@ -172,6 +176,65 @@ class MainActivity : ComponentActivity(), FileActions {
                 }, "Share image"))
             } catch (t: Throwable) {
                 vm.messages.tryEmit("Share failed: ${t.message}")
+            }
+        }
+    }
+
+    private val stickerStore by lazy { StickerStore(this) }
+
+    override suspend fun stickerPacks() = withContext(Dispatchers.IO) { stickerStore.packs() }
+    override suspend fun addSticker(packId: String?, name: String, emoji: String): StickerPack {
+        val image = vm.engine.stickerImage()
+        return try { withContext(Dispatchers.IO) { stickerStore.add(image, packId, name, emoji) } }
+        finally { image.recycle() }
+    }
+    override suspend fun removeSticker(packId: String, file: String) = withContext(Dispatchers.IO) { stickerStore.remove(packId, file) }
+
+    override fun importWhatsApp(packId: String) {
+        lifecycleScope.launch {
+            try {
+                val pack = withContext(Dispatchers.IO) { stickerStore.pack(packId) }
+                require(pack.stickers.size in WHATSAPP_MIN_STICKERS..WHATSAPP_MAX_STICKERS)
+                val intent = Intent("com.whatsapp.intent.action.ENABLE_STICKER_PACK").apply {
+                    putExtra("sticker_pack_id", pack.id)
+                    putExtra("sticker_pack_authority", "$packageName.stickers")
+                    putExtra("sticker_pack_name", pack.name)
+                    setPackage("com.whatsapp")
+                }
+                if (intent.resolveActivity(packageManager) == null) intent.setPackage("com.whatsapp.w4b")
+                startActivity(intent)
+            } catch (_: ActivityNotFoundException) {
+                vm.messages.tryEmit("Install WhatsApp or WhatsApp Business to import this pack. Your stickers are saved in Brushkin.")
+            } catch (t: Exception) {
+                vm.messages.tryEmit("Sticker import failed: ${t.message}")
+            }
+        }
+    }
+
+    override fun exportTelegram(emoji: String) {
+        lifecycleScope.launch {
+            try {
+                val source = vm.engine.stickerImage()
+                val file = try { withContext(Dispatchers.IO) {
+                    val bitmap = stickerBitmap(source)
+                    try {
+                        val dir = File(cacheDir, "share").apply { mkdirs() }
+                        File(dir, "sticker-${java.util.UUID.randomUUID()}.webp").also { it.writeBytes(encodeSticker(bitmap, 512_000)) }
+                    } finally { bitmap.recycle() }
+                } } finally { source.recycle() }
+                val uri = FileProvider.getUriForFile(this@MainActivity, "$packageName.files", file)
+                startActivity(Intent("org.telegram.messenger.CREATE_STICKER_PACK").apply {
+                    type = "image/*"
+                    putParcelableArrayListExtra(Intent.EXTRA_STREAM, arrayListOf(uri))
+                    putStringArrayListExtra("STICKER_EMOJIS", arrayListOf(emoji))
+                    putExtra("IMPORTER", packageName)
+                    clipData = ClipData.newUri(contentResolver, "Sticker", uri)
+                    addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                })
+            } catch (_: ActivityNotFoundException) {
+                vm.messages.tryEmit("Install Telegram to import your sticker")
+            } catch (t: Exception) {
+                vm.messages.tryEmit("Sticker export failed: ${t.message}")
             }
         }
     }

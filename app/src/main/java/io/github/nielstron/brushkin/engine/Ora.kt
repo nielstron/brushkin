@@ -178,20 +178,23 @@ object Ora {
 
     private fun esc(s: String) = s.replace("&", "&amp;").replace("\"", "&quot;").replace("<", "&lt;").replace(">", "&gt;")
 
-    fun encode(bmp: Bitmap, format: String): ByteArray {
+    fun encode(bmp: Bitmap, format: String, quality: Int = 92, lossless: Boolean = true): ByteArray {
         val out = ByteArrayOutputStream()
         when (format) {
             "jpg" -> {
                 // JPEG has no alpha; composite over white first.
                 val flat = Bitmap.createBitmap(bmp.width, bmp.height, Bitmap.Config.ARGB_8888)
                 Canvas(flat).apply { drawColor(Color.WHITE); drawBitmap(bmp, 0f, 0f, null) }
-                flat.compress(Bitmap.CompressFormat.JPEG, 92, out)
+                flat.compress(Bitmap.CompressFormat.JPEG, quality, out)
+                flat.recycle()
             }
             "webp" -> {
                 // Android 10 uses quality 100 for lossless WebP; the named format arrived in 11.
                 @Suppress("DEPRECATION")
-                val webp = if (android.os.Build.VERSION.SDK_INT >= 30) Bitmap.CompressFormat.WEBP_LOSSLESS else Bitmap.CompressFormat.WEBP
-                bmp.compress(webp, 100, out)
+                val webp = if (android.os.Build.VERSION.SDK_INT >= 30) {
+                    if (lossless) Bitmap.CompressFormat.WEBP_LOSSLESS else Bitmap.CompressFormat.WEBP_LOSSY
+                } else Bitmap.CompressFormat.WEBP
+                bmp.compress(webp, if (lossless) 100 else quality.coerceAtMost(99), out)
             }
             else -> bmp.compress(Bitmap.CompressFormat.PNG, 100, out)
         }
