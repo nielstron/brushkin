@@ -18,8 +18,8 @@ android {
         applicationId = "de.nielstron.brushkin"
         minSdk = 29
         targetSdk = 36
-        versionCode = 10
-        versionName = "0.6.1"
+        versionCode = 11
+        versionName = "0.6.2"
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         // LiteRT (object selection) ships native code: ARM only (phones), which keeps the APK small.
         ndk { abiFilters += listOf("arm64-v8a", "armeabi-v7a") }
@@ -39,6 +39,11 @@ android {
 
     buildTypes {
         debug {
+            // Install the hardware experiment beside the user's normal app and documents.
+            if (providers.gradleProperty("openClPrototype").orNull == "true") {
+                applicationIdSuffix = ".opencl"
+                versionNameSuffix = "-opencl"
+            }
             resValue("string", "app_name", "Brushkin Preview")
         }
         release {
