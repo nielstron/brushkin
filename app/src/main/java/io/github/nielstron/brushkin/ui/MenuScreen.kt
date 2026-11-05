@@ -309,8 +309,9 @@ fun MenuScreen(vm: EditorViewModel, info: DocInfo, files: FileActions, holder: C
             }
         }
         LazyColumn(Modifier.fillMaxSize()) {
-            if (query.isNotBlank()) {
-                val q = query.trim().lowercase()
+            if (query.trim().length == 1) {
+                item { Text("Type more for results", color = Ui.muted, modifier = Modifier.padding(24.dp)) }
+            } else if (query.isNotBlank()) {
                 val hits = search.search(query)
                 items(hits) { c -> CmdRow(c, showSection = true) { run(c) } }
                 if (hits.isEmpty()) item { Text("No command matches “$query”", color = Ui.muted, modifier = Modifier.padding(24.dp)) }
