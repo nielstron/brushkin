@@ -1,5 +1,7 @@
 package io.github.nielstron.brushkin.ui
 
+import androidx.compose.material.icons.rounded.Add
+import androidx.compose.material.icons.rounded.Close
 import androidx.compose.material.icons.rounded.Star
 import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.material.icons.rounded.Colorize
@@ -494,7 +496,7 @@ private fun LayersSheet(vm: EditorViewModel, info: DocInfo) {
             Row(
                 Modifier.weight(1f).height(52.dp).clip(RoundedCornerShape(14.dp)).background(Ui.accent).clickable { e.addLayer() },
                 horizontalArrangement = Arrangement.Center, verticalAlignment = Alignment.CenterVertically,
-            ) { Text("+  New layer", color = Ui.onAccent, fontWeight = FontWeight.SemiBold) }
+            ) { Icon(Icons.Rounded.Add, null, tint = Ui.onAccent); Spacer(Modifier.width(6.dp)); Text("New layer", color = Ui.onAccent, fontWeight = FontWeight.SemiBold) }
             SquareAction(Icons.Rounded.CreateNewFolder, "New layer group") { e.addGroup() }
             SquareAction(Icons.Rounded.ContentCopy, "Duplicate layer") { e.duplicateLayer() }
             SquareAction(Icons.Rounded.VerticalAlignBottom, "Merge down") { e.mergeDown(info.activeId) }
@@ -601,7 +603,7 @@ private fun LayerRow(vm: EditorViewModel, l: LayerInfo, active: Boolean, info: D
                     Text("Effects", color = Ui.muted, fontSize = 12.sp)
                     for ((i, fx) in l.effects.withIndex()) {
                         Chip(fx.name, fx.visible) { e.setEffects(l.id, if (fx.visible) "Hide Effect" else "Show Effect") { list -> list.mapIndexed { k, x -> if (k == i) x.copy(visible = !x.visible) else x } } }
-                        Text("✕", color = Ui.muted, modifier = Modifier.clickable { e.setEffects(l.id, "Remove Effect") { list -> list.filterIndexed { k, _ -> k != i } } }.padding(4.dp))
+                        IconButton(onClick = { e.setEffects(l.id, "Remove Effect") { list -> list.filterIndexed { k, _ -> k != i } } }) { Icon(Icons.Rounded.Close, "Remove effect", tint = Ui.muted, modifier = Modifier.size(18.dp)) }
                     }
                     Chip("Merge", false) { e.mergeEffects(l.id) }
                 }
@@ -913,7 +915,7 @@ private fun PaletteSection(vm: EditorViewModel) {
             Modifier.size(36.dp).clip(RoundedCornerShape(10.dp)).border(1.dp, Ui.border, RoundedCornerShape(10.dp))
                 .clickable { vm.palette = vm.resources.savePalette(io.github.nielstron.brushkin.engine.PaletteRes(current.name, current.colors + vm.fg), current) },
             contentAlignment = Alignment.Center,
-        ) { Text("+", color = Ui.text, fontSize = 18.sp) }
+        ) { Icon(Icons.Rounded.Add, "Add", tint = Ui.text) }
     }
     if (current != null) Text("Tap + to add the current color · long-press a swatch to remove it", color = Ui.muted, fontSize = 11.sp, modifier = Modifier.padding(top = 6.dp))
 }
