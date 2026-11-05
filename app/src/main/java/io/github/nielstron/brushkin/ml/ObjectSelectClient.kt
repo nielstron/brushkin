@@ -25,9 +25,9 @@ class ObjectSelectClient(private val store: ModelStore) {
     companion object {
         // Encoders: float weights with GPU-friendly attention for the GPU, 8-bit weights for the CPU
         // (tools/export_mobilesam.py). Decoder with refinement inputs (tools/export_models.py).
-        val ENC_CPU = ModelFile("models-mobilesam-2", "mobilesam_encoder.tflite", 11_301_680L, "00d8a83a751abc7723d071bbee9a66ab039faf2821976e9de2da0eb07af78fca")
-        val ENC_GPU = ModelFile("models-mobilesam-2", "mobilesam_encoder_gpu.tflite", 28_339_460L, "8aae003faf1b1c3fb27af0a6b6961a36d8d4084613c576be6b200ce399f9f3f2")
-        val DEC = ModelFile("models-2", "mobilesam_decoder_refine.tflite", 11_323_152L, "e0b8905036bb93427852a3bb5612e4c73ccb269e3cda138bfc001b2646aec0c0")
+        val ENC_CPU = ModelFile("mobilesam_encoder.tflite", 11_301_680L, "00d8a83a751abc7723d071bbee9a66ab039faf2821976e9de2da0eb07af78fca")
+        val ENC_GPU = ModelFile("mobilesam_encoder_gpu.tflite", 28_339_460L, "8aae003faf1b1c3fb27af0a6b6961a36d8d4084613c576be6b200ce399f9f3f2")
+        val DEC = ModelFile("mobilesam_decoder_refine.tflite", 11_323_152L, "e0b8905036bb93427852a3bb5612e4c73ccb269e3cda138bfc001b2646aec0c0")
         /** Most taps per object (the decoder takes up to 9 prompt points). */
         const val POINTS = 8
         private const val SIDE = 1024

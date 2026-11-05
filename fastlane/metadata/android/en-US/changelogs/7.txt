@@ -1,0 +1,1 @@
+Fixes MobileSAM downloads by hosting all on-device models in one shared release. Removes unused foreground-service permissions. Includes landscape layout improvements and optional Google Play ad removal.
