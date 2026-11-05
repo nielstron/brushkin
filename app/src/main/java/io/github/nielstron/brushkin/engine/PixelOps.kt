@@ -72,6 +72,7 @@ sealed interface Filter {
     val bandAlign: Int get() = 1
     /** Needs the whole image at once (position-dependent or histogram-based filters). */
     val wholeImage: Boolean get() = false
+    fun incremental(width: Int, height: Int): IncrementalFilter? = null
 }
 
 /** Per-channel LUT filter used by Curves, Brightness-Contrast, Invert, Threshold, Posterize. */
