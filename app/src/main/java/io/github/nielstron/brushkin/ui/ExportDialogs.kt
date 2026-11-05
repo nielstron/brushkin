@@ -69,9 +69,7 @@ fun ImageExportDialog(info: DocInfo, close: () -> Unit, save: (ImageExportOption
     var format by rememberSaveable { mutableStateOf(ImageFormat.PNG) }
     var quality by rememberSaveable { mutableIntStateOf(92) }
     var lossless by rememberSaveable { mutableStateOf(true) }
-    var scale by rememberSaveable { mutableIntStateOf(100) }
-    val options = ImageExportOptions(format, quality, lossless, scale)
-    val (w, h) = options.dimensions(info.width, info.height)
+    val options = ImageExportOptions(format, quality, lossless)
     AlertDialog(onDismissRequest = close, containerColor = Ui.panel, title = { Text("Export image") },
         text = { Column(Modifier.verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(12.dp)) {
             Choice("Format", format, ImageFormat.entries, { it.label }) { format = it }
@@ -83,8 +81,7 @@ fun ImageExportDialog(info: DocInfo, close: () -> Unit, save: (ImageExportOption
                 Slider(quality.toFloat(), { quality = it.roundToInt() }, valueRange = 1f..100f)
                 Text("Lower quality makes smaller files.", color = Ui.muted)
             } else Text("Lossless compression preserves image detail.", color = Ui.muted)
-            Text("Size: $scale% · $w × $h px")
-            Slider(scale.toFloat(), { scale = it.roundToInt() }, valueRange = 1f..100f)
+            Text("${info.width} × ${info.height} px", color = Ui.muted)
             Text(if (format == ImageFormat.JPEG) "JPEG uses a white background for transparent areas." else "Transparency is preserved.", color = Ui.muted)
             Text("Saves to Pictures/Brushkin", color = Ui.muted)
         } }, confirmButton = { TextButton(onClick = { save(options) }) { Text("Export") } },
