@@ -12,8 +12,8 @@ The decoder takes exactly two prompt points: a tap plus SAM's padding point (lab
 
 Usage (Python 3.11; pip install litert-torch==0.10.0 ai-edge-quantizer==0.10.1 timm):
   tools/export_mobilesam.py OUT_DIR
-The files are attached to the GitHub release "models-mobilesam-2"; their SHA-256 hashes are
-pinned in app/src/foss/.../ml/ObjectSelectClient.kt.
+The files are attached to the GitHub shared release "models-2"; their SHA-256 hashes are
+pinned in app/src/main/.../ml/ObjectSelectClient.kt.
 """
 import os, subprocess, sys, tempfile, hashlib, warnings
 

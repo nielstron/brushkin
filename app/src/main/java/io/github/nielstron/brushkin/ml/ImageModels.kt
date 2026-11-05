@@ -16,17 +16,16 @@ import kotlin.math.roundToInt
  */
 class ImageModels(private val store: ModelStore) {
     companion object {
-        private const val R = "models-2"
         /** NAFNet-SIDD-width32 (MIT): real camera noise. */
-        val DENOISE = ModelFile(R, "nafnet_denoise_256.tflite", 117_171_864L, "d3899ae5d20bf60b0d2fda1916897f22215c218ebff7b4ba6e74dd5584ca87ae")
+        val DENOISE = ModelFile("nafnet_denoise_256.tflite", 117_171_864L, "d3899ae5d20bf60b0d2fda1916897f22215c218ebff7b4ba6e74dd5584ca87ae")
         /** NAFNet-GoPro-width32 (MIT): camera shake and motion blur. */
-        val DEBLUR = ModelFile(R, "nafnet_deblur_384.tflite", 68_980_796L, "4c57d3b981f93530ae5d68c218f6894863b3df8c8a8c76dee5abc85ae3a769f6")
+        val DEBLUR = ModelFile("nafnet_deblur_384.tflite", 68_980_796L, "4c57d3b981f93530ae5d68c218f6894863b3df8c8a8c76dee5abc85ae3a769f6")
         /** PLKSR-Rep (MIT, NTIRE 2026 mobile real-world super-resolution winner): ×4. */
-        val UPSCALE = ModelFile(R, "plksr_x4_128.tflite", 12_824_448L, "21e4abe91ceaa4224a4bd5603a2220e51c9fe89a791c892db4674a03774e3c47")
+        val UPSCALE = ModelFile("plksr_x4_128.tflite", 12_824_448L, "21e4abe91ceaa4224a4bd5603a2220e51c9fe89a791c892db4674a03774e3c47")
         /** ZipDepth (MIT): relative depth, larger = nearer. */
-        val DEPTH = ModelFile(R, "zipdepth_512.tflite", 24_653_328L, "ab46eb82935ecae5549ad9413a73e20db73e75661484cb96dada6c5f44b16e46")
+        val DEPTH = ModelFile("zipdepth_512.tflite", 24_653_328L, "ab46eb82935ecae5549ad9413a73e20db73e75661484cb96dada6c5f44b16e46")
         /** MI-GAN Places2 512 (MIT): fills a hole from its surroundings. */
-        val INPAINT = ModelFile(R, "migan_512.tflite", 28_068_036L, "10fda63d6f145f022cd827ac5b17812714956fbb821953daeb795b02ed31024d")
+        val INPAINT = ModelFile("migan_512.tflite", 28_068_036L, "10fda63d6f145f022cd827ac5b17812714956fbb821953daeb795b02ed31024d")
         const val DEPTH_SIDE = 512
         private const val INPAINT_SIDE = 512
     }

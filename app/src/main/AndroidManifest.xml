@@ -1,7 +1,12 @@
 <?xml version="1.0" encoding="utf-8"?>
-<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:tools="http://schemas.android.com/tools">
     <!-- Model downloads after consent; the optional Play build also uses ads and billing. -->
     <uses-permission android:name="android.permission.INTERNET" />
+    <!-- LiteRT declares these for AiPack downloads. Brushkin downloads model files itself
+         and uses CPU/GPU inference, without AiPack or a foreground service. -->
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" tools:node="remove" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_DATA_SYNC" tools:node="remove" />
 
     <application
         android:allowBackup="true"

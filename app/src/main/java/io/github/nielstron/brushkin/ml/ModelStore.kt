@@ -12,8 +12,9 @@ import java.net.HttpURLConnection
 import java.net.URL
 import java.security.MessageDigest
 
-/** A model file attached to one of the project's GitHub releases, pinned by size and SHA-256. */
-class ModelFile(val release: String, val name: String, val size: Long, val sha256: String) {
+/** A model file attached to the project's shared model release, pinned by size and SHA-256. */
+class ModelFile(val name: String, val size: Long, val sha256: String) {
+    val release get() = "models-2"
     val url get() = "https://github.com/nielstron/brushkin/releases/download/$release/$name"
 }
 
