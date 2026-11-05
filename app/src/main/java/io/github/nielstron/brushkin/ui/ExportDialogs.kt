@@ -100,7 +100,7 @@ private fun ExportSlider(label: String, value: Int, range: IntRange, enabled: Bo
 
 @Composable
 fun ImageExportDialog(info: DocInfo, files: FileActions, close: () -> Unit, save: (ImageExportOptions) -> Unit) {
-    var options by remember { mutableStateOf(ImageExportOptions(comment = info.exportMetadata.comment, resolution = info.exportMetadata.resolution)) }
+    var options by remember { mutableStateOf(ImageExportOptions(comment = info.exportMetadata.comment, resolution = info.exportMetadata.resolution, loopForever = info.exportMetadata.animationLoops?.let { it == 0 } ?: true, repeats = maxOf(1,info.exportMetadata.animationLoops ?: 1))) }
     val context = LocalContext.current
     val preferences = remember { context.getSharedPreferences("image-export", android.content.Context.MODE_PRIVATE) }
     var hasSavedSettings by remember { mutableStateOf(preferences.contains("saved")) }

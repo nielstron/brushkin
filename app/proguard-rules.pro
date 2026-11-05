@@ -5,3 +5,5 @@
 -dontwarn com.google.android.play.**
 # JNI entry points are resolved by their Java names.
 -keep class io.github.nielstron.brushkin.export.NativeExport { *; }
+
+-keep class io.github.nielstron.brushkin.export.NativeDecode { *; }

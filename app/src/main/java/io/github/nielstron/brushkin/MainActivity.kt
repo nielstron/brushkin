@@ -6,7 +6,6 @@ import io.github.nielstron.brushkin.export.*
 import android.content.ContentValues
 import android.content.Intent
 import android.graphics.Bitmap
-import android.graphics.ImageDecoder
 import android.net.Uri
 import android.os.Bundle
 import android.os.Environment
@@ -274,23 +273,16 @@ class MainActivity : ComponentActivity(), FileActions {
         }
     }
 
-    private fun mime(f: String) = when (f) { "jpg" -> "image/jpeg"; "webp" -> "image/webp"; else -> "image/png" }
 
     private fun displayName(uri: Uri): String = runCatching {
         contentResolver.query(uri, arrayOf(OpenableColumns.DISPLAY_NAME), null, null, null)?.use { c -> if (c.moveToFirst()) c.getString(0) else null }
     }.getOrNull() ?: "Untitled"
 
-    /** Images up to 8192 px / 40 MP open at full size; larger ones are scaled down (and we say so). */
-    private suspend fun decode(uri: Uri, maxDim: Int = 8192, maxPixels: Long = 40_000_000): Bitmap = withContext(Dispatchers.IO) {
-        var scaledFrom: android.util.Size? = null
-        ImageDecoder.decodeBitmap(ImageDecoder.createSource(contentResolver, uri)) { d, info, _ ->
-            d.allocator = ImageDecoder.ALLOCATOR_SOFTWARE
-            d.isMutableRequired = true
-            val s = info.size
-            val k = maxOf(maxOf(s.width, s.height).toFloat() / maxDim, kotlin.math.sqrt(s.width.toDouble() * s.height / maxPixels).toFloat())
-            if (k > 1f) { d.setTargetSize((s.width / k).toInt(), (s.height / k).toInt()); scaledFrom = s }
-        }.let { if (it.config != Bitmap.Config.ARGB_8888) it.copy(Bitmap.Config.ARGB_8888, true) else it }
-            .also { b -> scaledFrom?.let { vm.messages.tryEmit("Scaled from ${it.width}×${it.height} to ${b.width}×${b.height} to fit in memory") } }
+    private suspend fun decode(uri: Uri): Bitmap = withContext(Dispatchers.IO) {
+        val result=contentResolver.openInputStream(uri)!!.use { ImageImport.firstFrame(it.readBytes()) }
+        if(result.originalWidth!=result.bitmap.width || result.originalHeight!=result.bitmap.height)
+            vm.messages.tryEmit("Scaled from ${result.originalWidth}×${result.originalHeight} to ${result.bitmap.width}×${result.bitmap.height} to fit in memory")
+        result.bitmap
     }
 
     private fun insertImage(uri: Uri) {
@@ -302,6 +294,8 @@ class MainActivity : ComponentActivity(), FileActions {
     }
 
     private fun open(uri: Uri) {
+        if(vm.importStatus!=null)return
+        vm.importStatus="Opening image"
         lifecycleScope.launch {
             val name = withContext(Dispatchers.IO) { displayName(uri) }
             try {
@@ -312,12 +306,14 @@ class MainActivity : ComponentActivity(), FileActions {
                     val stack = withContext(Dispatchers.IO) { contentResolver.openInputStream(uri)!!.use { Ora.read(it) } }
                     vm.engine.openStack(stack, name)
                 } else {
-                    val metadata = withContext(Dispatchers.IO) { contentResolver.openInputStream(uri)!!.use { ExportMetadata.read(it.readBytes()) } }
-                    vm.engine.openImage(decode(uri), name, metadata)
+                    val result = withContext(Dispatchers.IO) { contentResolver.openInputStream(uri)!!.use { ImageImport.open(it.readBytes(),name) } }
+                    if(result.originalWidth!=result.stack.width || result.originalHeight!=result.stack.height)
+                        vm.messages.tryEmit("Scaled from ${result.originalWidth}×${result.originalHeight} to ${result.stack.width}×${result.stack.height} to fit in memory")
+                    vm.engine.openStack(result.stack,name)
                 }
             } catch (t: Throwable) {
                 vm.messages.tryEmit("Couldn't open $name: ${t.message}")
-            }
+            } finally { vm.importStatus=null }
         }
     }
 

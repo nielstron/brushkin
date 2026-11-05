@@ -315,7 +315,7 @@ fun EditorScreen(vm: EditorViewModel, files: FileActions, store: StoreIntegratio
             }
         }
 
-        val anyBusy = vm.exportStatus ?: busy ?: vm.mlBusy
+        val anyBusy = vm.importStatus ?: vm.exportStatus ?: busy ?: vm.mlBusy
         val progress by vm.engine.progress.collectAsState()
         if (anyBusy != null) {
             // Full-width card: what's happening, and a bar that fills when the progress is known.
@@ -324,13 +324,13 @@ fun EditorScreen(vm: EditorViewModel, files: FileActions, store: StoreIntegratio
                     .clip(RoundedCornerShape(16.dp)).background(Ui.panel).padding(horizontal = 16.dp, vertical = 12.dp),
                 verticalArrangement = Arrangement.spacedBy(8.dp),
             ) {
-                val canCancel = vm.exportStatus == null && (vm.engine.cancellable.collectAsState().value || (busy == null && vm.mlBusy != null))
+                val canCancel = vm.importStatus == null && vm.exportStatus == null && (vm.engine.cancellable.collectAsState().value || (busy == null && vm.mlBusy != null))
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Text("$anyBusy…", color = Ui.text, fontSize = 13.sp, modifier = Modifier.weight(1f))
                     if (canCancel) Icon(Icons.Rounded.Close, "Cancel", tint = Ui.text,
                         modifier = Modifier.clip(CircleShape).clickable { vm.cancelWork() }.padding(4.dp).size(20.dp))
                 }
-                val p = progress.takeIf { busy != null && vm.exportStatus == null }
+                val p = progress.takeIf { busy != null && vm.importStatus == null && vm.exportStatus == null }
                 val mod = Modifier.fillMaxWidth().height(6.dp).clip(RoundedCornerShape(3.dp))
                 if (p != null) LinearProgressIndicator(progress = { p }, modifier = mod, color = Ui.accent, trackColor = Ui.panel2, drawStopIndicator = {})
                 else LinearProgressIndicator(modifier = mod, color = Ui.accent, trackColor = Ui.panel2)

@@ -5,7 +5,7 @@ import io.github.nielstron.brushkin.engine.Stack
 
 /** GIMP's bottom-to-top layer frames, with optional (Nms) and (combine)/(replace) name tags. */
 fun encodeWebpAnimation(stack: Stack, options: ImageExportOptions): ByteArray {
-    val handle=NativeExport.animationStart(stack.width,stack.height,options.loopForever,options.minimizeSize,options.keyframeDistance)
+    val handle=NativeExport.animationStart(stack.width,stack.height,if(options.loopForever)0 else options.repeats,options.minimizeSize,options.keyframeDistance)
     var timestamp=0
     var accumulated=emptyList<io.github.nielstron.brushkin.engine.Layer>()
     try {

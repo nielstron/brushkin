@@ -1,0 +1,1 @@
+Small independent Pillow-generated GIF/WebP fixtures. GIF uses restore-previous and background disposal with partial frame rectangles. Reference PNGs are the fully composited frames read back by Pillow. Delays: 120, 250, 70, 180 ms; total plays: 3.
