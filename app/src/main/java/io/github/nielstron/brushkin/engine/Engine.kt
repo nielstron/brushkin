@@ -541,7 +541,7 @@ class Engine {
     }
 
     /** Applies [f] to the pixels of every unlocked layer (within the selection), as one undo step. */
-    fun filterApplyAll(f: Filter) = post {
+    fun filterApplyAll(f: Filter, afterEffects: Boolean = false) = post {
         previewJob?.cancel(); proxy = null
         val s = stack
         busy(f.name) {
@@ -549,7 +549,10 @@ class Engine {
             var next = s
             for (l in s.all) {
                 if (l.isGroup || l.lockPixels) continue
-                val out = withContext(Dispatchers.Default) { applyFilterBanded(l.pixels, f, clipSelection(s, l)?.mask) }
+                val out = withContext(Dispatchers.Default) {
+                    applyFilterBanded(if (afterEffects) Effects.pixelsSync(l) else l.pixels, f, clipSelection(s, l)?.mask)
+                }
+                if (afterEffects) next = next.replace(next.find(l.id)!!.copy(effects = emptyList()))
                 val changes = HashMap<Int, Pair<Bitmap?, Bitmap?>>()
                 for (i in out.tiles.indices) { val a = l.pixels.tiles[i]; val b = out.tiles[i]; if (a !== b) changes[i] = a to b; l.pixels.tiles[i] = b }
                 diffs.add(TileDiff(l.pixels, changes))
@@ -1186,7 +1189,7 @@ class Engine {
     // ---------------------------------------------------------------- filters
 
     /** Downscaled copy of the filtered drawable used for fast, memory-light previews. */
-    private class Proxy(val px: IntArray, val w: Int, val h: Int, val k: Float, val mask: ByteArray?, val others: List<Pair<Long, IntArray>> = emptyList())
+    private class Proxy(val px: IntArray, val w: Int, val h: Int, val k: Float, val mask: ByteArray?, val others: List<Pair<Long, IntArray>> = emptyList(), val effects: Map<Long, List<LayerEffect>> = emptyMap())
     private var proxy: Proxy? = null
     private var filterLayer: Long = -1
     private var filterOnMask = false
@@ -1197,38 +1200,49 @@ class Engine {
      * Prepare a preview proxy (≤ 2048 px) of the active drawable and start the preview worker;
      * with [allLayers] the other layers' pixels are previewed too.
      */
-    fun filterBegin(allLayers: Boolean = false): Job {
+    fun filterBegin(allLayers: Boolean = false, asEffect: Boolean = false): Job {
         // Reset synchronously so a preview requested right after this call isn't lost.
         previewRequests.value = null
-        return filterBeginInternal(allLayers)
+        return filterBeginInternal(allLayers, asEffect)
     }
 
-    private fun filterBeginInternal(allLayers: Boolean) = post {
+    private fun filterBeginInternal(allLayers: Boolean, asEffect: Boolean) = post {
         val s = stack
         val l = s.active ?: return@post
         if (l.isGroup) { onMessage?.invoke("Filters apply to layers, not groups. Pick a layer."); return@post }
-        filterOnMask = l.drawable !== l.pixels
+        previewJob?.cancel(); proxy = null
+        filterOnMask = !allLayers && l.drawable !== l.pixels
         filterLayer = l.id
         val k = minOf(1f, PREVIEW_MAX / maxOf(s.width, s.height).toFloat())
         val pw = (s.width * k).roundToInt().coerceAtLeast(1); val ph = (s.height * k).roundToInt().coerceAtLeast(1)
         val small = Bitmap.createBitmap(pw, ph, Bitmap.Config.ARGB_8888)
         val c = Canvas(small)
         c.scale(pw / s.width.toFloat(), ph / s.height.toFloat())
-        if (l.drawable.fill != 0) small.eraseColor(l.drawable.fill)
-        Compositor.drawTiles(c, l.drawable, null, Paint().apply { isFilterBitmap = true }, pad = 1f / k)
-        val px = IntArray(pw * ph).also { small.getPixels(it, 0, pw, 0, 0, pw, ph) }
+        val source = if (filterOnMask) l.drawable else if (asEffect) busy("Preparing effect preview") {
+            withContext(Dispatchers.Default) { Effects.pixelsSync(l) }
+        } else l.pixels
+        if (source.fill != 0) small.eraseColor(source.fill)
+        Compositor.drawTiles(c, source, null, Paint().apply { isFilterBitmap = true }, pad = 1f / k)
+        val px = if (k == 1f) source.toPixels() else IntArray(pw * ph).also { small.getPixels(it, 0, pw, 0, 0, pw, ph) }
         val mask = s.selection?.let { sel ->
             val m = Bitmap.createScaledBitmap(sel.mask, pw, ph, true)
             Selection.maskBytes(m, pw, ph)
         }
         fun proxyOf(t: TiledBitmap): IntArray {
+            if (k == 1f) return t.toPixels()
             val b = Bitmap.createBitmap(pw, ph, Bitmap.Config.ARGB_8888)
             val cc = Canvas(b); cc.scale(pw / s.width.toFloat(), ph / s.height.toFloat())
             Compositor.drawTiles(cc, t, null, Paint().apply { isFilterBitmap = true }, pad = 1f / k)
             return IntArray(pw * ph).also { b.getPixels(it, 0, pw, 0, 0, pw, ph) }
         }
-        val others = if (!allLayers) emptyList() else s.all.filter { !it.isGroup && it.id != l.id && !it.lockPixels }.map { it.id to proxyOf(it.pixels) }
-        proxy = Proxy(px, pw, ph, k, mask, others)
+        val otherLayers = if (!allLayers) emptyList() else s.all.filter { !it.isGroup && it.id != l.id && (asEffect || !it.lockPixels) }
+        val others = otherLayers.map { layer ->
+            val pixels = if (asEffect) withContext(Dispatchers.Default) { Effects.pixelsSync(layer) } else layer.pixels
+            layer.id to proxyOf(pixels)
+        }
+        val remaining = if (asEffect || filterOnMask) emptyMap() else
+            (listOf(l) + otherLayers).associate { layer -> layer.id to layer.effects.filter { it.visible } }
+        proxy = Proxy(px, pw, ph, k, mask, others, remaining)
         previewJob?.cancel()
         // One preview at a time, always for the latest request: slider drags never pile up work.
         previewJob = CoroutineScope(Dispatchers.Default).launch {
@@ -1237,8 +1251,16 @@ class Engine {
                 val p = proxy ?: return@collect
                 val sf = f.scaled(p.k)
                 val out = maskBlend(p.px, sf.apply(p.px, p.w, p.h), p.mask, p.w, p.h)
-                val tiles = TiledBitmap.fromPixels(out, p.w, p.h, if (filterOnMask) MASK_WHITE else 0)
-                val others = p.others.associate { (id, opx) -> id to TiledBitmap.fromPixels(maskBlend(opx, sf.apply(opx, p.w, p.h), p.mask, p.w, p.h), p.w, p.h) }
+                fun displayed(id: Long, pixels: IntArray): TiledBitmap {
+                    var tiles = TiledBitmap.fromPixels(pixels, p.w, p.h, if (filterOnMask) MASK_WHITE else 0)
+                    for (effect in p.effects[id].orEmpty()) {
+                        val filter = Effects.factory?.invoke(effect) ?: continue
+                        tiles = applyFilterBanded(tiles, filter.scaled(p.k), null)
+                    }
+                    return tiles
+                }
+                val tiles = displayed(filterLayer, out)
+                val others = p.others.associate { (id, opx) -> id to displayed(id, maskBlend(opx, sf.apply(opx, p.w, p.h), p.mask, p.w, p.h)) }
                 // Show every finished preview: requests are handled in order, so it's never older than
                 // what's on screen. (Waiting for the latest request meant nothing updated while a
                 // slider was being dragged.)
@@ -1254,7 +1276,7 @@ class Engine {
 
     fun filterPreview(f: Filter) { previewRequests.value = f }
 
-    fun filterApply(f: Filter) = post {
+    fun filterApply(f: Filter, afterEffects: Boolean = false) = post {
         previewJob?.cancel()
         proxy = null
         val s = stack
@@ -1263,8 +1285,12 @@ class Engine {
         busy(f.name) {
             // Process in horizontal bands (overlapping by the filter's reach) so even very large
             // images never need more than a few band-sized arrays on the Java heap.
-            val out = withContext(Dispatchers.Default) { applyFilterBanded(target, f, clipSelection(s, l)?.mask) }
+            val out = withContext(Dispatchers.Default) {
+                val source = if (afterEffects && !filterOnMask) Effects.pixelsSync(l) else target
+                applyFilterBanded(source, f, clipSelection(s, l)?.mask)
+            }
             preview = null
+            if (afterEffects && !filterOnMask) stack = stack.replace(l.copy(effects = emptyList()))
             if (!filterOnMask && l.text != null) stack = dropText(stack)
             replaceTiles(s, target, out, f.name)
         }

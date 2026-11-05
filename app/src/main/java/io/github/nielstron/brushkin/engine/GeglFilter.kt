@@ -24,10 +24,11 @@ object NativeGegl {
             }
             Os.symlink(library.absolutePath, File(dir, library.name).absolutePath)
         }
-        initialize(operations.absolutePath, babl.absolutePath)
+        val swap = File(context.cacheDir, "gegl-swap").apply { mkdirs() }
+        initialize(operations.absolutePath, babl.absolutePath, swap.absolutePath)
         ready = true
     }
-    private external fun initialize(operations: String, babl: String)
+    private external fun initialize(operations: String, babl: String, swap: String)
     external fun createSession(width: Int, height: Int, operation: String, keys: Array<String>, values: DoubleArray, regional: Boolean): Long
     external fun updateSession(handle: Long, x: Int, y: Int, width: Int, height: Int, pixels: IntArray)
     external fun renderSession(handle: Long): IntArray

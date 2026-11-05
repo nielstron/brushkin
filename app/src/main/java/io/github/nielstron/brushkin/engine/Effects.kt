@@ -53,6 +53,10 @@ object Effects {
     // evicting a pipeline leaves the displayed bitmap cache intact. UI never takes this lock.
     private val pipelines=LinkedHashMap<TiledBitmap,Pipeline>(4,0.75f,true)
     private fun compute(t: TiledBitmap, effects: List<LayerEffect>): TiledBitmap = synchronized(pipelines) {
+        if (effects.isEmpty()) {
+            pipelines.remove(t)?.close()
+            return@synchronized t
+        }
         var pipeline=pipelines[t]
         if (pipeline == null || pipeline.effects != effects) {
             pipelines.remove(t)
@@ -80,7 +84,11 @@ object Effects {
 
     /** The layer as displayed, computed now if needed (export, merging, flattening). */
     fun pixelsSync(l: Layer): TiledBitmap {
-        val fx = active(l); if (fx.isEmpty()) return l.pixels
+        val fx = active(l)
+        if (fx.isEmpty()) {
+            cache.remove(l.pixels)
+            return compute(l.pixels, fx)
+        }
         val k = key(l.pixels)
         cache[l.pixels]?.let { if (it.key == k && it.effects == fx) return it.result }
         return compute(l.pixels, fx).also { cache[l.pixels] = Entry(k, fx, it) }
@@ -91,8 +99,9 @@ object Effects {
      * ([onReady] is called then). Meanwhile the previous result is shown so nothing flickers.
      */
     fun pixelsAsync(l: Layer, launch: (() -> Unit) -> Unit, onReady: () -> Unit): TiledBitmap {
-        val fx = active(l); if (fx.isEmpty()) return l.pixels
+        val fx = active(l)
         val t = l.pixels
+        if (fx.isEmpty() && cache[t] == null && synchronized(scheduling) { t !in pending }) return t
         val k = key(t)
         val e = cache[t]
         if (e != null && e.key == k && e.effects == fx) return e.result
@@ -103,7 +112,7 @@ object Effects {
             try {
                 val k2 = key(t)
                 val r = compute(t, fx)
-                cache[t] = Entry(k2, fx, r)
+                if (fx.isEmpty()) cache.remove(t) else cache[t] = Entry(k2, fx, r)
             } finally {
                 synchronized(scheduling) {
                     pending.remove(t)
@@ -113,6 +122,6 @@ object Effects {
                 onReady()
             }
         }
-        return e?.result ?: t
+        return if (fx.isEmpty()) t else e?.result ?: t
     }
 }
