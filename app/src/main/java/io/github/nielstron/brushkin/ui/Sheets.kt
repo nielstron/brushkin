@@ -489,6 +489,14 @@ private fun LayersSheet(vm: EditorViewModel, info: DocInfo) {
             Text("${info.width} × ${info.height}", color = Ui.muted, fontFamily = Ui.mono, fontSize = 12.sp)
         }
         Spacer(Modifier.height(8.dp))
+        val computing by io.github.nielstron.brushkin.engine.Effects.computing.collectAsState()
+        if (computing) {
+            Text("Computing effects…", color = Ui.muted, fontSize = 12.sp)
+            androidx.compose.material3.LinearProgressIndicator(
+                modifier = Modifier.fillMaxWidth().padding(vertical = 6.dp),
+                color = Ui.accent, trackColor = Ui.panel2,
+            )
+        }
         LazyColumn(Modifier.heightIn(max = 460.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
             items(info.layers, key = { it.id }) { l -> LayerRow(vm, l, l.id == info.activeId, info) }
         }
@@ -598,15 +606,10 @@ private fun LayerRow(vm: EditorViewModel, l: LayerInfo, active: Boolean, info: D
                 IconButton(onClick = { renaming = true }) { Icon(Icons.Rounded.Edit, "Rename layer", tint = Ui.text) }
             }
             if (l.effects.isNotEmpty()) {
-                // Non-destructive effects: tap to hide/show, ✕ to remove, or merge them into the pixels.
-                Row(Modifier.horizontalScroll(rememberScrollState()).padding(top = 6.dp), horizontalArrangement = Arrangement.spacedBy(6.dp), verticalAlignment = Alignment.CenterVertically) {
-                    Text("Effects", color = Ui.muted, fontSize = 12.sp)
-                    for ((i, fx) in l.effects.withIndex()) {
-                        Chip(fx.name, fx.visible) { e.setEffects(l.id, if (fx.visible) "Hide Effect" else "Show Effect") { list -> list.mapIndexed { k, x -> if (k == i) x.copy(visible = !x.visible) else x } } }
-                        IconButton(onClick = { e.setEffects(l.id, "Remove Effect") { list -> list.filterIndexed { k, _ -> k != i } } }) { Icon(Icons.Rounded.Close, "Remove effect", tint = Ui.muted, modifier = Modifier.size(18.dp)) }
-                    }
-                    Chip("Merge", false) { e.mergeEffects(l.id) }
-                }
+                LayerEffects(l.effects,
+                    onToggle = { i -> e.setEffects(l.id, "Toggle Effect") { list -> list.mapIndexed { k, x -> if (k == i) x.copy(visible = !x.visible) else x } } },
+                    onRemove = { i -> e.setEffects(l.id, "Remove Effect") { list -> list.filterIndexed { k, _ -> k != i } } },
+                    onMerge = { e.mergeEffects(l.id) })
             }
             Spacer(Modifier.height(6.dp))
             Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
@@ -918,4 +921,24 @@ private fun PaletteSection(vm: EditorViewModel) {
         ) { Icon(Icons.Rounded.Add, "Add", tint = Ui.text) }
     }
     if (current != null) Text("Tap + to add the current color · long-press a swatch to remove it", color = Ui.muted, fontSize = 11.sp, modifier = Modifier.padding(top = 6.dp))
+}
+
+@Composable
+internal fun LayerEffects(effects: List<io.github.nielstron.brushkin.engine.LayerEffect>, onToggle: (Int) -> Unit, onRemove: (Int) -> Unit, onMerge: () -> Unit) {
+    Column(Modifier.fillMaxWidth().padding(top = 6.dp)) {
+        Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+            Text("Effects", color = Ui.muted, fontSize = 12.sp, modifier = Modifier.weight(1f))
+            Chip("Merge", false) { onMerge() }
+        }
+        Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(6.dp), verticalAlignment = Alignment.CenterVertically) {
+            for ((i, fx) in effects.withIndex()) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Chip(fx.name, fx.visible) { onToggle(i) }
+                    IconButton(onClick = { onRemove(i) }) {
+                        Icon(Icons.Rounded.Close, "Remove ${fx.name}", tint = Ui.muted, modifier = Modifier.size(18.dp))
+                    }
+                }
+            }
+        }
+    }
 }

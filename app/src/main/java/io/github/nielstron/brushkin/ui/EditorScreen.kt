@@ -315,7 +315,8 @@ fun EditorScreen(vm: EditorViewModel, files: FileActions, store: StoreIntegratio
             }
         }
 
-        val anyBusy = vm.importStatus ?: vm.exportStatus ?: busy ?: vm.mlBusy
+        val effectsComputing by io.github.nielstron.brushkin.engine.Effects.computing.collectAsState()
+        val anyBusy = vm.importStatus ?: vm.exportStatus ?: busy ?: vm.mlBusy ?: if (effectsComputing) "Computing effects" else null
         val progress by vm.engine.progress.collectAsState()
         if (anyBusy != null) {
             // Full-width card: what's happening, and a bar that fills when the progress is known.

@@ -28,7 +28,10 @@ object Effects {
     private class Entry(val key: Long, val effects: List<LayerEffect>, val result: TiledBitmap)
     // Weak keys: results go away with the layer versions (undo history) they belong to.
     private val cache: MutableMap<TiledBitmap, Entry> = java.util.Collections.synchronizedMap(java.util.WeakHashMap())
-    private val pending: MutableMap<TiledBitmap, Long> = java.util.Collections.synchronizedMap(java.util.WeakHashMap())
+    private val scheduling = Any()
+    private val pending = mutableSetOf<TiledBitmap>()
+    private val _computing = kotlinx.coroutines.flow.MutableStateFlow(false)
+    val computing: kotlinx.coroutines.flow.StateFlow<Boolean> = _computing
 
     private fun key(t: TiledBitmap): Long {
         var k = 1125899906842597L
@@ -38,10 +41,41 @@ object Effects {
 
     private fun active(l: Layer) = l.effects.filter { it.visible }
 
-    private fun compute(t: TiledBitmap, effects: List<LayerEffect>): TiledBitmap {
-        var cur = t
-        for (e in effects) { val f = factory?.invoke(e) ?: continue; cur = applyFilterBanded(cur, f, null) }
-        return cur
+    private class Pipeline(val effects: List<LayerEffect>, val stages: List<Pair<Filter?, IncrementalFilter?>>) {
+        fun close() = stages.forEach { it.second?.close() }
+        fun render(source: TiledBitmap): TiledBitmap {
+            var result=source
+            for ((filter, incremental) in stages) if (filter != null) result=incremental?.render(result) ?: applyFilterBanded(result,filter,null)
+            return result
+        }
+    }
+    // Native graphs need explicit disposal. Keep only the two most recently rendered layers;
+    // evicting a pipeline leaves the displayed bitmap cache intact. UI never takes this lock.
+    private val pipelines=LinkedHashMap<TiledBitmap,Pipeline>(4,0.75f,true)
+    private fun compute(t: TiledBitmap, effects: List<LayerEffect>): TiledBitmap = synchronized(pipelines) {
+        var pipeline=pipelines[t]
+        if (pipeline == null || pipeline.effects != effects) {
+            pipelines.remove(t)
+            // Adding an effect must not rerun the unchanged prefix (e.g. blur → blur + exposure).
+            val prefix=pipeline?.effects?.zip(effects)?.takeWhile { (a,b) -> a == b }?.size ?: 0
+            val stages=pipeline?.stages?.take(prefix)?.toMutableList() ?: mutableListOf()
+            pipeline?.stages?.drop(prefix)?.forEach { it.second?.close() }
+            while (pipelines.size >= 2) {
+                val oldest=pipelines.entries.iterator()
+                oldest.next().value.close(); oldest.remove()
+            }
+            try {
+                for(e in effects.drop(prefix)) {
+                    val filter=factory?.invoke(e)
+                    stages.add(filter to filter?.incremental(t.width,t.height))
+                }
+            } catch (e: Throwable) {
+                stages.forEach { it.second?.close() }; throw e
+            }
+            pipeline=Pipeline(effects,stages)
+            pipelines[t]=pipeline
+        }
+        pipeline.render(t)
     }
 
     /** The layer as displayed, computed now if needed (export, merging, flattening). */
@@ -62,13 +96,22 @@ object Effects {
         val k = key(t)
         val e = cache[t]
         if (e != null && e.key == k && e.effects == fx) return e.result
-        if (pending.put(t, k) != k) launch {
+        val start = synchronized(scheduling) {
+            pending.add(t).also { _computing.value = pending.isNotEmpty() }
+        }
+        if (start) launch {
             try {
                 val k2 = key(t)
                 val r = compute(t, fx)
                 cache[t] = Entry(k2, fx, r)
-            } finally { pending.remove(t) }
-            onReady()
+            } finally {
+                synchronized(scheduling) {
+                    pending.remove(t)
+                    _computing.value = pending.isNotEmpty()
+                }
+                // A fresh frame requests the latest pixels/parameters if they changed meanwhile.
+                onReady()
+            }
         }
         return e?.result ?: t
     }

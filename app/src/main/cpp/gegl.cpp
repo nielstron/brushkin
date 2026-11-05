@@ -23,13 +23,7 @@ Java_io_github_nielstron_brushkin_engine_NativeGegl_initialize(JNIEnv *env, jobj
     gegl_init(nullptr, nullptr);
     g_object_set(gegl_config(), "application-license", "GPL3", "threads", 2, "tile-cache-size", guint64(32*1024*1024), nullptr);
 }
-extern "C" JNIEXPORT jintArray JNICALL
-Java_io_github_nielstron_brushkin_engine_NativeGegl_render(JNIEnv *env, jobject, jintArray pixels, jint w, jint h,
-                                                        jstring operation, jobjectArray keys, jdoubleArray values) {
-    std::lock_guard<std::mutex> lock(gate);
-    if (w <= 0 || h <= 0 || int64_t(w)*h != env->GetArrayLength(pixels) || env->GetArrayLength(keys) != env->GetArrayLength(values)) {
-        fail(env, "Invalid GEGL image or parameters"); return nullptr;
-    }
+static GeglNode *createGraph(JNIEnv *env, jstring operation, jobjectArray keys, jdoubleArray values, GeglNode **output) {
     const auto op = utf(env, operation);
     if (!gegl_has_operation(op.c_str())) { fail(env, "Unavailable GEGL operation: " + op); return nullptr; }
     GeglNode *graph = gegl_node_new();
@@ -55,6 +49,19 @@ Java_io_github_nielstron_brushkin_engine_NativeGegl_render(JNIEnv *env, jobject,
         }
         gegl_node_set_property(filter, name.c_str(), &value); g_value_unset(&value);
     }
+    *output = filter;
+    return graph;
+}
+extern "C" JNIEXPORT jintArray JNICALL
+Java_io_github_nielstron_brushkin_engine_NativeGegl_render(JNIEnv *env, jobject, jintArray pixels, jint w, jint h,
+                                                        jstring operation, jobjectArray keys, jdoubleArray values) {
+    std::lock_guard<std::mutex> lock(gate);
+    if (w <= 0 || h <= 0 || int64_t(w)*h != env->GetArrayLength(pixels) || env->GetArrayLength(keys) != env->GetArrayLength(values)) {
+        fail(env, "Invalid GEGL image or parameters"); return nullptr;
+    }
+    GeglNode *filter;
+    GeglNode *graph = createGraph(env, operation, keys, values, &filter);
+    if (!graph) return nullptr;
     std::vector<jint> data(w*h);
     env->GetIntArrayRegion(pixels, 0, w*h, data.data());
     // Convert Android's straight-alpha ARGB integers to babl's explicit RGBA byte order.
@@ -119,4 +126,89 @@ Java_io_github_nielstron_brushkin_engine_NativeGegl_describe(JNIEnv *env, jobjec
     JsonNode *root=json_builder_get_root(json); char *encoded=json_to_string(root,FALSE);
     jstring result=env->NewStringUTF(encoded);
     g_free(encoded); json_node_free(root); g_object_unref(json); return result;
+}
+
+// Persistent graphs let GEGL propagate input changes through the actual operation's
+// dependencies (including halos and global statistics), without guessing crop margins.
+struct EffectSession {
+    GeglNode *graph, *filter;
+    GeglBuffer *input;
+    GeglRectangle extent, dirty;
+    bool regional, updated;
+    ~EffectSession() { g_object_unref(graph); g_object_unref(input); }
+};
+static jint swapChannels(jint c) {
+    const auto u=static_cast<uint32_t>(c);
+    return (u & 0xff00ff00u) | ((u & 255u)<<16) | ((u>>16)&255u);
+}
+static void invalidateEffect(GeglNode *, const GeglRectangle *rect, gpointer data) {
+    auto *s=static_cast<EffectSession *>(data);
+    GeglRectangle clipped;
+    if (gegl_rectangle_intersect(&clipped,rect,&s->extent))
+        gegl_rectangle_bounding_box(&s->dirty,&s->dirty,&clipped);
+}
+extern "C" JNIEXPORT jlong JNICALL
+Java_io_github_nielstron_brushkin_engine_NativeGegl_createSession(JNIEnv *env, jobject, jint w, jint h,
+    jstring operation, jobjectArray keys, jdoubleArray values, jboolean regional) {
+    std::lock_guard<std::mutex> lock(gate);
+    if (w<=0 || h<=0 || env->GetArrayLength(keys)!=env->GetArrayLength(values)) {
+        fail(env,"Invalid GEGL session dimensions or parameters"); return 0;
+    }
+    GeglNode *filter;
+    GeglNode *graph=createGraph(env,operation,keys,values,&filter);
+    if (!graph) return 0;
+    GeglRectangle extent{0,0,w,h};
+    auto *buffer=gegl_buffer_new(&extent,babl_format("R'G'B'A u8"));
+    auto *input=gegl_node_new_child(graph,"operation","gegl:buffer-source","buffer",buffer,nullptr);
+    gegl_node_link(input,filter);
+    auto *session=new EffectSession{graph,filter,buffer,extent,extent,regional != 0,false};
+    g_signal_connect(filter,"invalidated",G_CALLBACK(invalidateEffect),session);
+    // Prepare the source's buffer-changed subscription before the first tile upload.
+    gegl_node_get_bounding_box(filter);
+    return reinterpret_cast<jlong>(session);
+}
+extern "C" JNIEXPORT void JNICALL
+Java_io_github_nielstron_brushkin_engine_NativeGegl_updateSession(JNIEnv *env,jobject,jlong handle,
+    jint x,jint y,jint w,jint h,jintArray pixels) {
+    std::lock_guard<std::mutex> lock(gate);
+    auto *s=reinterpret_cast<EffectSession *>(handle);
+    if (w<=0 || h<=0 || x<0 || y<0 || x+w>s->extent.width || y+h>s->extent.height || int64_t(w)*h!=env->GetArrayLength(pixels)) {
+        fail(env,"Invalid GEGL update rectangle"); return;
+    }
+    std::vector<jint> data(w*h);
+    env->GetIntArrayRegion(pixels,0,w*h,data.data());
+    for (auto &c:data) c=static_cast<uint32_t>(c)>>24 ? swapChannels(c) : 0;
+    GeglRectangle rect{x,y,w,h};
+    s->updated=true;
+    gegl_buffer_set(s->input,&rect,0,babl_format("R'G'B'A u8"),data.data(),GEGL_AUTO_ROWSTRIDE);
+}
+extern "C" JNIEXPORT jintArray JNICALL
+Java_io_github_nielstron_brushkin_engine_NativeGegl_renderSession(JNIEnv *env,jobject,jlong handle) {
+    std::lock_guard<std::mutex> lock(gate);
+    auto *s=reinterpret_cast<EffectSession *>(handle);
+    // Some GEGL operations (e.g. gblur-1d) do not expand change invalidation to
+    // match their input dependencies. Invalidate fully unless regional updates
+    // have been verified for this operation; the algorithm itself is unchanged.
+    if (s->updated && !s->regional) {
+        g_signal_emit_by_name(s->input,"changed",&s->extent);
+        s->dirty=s->extent;
+    }
+    s->updated=false;
+    const auto rect=s->dirty;
+    const int count=rect.width*rect.height;
+    std::vector<jint> data(count+4);
+    data[0]=rect.x; data[1]=rect.y; data[2]=rect.width; data[3]=rect.height;
+    if (count) {
+        gegl_node_blit(s->filter,1.0,&rect,babl_format("R'G'B'A u8"),data.data()+4,GEGL_AUTO_ROWSTRIDE,s->regional ? GEGL_BLIT_CACHE : GEGL_BLIT_DEFAULT);
+        for (int i=4;i<count+4;i++) data[i]=swapChannels(data[i]);
+    }
+    s->dirty=GeglRectangle{0,0,0,0};
+    auto out=env->NewIntArray(count+4);
+    if(out) env->SetIntArrayRegion(out,0,count+4,data.data());
+    return out;
+}
+extern "C" JNIEXPORT void JNICALL
+Java_io_github_nielstron_brushkin_engine_NativeGegl_destroySession(JNIEnv *,jobject,jlong handle) {
+    std::lock_guard<std::mutex> lock(gate);
+    delete reinterpret_cast<EffectSession *>(handle);
 }
