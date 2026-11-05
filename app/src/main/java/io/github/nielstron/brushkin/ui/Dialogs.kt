@@ -368,33 +368,35 @@ private fun FilterPanel(vm: EditorViewModel, name: String, close: () -> Unit) {
         spec != null -> spec.build(spec.params.indices.map { values[it] ?: spec.params[it].default })
         else -> LutFilter.curves(curves)
     }
-    // No Apply step: what's previewed is kept when the panel closes (undo takes it back). With the
-    // defaults (no change) closing just drops the preview. Filters with parameters become an
-    // editable layer effect (merge it into the pixels later); with a selection, or for filters an
-    // effect can't hold (curves, a picked color), the pixels change directly.
+    // Bake into pixels by default. Live layer effects are an explicit, per-filter choice.
     val unchanged = { spec?.defaultIsIdentity != false && !toAlpha && values.all { (i, v) -> spec?.params?.getOrNull(i)?.default == v } && curves.isEmpty() }
     var finished by remember { mutableStateOf(false) }
     var allLayers by remember { mutableStateOf(false) }
+    var liveEffect by remember { mutableStateOf(false) }
+    val effectPrefs = androidx.compose.ui.platform.LocalContext.current.getSharedPreferences("brushkin-effects", 0)
     // The preview shows exactly what closing applies: this layer, or with "All layers" every layer.
-    LaunchedEffect(allLayers) { e.filterBegin(allLayers) }
-    LaunchedEffect(values.toMap(), curves, color, allLayers) { e.filterPreview(build()) }
+    val afterEffects = allLayers || e.info.value.layers.firstOrNull { it.id == e.info.value.activeId }?.editMask != true
+    val canBeEffect = spec != null && !toAlpha && !e.info.value.hasSelection && afterEffects
+    val asEffect = liveEffect && canBeEffect
+    LaunchedEffect(allLayers, afterEffects) { e.filterBegin(allLayers, afterEffects) }
+    LaunchedEffect(values.toMap(), curves, color, allLayers, asEffect) { e.filterPreview(build()) }
     fun finish() {
         if (finished) return; finished = true
         val effect = spec?.let { io.github.nielstron.brushkin.engine.LayerEffect(name, it.params.indices.map { i -> values[i] ?: it.params[i].default }, vm.fg, vm.bg) }
         when {
             unchanged() -> e.filterCancel()
-            allLayers && effect != null && !toAlpha && !e.info.value.hasSelection -> { e.filterCancel(); e.addEffectToAll(effect) }
-            allLayers -> e.filterApplyAll(build())
-            spec != null && !toAlpha && !e.info.value.hasSelection &&
-                e.info.value.let { i -> i.layers.firstOrNull { it.id == i.activeId }?.editMask != true } -> {
+            allLayers && asEffect && effect != null -> { e.filterCancel(); e.addEffectToAll(effect) }
+            allLayers -> e.filterApplyAll(build(), afterEffects = true)
+            asEffect -> {
                 e.filterCancel()
                 e.filterAsEffect(io.github.nielstron.brushkin.engine.LayerEffect(name, spec.params.indices.map { values[it] ?: spec.params[it].default }, vm.fg, vm.bg))
             }
-            else -> e.filterApply(build())
+            else -> e.filterApply(build(), afterEffects = afterEffects)
         }
     }
     fun reset() { values.clear(); curves = emptyMap(); color = android.graphics.Color.WHITE; vm.filterPicking = null }
-    androidx.compose.runtime.DisposableEffect(Unit) { onDispose { vm.filterPicking = null; finish() } }
+    val finishLatest by androidx.compose.runtime.rememberUpdatedState { finish() }
+    androidx.compose.runtime.DisposableEffect(Unit) { onDispose { vm.filterPicking = null; finishLatest() } }
     BackHandler { finish(); close() }
 
     Box(Modifier.fillMaxSize()) {
@@ -405,10 +407,13 @@ private fun FilterPanel(vm: EditorViewModel, name: String, close: () -> Unit) {
             Row(verticalAlignment = Alignment.CenterVertically) {
                 // Long names break after their hyphen ("Brightness-/Contrast"), not mid-word.
                 Text(name.replace("-", "-\u200B"), color = Ui.text, fontWeight = FontWeight.Bold, fontSize = 17.sp, modifier = Modifier.weight(1f).padding(start = 4.dp))
-                Chip("All layers", allLayers) { allLayers = !allLayers }
                 IconButton(onClick = { reset() }) { Icon(androidx.compose.material.icons.Icons.Rounded.Refresh, "Reset", tint = Ui.text) }
                 IconButton(onClick = { finished = true; e.filterCancel(); close() }) { Icon(androidx.compose.material.icons.Icons.Rounded.Close, "Cancel (no change)", tint = Ui.text) }
                 IconButton(onClick = { finish(); close() }) { Icon(androidx.compose.material.icons.Icons.Rounded.Check, "Done (keeps the result)", tint = Ui.accent) }
+            }
+            Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                Chip("All layers", allLayers) { allLayers = !allLayers }
+                if (canBeEffect) EffectChip(liveEffect, effectPrefs) { liveEffect = it }
             }
             Spacer(Modifier.height(8.dp))
             if (toAlpha) {

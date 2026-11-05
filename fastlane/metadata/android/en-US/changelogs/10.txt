@@ -1,0 +1,6 @@
+Filters now merge into pixels by default. Choose Effect to keep a live filter, with a performance warning and Don't remind me again.
+Previews include existing effects and match the applied result.
+Live effects reuse cached stages and verified local updates without queuing redundant renders.
+Added computing indicators, scrollable effect chips, and a fixed Merge button.
+Reduced GEGL memory use and released removed effect graphs.
+Show loading while restoring the image at startup.

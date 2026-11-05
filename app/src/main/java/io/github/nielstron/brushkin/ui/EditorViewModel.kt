@@ -120,6 +120,8 @@ enum class Sheet { NONE, TOOLS, OPTIONS, COLOR, LAYERS, INSERT, HISTORY }
 class EditorViewModel(app: Application) : AndroidViewModel(app) {
     val engine = Engine()
     val messages = MutableSharedFlow<String>(extraBufferCapacity = 8)
+    var startupLoading by mutableStateOf(true)
+    var startupStarted = false
     var importStatus by mutableStateOf<String?>(null)
     var exportStatus by mutableStateOf<String?>(null)
     var exportedImage by mutableStateOf<ExportedImage?>(null)
@@ -689,11 +691,31 @@ class EditorViewModel(app: Application) : AndroidViewModel(app) {
         }
     }
 
+    fun restoreAtStartup() = viewModelScope.launch {
+        try {
+            if (autosaveFile.exists()) {
+                val saved = withContext(Dispatchers.IO) { autosaveFile.inputStream().use { Ora.read(it) } }
+                val name = getApplication<Application>().getSharedPreferences("brushkin", 0).getString("name", "Untitled") ?: "Untitled"
+                engine.openStack(saved, name).join()
+            } else {
+                // Wait for the initial document queued by init before exposing the canvas.
+                engine.post {}.join()
+            }
+        } catch (e: kotlinx.coroutines.CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            messages.emit("Couldn't restore image: ${e.message}")
+        } finally {
+            startupLoading = false
+        }
+    }
+
     private val saveLock = Mutex()
     private var savedVersion = -1L
     val autosaveFile get() = File(getApplication<Application>().filesDir, "autosave.ora")
 
     suspend fun autosave() = saveLock.withLock {
+        if (startupLoading) return@withLock
         val v = engine.info.value.version
         if (v == savedVersion) return@withLock
         runCatching {

@@ -19,6 +19,7 @@ import androidx.activity.result.contract.ActivityResultContracts
 import androidx.activity.viewModels
 import androidx.core.content.FileProvider
 import androidx.lifecycle.lifecycleScope
+import androidx.lifecycle.viewModelScope
 import io.github.nielstron.brushkin.engine.Ora
 import io.github.nielstron.brushkin.store.StoreIntegration
 import io.github.nielstron.brushkin.ui.BrushkinTheme
@@ -32,7 +33,6 @@ import java.io.File
 
 class MainActivity : ComponentActivity(), FileActions {
     private val vm: EditorViewModel by viewModels()
-    private val autosave by lazy { File(filesDir, "autosave.ora") }
     private lateinit var store: StoreIntegration
 
     private val pickLayer = registerForActivityResult(ActivityResultContracts.PickVisualMedia()) { uri -> uri?.let { insertImage(it) } }
@@ -54,15 +54,10 @@ class MainActivity : ComponentActivity(), FileActions {
         store = StoreIntegration(this)
         store.start()
         setContent { BrushkinTheme { EditorScreen(vm, this, store) } }
-        if (savedInstanceState == null) {
+        if (!vm.startupStarted) {
+            vm.startupStarted = true
             val shared = incomingUri(intent)
-            when {
-                shared != null -> open(shared)
-                autosave.exists() -> lifecycleScope.launch {
-                    runCatching { withContext(Dispatchers.IO) { autosave.inputStream().use { Ora.read(it) } } }
-                        .onSuccess { vm.engine.openStack(it, prefs().getString("name", "Untitled") ?: "Untitled") }
-                }
-            }
+            if (shared != null) open(shared) else vm.restoreAtStartup()
         }
     }
 
@@ -296,24 +291,24 @@ class MainActivity : ComponentActivity(), FileActions {
     private fun open(uri: Uri) {
         if(vm.importStatus!=null)return
         vm.importStatus="Opening image"
-        lifecycleScope.launch {
+        vm.viewModelScope.launch {
             val name = withContext(Dispatchers.IO) { displayName(uri) }
             try {
                 if (name.endsWith(".xcf", ignoreCase = true)) {
                     val stack = withContext(Dispatchers.IO) { io.github.nielstron.brushkin.engine.Xcf.read(contentResolver.openInputStream(uri)!!.use { it.readBytes() }) }
-                    vm.engine.openStack(stack, name)
+                    vm.engine.openStack(stack, name).join()
                 } else if (name.endsWith(".ora", ignoreCase = true) || withContext(Dispatchers.IO) { contentResolver.getType(uri) } == "image/openraster") {
                     val stack = withContext(Dispatchers.IO) { contentResolver.openInputStream(uri)!!.use { Ora.read(it) } }
-                    vm.engine.openStack(stack, name)
+                    vm.engine.openStack(stack, name).join()
                 } else {
                     val result = withContext(Dispatchers.IO) { contentResolver.openInputStream(uri)!!.use { ImageImport.open(it.readBytes(),name) } }
                     if(result.originalWidth!=result.stack.width || result.originalHeight!=result.stack.height)
                         vm.messages.tryEmit("Scaled from ${result.originalWidth}×${result.originalHeight} to ${result.stack.width}×${result.stack.height} to fit in memory")
-                    vm.engine.openStack(result.stack,name)
+                    vm.engine.openStack(result.stack,name).join()
                 }
             } catch (t: Throwable) {
                 vm.messages.tryEmit("Couldn't open $name: ${t.message}")
-            } finally { vm.importStatus=null }
+            } finally { vm.importStatus=null; vm.startupLoading=false }
         }
     }
 

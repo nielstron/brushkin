@@ -14,12 +14,12 @@ static std::string utf(JNIEnv *env, jstring value) {
     std::string s(p); env->ReleaseStringUTFChars(value, p); return s;
 }
 extern "C" JNIEXPORT void JNICALL
-Java_io_github_nielstron_brushkin_engine_NativeGegl_initialize(JNIEnv *env, jobject, jstring operations, jstring bablPath) {
+Java_io_github_nielstron_brushkin_engine_NativeGegl_initialize(JNIEnv *env, jobject, jstring operations, jstring bablPath, jstring swapPath) {
     std::lock_guard<std::mutex> lock(gate);
     g_setenv("GEGL_PATH", utf(env, operations).c_str(), TRUE);
     g_setenv("BABL_PATH", utf(env, bablPath).c_str(), TRUE);
     g_setenv("GEGL_USE_OPENCL", "no", TRUE);
-    g_setenv("GEGL_SWAP", "RAM", TRUE);
+    g_setenv("GEGL_SWAP", utf(env, swapPath).c_str(), TRUE);
     gegl_init(nullptr, nullptr);
     g_object_set(gegl_config(), "application-license", "GPL3", "threads", 2, "tile-cache-size", guint64(32*1024*1024), nullptr);
 }

@@ -104,6 +104,15 @@ fun EditorScreen(vm: EditorViewModel, files: FileActions, store: StoreIntegratio
             vm.exportedImage = null
         }
     }
+    if (vm.startupLoading) {
+        Box(Modifier.fillMaxSize().background(Ui.ground), contentAlignment = Alignment.Center) {
+            Column(horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(16.dp)) {
+                CircularProgressIndicator(color = Ui.accent)
+                Text("Loading image…", color = Ui.text)
+            }
+        }
+        return
+    }
     // Pause the GL thread with the activity so it doesn't render (or hold the GPU) in the background.
     val lifecycle = androidx.lifecycle.compose.LocalLifecycleOwner.current.lifecycle
     androidx.compose.runtime.DisposableEffect(lifecycle) {
