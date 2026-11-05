@@ -1,5 +1,7 @@
 package io.github.nielstron.brushkin.ui
 
+import androidx.compose.material.icons.rounded.Save
+
 import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -190,7 +192,8 @@ fun EditorScreen(vm: EditorViewModel, files: FileActions, store: StoreIntegratio
             IconButton(onClick = { vm.engine.redo() }, enabled = info.canRedo) {
                 Icon(Icons.AutoMirrored.Rounded.Redo, "Redo", tint = if (info.canRedo) Ui.text else Ui.muted.copy(alpha = 0.5f))
             }
-            IconButton(onClick = { vm.dialog = "export" }) { Icon(Icons.Rounded.IosShare, "Export", tint = Ui.text) }
+            IconButton(onClick = { files.share() }) { Icon(Icons.Rounded.IosShare, "Share", tint = Ui.text) }
+            IconButton(onClick = { vm.dialog = "save" }) { Icon(Icons.Rounded.Save, "Save", tint = Ui.text) }
         }
 
         // Selection and clipboard: × to deselect (any tool) and a chevron with the rest.

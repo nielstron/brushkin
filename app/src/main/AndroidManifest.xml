@@ -8,6 +8,11 @@
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" tools:node="remove" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_DATA_SYNC" tools:node="remove" />
 
+    <queries>
+        <package android:name="com.whatsapp" />
+        <package android:name="com.whatsapp.w4b" />
+    </queries>
+
     <application
         android:allowBackup="true"
         android:hardwareAccelerated="true"
@@ -33,6 +38,11 @@
                 <data android:mimeType="image/*" />
             </intent-filter>
         </activity>
+        <provider
+            android:name=".export.StickerProvider"
+            android:authorities="${applicationId}.stickers"
+            android:exported="true"
+            android:readPermission="com.whatsapp.sticker.READ" />
         <provider
             android:name="androidx.core.content.FileProvider"
             android:authorities="${applicationId}.files"
