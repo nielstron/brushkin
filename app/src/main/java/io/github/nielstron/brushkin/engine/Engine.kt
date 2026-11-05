@@ -53,6 +53,7 @@ data class DocInfo(
     val name: String = "Untitled",
     /** Bumped on every document change; used to decide when to autosave. */
     val version: Long = 0,
+    val exportMetadata: io.github.nielstron.brushkin.export.ExportMetadata = io.github.nielstron.brushkin.export.ExportMetadata(),
 )
 
 enum class GradientShape { LINEAR, RADIAL }
@@ -132,10 +133,10 @@ class Engine {
         replaceDocument(Stack(w, h, listOf(layer), layer.id), name)
     }
 
-    fun openImage(bmp: Bitmap, name: String) = post {
+    fun openImage(bmp: Bitmap, name: String, metadata: io.github.nielstron.brushkin.export.ExportMetadata = io.github.nielstron.brushkin.export.ExportMetadata()) = post {
         val px = TiledBitmap.fromBitmap(bmp)
         val layer = Layer(name = name, pixels = px)
-        replaceDocument(Stack(bmp.width, bmp.height, listOf(layer), layer.id), name)
+        replaceDocument(Stack(bmp.width, bmp.height, listOf(layer), layer.id, exportMetadata = metadata), name)
     }
 
     fun openStack(s: Stack, name: String) = post { replaceDocument(s, name) }
@@ -159,7 +160,7 @@ class Engine {
     private fun publish(thumbsNow: Boolean = false) {
         val s = stack
         _info.value = DocInfo(
-            width = s.width, height = s.height,
+            width = s.width, height = s.height, exportMetadata = s.exportMetadata,
             layers = buildList {
                 // Top-most first, children indented below their (expanded) group.
                 fun add(list: List<Layer>, depth: Int) {

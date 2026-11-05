@@ -88,6 +88,7 @@ interface FileActions {
     fun openProject()
     fun saveProject()
     fun saveXcf()
+    suspend fun exportPreview(options: io.github.nielstron.brushkin.export.ImageExportOptions): android.graphics.Bitmap
     fun export(options: io.github.nielstron.brushkin.export.ImageExportOptions)
     suspend fun stickerPacks(): List<io.github.nielstron.brushkin.export.StickerPack>
     suspend fun addSticker(packId: String?, name: String, emoji: String): io.github.nielstron.brushkin.export.StickerPack
@@ -127,7 +128,7 @@ fun Dialogs(vm: EditorViewModel, info: DocInfo, files: FileActions) {
     val e = vm.engine
     when {
         d == "save" -> SaveMenuDialog(close) { vm.dialog = it }
-        d == "export-image" -> ImageExportDialog(info, close) { options -> close(); files.export(options) }
+        d == "export-image" -> ImageExportDialog(info, files, close) { options -> close(); files.export(options) }
         d == "save-project" -> SaveProjectDialog(close) { xcf -> close(); if (xcf) files.saveXcf() else files.saveProject() }
         d == "export-sticker" -> StickerExportDialog(info, files, close)
         d == "new" -> NewImageDialog(vm, close)

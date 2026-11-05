@@ -82,6 +82,8 @@ object Ora {
             xml.append("</image>\n")
             zip.putNextEntry(ZipEntry("stack.xml")); zip.write(xml.toString().toByteArray()); zip.closeEntry()
 
+            zip.putNextEntry(ZipEntry("brushkin/export-metadata.json")); zip.write(stack.exportMetadata.toJson().toByteArray()); zip.closeEntry()
+
             val merged = Compositor.flatten(stack)
             zip.putNextEntry(ZipEntry("mergedimage.png")); merged.compress(Bitmap.CompressFormat.PNG, 100, zip); zip.closeEntry()
             val ts = minOf(256f / stack.width, 256f / stack.height, 1f)
@@ -172,7 +174,8 @@ object Ora {
         val layers = root ?: ArrayList()
         if (w <= 0 || h <= 0) error("Invalid image size")
         if (layers.isEmpty()) layers.add(Layer(name = "Background", pixels = TiledBitmap(w, h)))
-        val st = Stack(w, h, layers, activeId, guides = guides, channels = channels)
+        val st = Stack(w, h, layers, activeId, guides = guides, channels = channels,
+            exportMetadata = files["brushkin/export-metadata.json"]?.let { io.github.nielstron.brushkin.export.ExportMetadata.fromJson(it.toString(Charsets.UTF_8)) } ?: io.github.nielstron.brushkin.export.ExportMetadata())
         return if (st.find(activeId) != null) st else st.copy(activeId = st.all.last { !it.isGroup }.id)
     }
 

@@ -137,6 +137,17 @@ class MainActivity : ComponentActivity(), FileActions {
     override fun saveXcf() = createXcf.launch("${vm.engine.docName.substringBeforeLast('.')}.xcf")
     override fun saveProject() = createProject.launch("${vm.engine.docName.substringBeforeLast('.')}.ora")
 
+    override suspend fun exportPreview(options: ImageExportOptions): Bitmap {
+        val source = vm.engine.flattened()
+        return try { withContext(Dispatchers.IO) {
+            val factor = minOf(1f, 1024f / maxOf(source.width, source.height))
+            val preview = if (factor == 1f) source else Bitmap.createScaledBitmap(source, maxOf(1,(source.width*factor).toInt()), maxOf(1,(source.height*factor).toInt()), true)
+            try { val encoded = options.encode(preview, vm.engine.info.value.exportMetadata)
+                android.graphics.BitmapFactory.decodeByteArray(encoded,0,encoded.size) ?: error("Preview unavailable for these settings")
+            } finally { if (preview !== source) preview.recycle() }
+        } } finally { source.recycle() }
+    }
+
     override fun export(options: ImageExportOptions) {
         if (vm.exportStatus != null) return
         vm.exportedImage = null
@@ -145,15 +156,23 @@ class MainActivity : ComponentActivity(), FileActions {
         lifecycleScope.launch {
             var pending: Uri? = null
             try {
+                val snapshot = if (options.animation && options.format in listOf(ImageFormat.WEBP,ImageFormat.GIF)) vm.engine.snapshot() else null
+                val metadata = vm.engine.info.value.exportMetadata
+                val background = vm.bg
                 val bmp = vm.engine.flattened()
                 val name = "${vm.engine.docName.substringBeforeLast('.')}-${System.currentTimeMillis() / 1000}.$format"
                 vm.exportStatus = "Encoding ${options.format.label}"
                 val uri = withContext(Dispatchers.IO) {
-                    val bytes = try { options.encode(bmp) } finally { bmp.recycle() }
+                    val bytes = try {
+                        val encoded = if (snapshot != null) {
+                            if (options.format == ImageFormat.GIF) encodeGifAnimation(snapshot, options) else encodeWebpAnimation(snapshot, options)
+                        } else options.encode(bmp, metadata)
+                        addExportMetadata(encoded, bmp, options, metadata, assets.open("export/sRGB.icc").use { it.readBytes() }, background)
+                    } finally { bmp.recycle() }
                     withContext(Dispatchers.Main) { vm.exportStatus = "Writing image" }
                     val values = ContentValues().apply {
                         put(MediaStore.Images.Media.DISPLAY_NAME, name)
-                        put(MediaStore.Images.Media.MIME_TYPE, mime(format))
+                        put(MediaStore.Images.Media.MIME_TYPE, options.format.mime)
                         put(MediaStore.Images.Media.RELATIVE_PATH, Environment.DIRECTORY_PICTURES + "/Brushkin")
                         put(MediaStore.Images.Media.IS_PENDING, 1)
                     }
@@ -293,7 +312,8 @@ class MainActivity : ComponentActivity(), FileActions {
                     val stack = withContext(Dispatchers.IO) { contentResolver.openInputStream(uri)!!.use { Ora.read(it) } }
                     vm.engine.openStack(stack, name)
                 } else {
-                    vm.engine.openImage(decode(uri), name)
+                    val metadata = withContext(Dispatchers.IO) { contentResolver.openInputStream(uri)!!.use { ExportMetadata.read(it.readBytes()) } }
+                    vm.engine.openImage(decode(uri), name, metadata)
                 }
             } catch (t: Throwable) {
                 vm.messages.tryEmit("Couldn't open $name: ${t.message}")

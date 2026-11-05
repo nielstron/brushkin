@@ -93,7 +93,7 @@ val KEYWORDS = mapOf(
     "Rotate 90° counter-clockwise" to "turn image left",
     "Flip horizontally" to "mirror image left right",
     "Flip vertically" to "upside down mirror",
-    "Export image…" to "save picture to gallery photos png jpeg jpg webp quality",
+    "Export image…" to "save picture to gallery photos png jpeg jpg webp gif animation quality",
     "Export as sticker…" to "whatsapp telegram sticker pack",
     "Share image…" to "send picture to someone",
     "Save project (.ora)…" to "save work with layers to continue later",
@@ -160,7 +160,7 @@ fun commands(vm: EditorViewModel, info: DocInfo, files: FileActions, view: () ->
         Cmd("File", "Open project (.ora / .xcf)…", run = { files.openProject() }),
         Cmd("File", "Save as…", "project with layers", run = dlg("save-project")),
         Cmd("File", "Import brushes, gradients, palettes…", ".gbr .gih .ggr .gpl .pat .myb", run = { files.importResources() }),
-        Cmd("File", "Export image…", "PNG, JPEG or WebP", run = dlg("export-image")),
+        Cmd("File", "Export image…", "PNG, JPEG, WebP or GIF", run = dlg("export-image")),
         Cmd("File", "Export as sticker…", "WhatsApp or Telegram", run = dlg("export-sticker")),
         Cmd("File", "Share image…", run = { files.share() }),
 
