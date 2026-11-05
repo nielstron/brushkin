@@ -1,0 +1,9 @@
+New Share and Save controls, with unified project saving and image export dialogs.
+PNG, JPEG and WebP export settings, with detailed controls under Advanced settings.
+Export layers as animated GIF or WebP, including frame timing and loop controls.
+Export custom stickers to WhatsApp or Telegram.
+Export progress and an option to open the completed image.
+Import GIF and WebP animations as editable, timed layers.
+Improved JPEG compatibility, EXIF rotation and sRGB conversion.
+Material icons throughout common editor tools and actions.
+Fixes GIF play-once behavior and palette color accuracy.
