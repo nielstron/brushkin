@@ -11,6 +11,8 @@ val playStore = providers.gradleProperty("playStore").orNull == "true"
 android {
     namespace = "io.github.nielstron.brushkin"
     compileSdk = 36
+    ndkVersion = "27.1.12297006"
+    externalNativeBuild { cmake { path = file("src/main/cpp/CMakeLists.txt"); version = "3.22.1" } }
 
     defaultConfig {
         applicationId = "de.nielstron.brushkin"
@@ -53,7 +55,7 @@ android {
     packaging {
         jniLibs {
             useLegacyPackaging = true
-            keepDebugSymbols += "**/*.so"
+            keepDebugSymbols += listOf("**/libLiteRt*.so", "**/liblitert_jni.so", "**/libandroidx.graphics.path.so")
         }
     }
 

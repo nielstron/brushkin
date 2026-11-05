@@ -10,8 +10,9 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.SaveAs
 import androidx.compose.material.icons.rounded.Image
-import androidx.compose.material.icons.rounded.StickyNote2
+import androidx.compose.material.icons.automirrored.rounded.StickyNote2
 import androidx.compose.material.icons.rounded.Close
+import androidx.compose.material.icons.rounded.ExpandLess
 import androidx.compose.material.icons.rounded.ExpandMore
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
@@ -36,7 +37,7 @@ fun SaveMenuDialog(close: () -> Unit, open: (String) -> Unit) {
             for ((label, action, icon) in listOf(
                 Triple("Save as…", "save-project", Icons.Rounded.SaveAs),
                 Triple("Export image…", "export-image", Icons.Rounded.Image),
-                Triple("Export as sticker…", "export-sticker", Icons.Rounded.StickyNote2),
+                Triple("Export as sticker…", "export-sticker", Icons.AutoMirrored.Rounded.StickyNote2),
             )) {
                 Row(Modifier.fillMaxWidth().clickable { open(action) }.padding(vertical = 16.dp),
                     verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(16.dp)) {
@@ -48,12 +49,12 @@ fun SaveMenuDialog(close: () -> Unit, open: (String) -> Unit) {
 }
 
 @Composable
-private fun <T> Choice(label: String, value: T, options: List<T>, text: (T) -> String, select: (T) -> Unit) {
+private fun <T> Choice(label: String, value: T, options: List<T>, text: (T) -> String, enabled: Boolean = true, select: (T) -> Unit) {
     var expanded by remember { mutableStateOf(false) }
     Column {
         Text(label, color = Ui.muted, style = MaterialTheme.typography.labelMedium)
         Box {
-            OutlinedButton(onClick = { expanded = true }, modifier = Modifier.fillMaxWidth()) {
+            OutlinedButton(onClick = { expanded = true }, enabled = enabled, modifier = Modifier.fillMaxWidth()) {
                 Text(text(value), modifier = Modifier.weight(1f))
                 Icon(Icons.Rounded.ExpandMore, null)
             }
@@ -76,23 +77,154 @@ fun SaveProjectDialog(close: () -> Unit, save: (Boolean) -> Unit) {
 }
 
 @Composable
-fun ImageExportDialog(info: DocInfo, close: () -> Unit, save: (ImageExportOptions) -> Unit) {
-    var format by rememberSaveable { mutableStateOf(ImageFormat.PNG) }
-    var quality by rememberSaveable { mutableIntStateOf(92) }
-    var lossless by rememberSaveable { mutableStateOf(true) }
-    val options = ImageExportOptions(format, quality, lossless)
+private fun ExportToggle(label: String, value: Boolean, enabled: Boolean = true, change: (Boolean) -> Unit) {
+    Row(Modifier.fillMaxWidth().clickable(enabled) { change(!value) }, verticalAlignment = Alignment.CenterVertically) {
+        Checkbox(value, change, enabled = enabled)
+        Text(label, color = if (enabled) Ui.text else Ui.muted, modifier = Modifier.weight(1f))
+    }
+}
+
+@Composable
+private fun ExportSlider(label: String, value: Int, range: IntRange, enabled: Boolean = true, change: (Int) -> Unit) {
+    Column {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Text(label, modifier = Modifier.weight(1f), color = if (enabled) Ui.text else Ui.muted)
+            var entry by remember(value) { mutableStateOf(value.toString()) }
+            OutlinedTextField(entry, { entry = it; it.toIntOrNull()?.takeIf { n -> n in range }?.let(change) },
+                enabled = enabled, singleLine = true, modifier = Modifier.width(80.dp),
+                keyboardOptions = androidx.compose.foundation.text.KeyboardOptions(keyboardType = androidx.compose.ui.text.input.KeyboardType.Number))
+        }
+        Slider(value.toFloat(), { change(it.roundToInt()) }, valueRange = range.first.toFloat()..range.last.toFloat(), enabled = enabled)
+    }
+}
+
+@Composable
+fun ImageExportDialog(info: DocInfo, files: FileActions, close: () -> Unit, save: (ImageExportOptions) -> Unit) {
+    var options by remember { mutableStateOf(ImageExportOptions(comment = info.exportMetadata.comment, resolution = info.exportMetadata.resolution)) }
+    val context = LocalContext.current
+    val preferences = remember { context.getSharedPreferences("image-export", android.content.Context.MODE_PRIVATE) }
+    var hasSavedSettings by remember { mutableStateOf(preferences.contains("saved")) }
+    var previewEnabled by rememberSaveable { mutableStateOf(false) }
+    var preview by remember { mutableStateOf<android.graphics.Bitmap?>(null) }
+    var previewError by remember { mutableStateOf<String?>(null) }
+    var metadataOpen by rememberSaveable { mutableStateOf(false) }
+    var editMetadata by rememberSaveable { mutableStateOf(false) }
+    var previewBusy by remember { mutableStateOf(false) }
+    LaunchedEffect(previewEnabled, options) {
+        if (!previewEnabled) { preview?.recycle(); preview = null; return@LaunchedEffect }
+        previewBusy = true; previewError = null
+        kotlinx.coroutines.delay(200)
+        try { val result = files.exportPreview(options); preview?.recycle(); preview = result }
+        catch (e: CancellationException) { throw e }
+        catch (e: Exception) { previewError = e.message }
+        finally { previewBusy = false }
+    }
+    DisposableEffect(Unit) { onDispose { preview?.recycle() } }
+    var advanced by rememberSaveable { mutableStateOf(false) }
     AlertDialog(onDismissRequest = close, containerColor = Ui.panel, title = { Text("Export image") },
         text = { Column(Modifier.verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-            Choice("Format", format, ImageFormat.entries, { it.label }) { format = it }
-            if (format == ImageFormat.WEBP) Row(verticalAlignment = Alignment.CenterVertically) {
-                Text("Lossless", modifier = Modifier.weight(1f)); Switch(lossless, { lossless = it })
+            Choice("Format", options.format, ImageFormat.entries, { it.label }) { options = options.copy(format = it) }
+            when (options.format) {
+                ImageFormat.PNG -> Unit
+                ImageFormat.JPEG -> ExportSlider("Quality", options.quality, 0..100, !(options.useOriginalQuality && info.exportMetadata.jpegHeader != null)) { options = options.copy(quality = it) }
+                ImageFormat.WEBP -> {
+                    ExportToggle("Lossless", options.lossless) { options = options.copy(lossless = it) }
+                    ExportSlider("Image quality", options.webpQuality, 0..100, !options.lossless) { options = options.copy(webpQuality = it) }
+                    ExportToggle("Save animation", options.animation, info.layers.size > 1) { options = options.copy(animation = it) }
+                }
+                ImageFormat.GIF -> ExportToggle("As animation", options.animation, info.layers.size > 1) { options = options.copy(animation = it) }
             }
-            if (format == ImageFormat.JPEG || (format == ImageFormat.WEBP && !lossless)) {
-                Text("Quality: $quality%")
-                Slider(quality.toFloat(), { quality = it.roundToInt() }, valueRange = 1f..100f)
+            TextButton(onClick = { advanced = !advanced }) {
+                Text("Advanced settings", modifier = Modifier.weight(1f))
+                Icon(if (advanced) Icons.Rounded.ExpandLess else Icons.Rounded.ExpandMore, null)
+            }
+            if (advanced) {
+            when (options.format) {
+                ImageFormat.PNG -> {
+                    Choice("Pixel format", options.pngFormat, PngPixelFormat.entries, { it.label }) { options = options.copy(pngFormat = it) }
+                    ExportSlider("Compression level", options.compression, 0..9) { options = options.copy(compression = it) }
+                    ExportToggle("Interlacing (Adam7)", options.interlace) { options = options.copy(interlace = it) }
+                    ExportToggle("Save color values from transparent pixels", false, false) {}
+                    ExportToggle("Save background color", options.saveBackground) { options = options.copy(saveBackground = it) }
+                    ExportToggle("Save layer offset", options.saveOffset) { options = options.copy(saveOffset = it) }
+                    ExportToggle("Save resolution", options.saveResolution) { options = options.copy(saveResolution = it) }
+                    ExportToggle("Save creation time", options.saveCreationTime) { options = options.copy(saveCreationTime = it) }
+                    ExportToggle("Save comment", options.saveComment) { options = options.copy(saveComment = it) }
+                
+                }
+                ImageFormat.JPEG -> {
+                    ExportToggle("Use quality settings from original image", options.useOriginalQuality && info.exportMetadata.jpegHeader != null, info.exportMetadata.jpegHeader != null) { options = options.copy(useOriginalQuality = it) }
+                    ExportToggle("Show preview", previewEnabled) { previewEnabled = it }
+
+                        ExportSlider("Smoothing", options.smoothing, 0..100) { options = options.copy(smoothing = it) }
+                        ExportToggle("Export as CMYK", options.cmyk) { options = options.copy(cmyk = it) }
+                        ExportToggle("Progressive", options.progressive) { options = options.copy(progressive = it) }
+                        ExportToggle("Use arithmetic coding", options.arithmetic) { options = options.copy(arithmetic = it) }
+                        ExportToggle("Optimize", options.optimize) { options = options.copy(optimize = it) }
+                        ExportToggle("Use restart markers", options.restartRows > 0) { options = options.copy(restartRows = if (it) 16 else 0) }
+                        if (options.restartRows > 0) ExportSlider("Interval (MCU rows)", options.restartRows, 1..64) { options = options.copy(restartRows = it) }
+                        Choice("Subsampling", options.subsampling, JpegSampling.entries, { it.label }, enabled = !options.cmyk) { options = options.copy(subsampling = it) }
+                        Choice("DCT method", options.dct, JpegDct.entries, { it.label }) { options = options.copy(dct = it) }
+                    
+                }
+                ImageFormat.GIF -> {
+                    ExportToggle("Interlace", options.interlace) { options = options.copy(interlace = it) }
+                    ExportToggle("Save comment", options.saveComment) { options = options.copy(saveComment = it) }
+                    if (options.saveComment) OutlinedTextField(options.comment, { options = options.copy(comment = it) }, label = { Text("GIF comment") })
+                    if (options.animation) {
+                        ExportToggle("Loop forever", options.loopForever) { options = options.copy(loopForever = it) }
+                        if (!options.loopForever) ExportSlider("Number of repeats", options.repeats, 1..1000) { options = options.copy(repeats = it) }
+                        ExportSlider("Delay between frames (ms)", options.frameDelay, 1..10000) { options = options.copy(frameDelay = it) }
+                        Choice("Frame disposal", options.disposal, FrameDisposal.entries, { it.label }) { options = options.copy(disposal = it) }
+                        ExportToggle("Use delay for all frames", options.forceFrameDelay) { options = options.copy(forceFrameDelay = it) }
+                        ExportToggle("Use disposal for all frames", options.forceDisposal) { options = options.copy(forceDisposal = it) }
+                    }
+                
+                }
+                ImageFormat.WEBP -> {
+                    Choice("Source type", options.webpSource, WebpSource.entries, { it.label }) { options = options.copy(webpSource = it) }
+                    ExportSlider("Alpha quality", options.alphaQuality, 0..100, !options.lossless) { options = options.copy(alphaQuality = it) }
+                    ExportToggle("Use Sharp YUV", options.sharpYuv, !options.lossless) { options = options.copy(sharpYuv = it) }
+                    if (options.animation) {
+                        ExportToggle("Loop forever", options.loopForever) { options = options.copy(loopForever = it) }
+                        ExportToggle("Minimize output size", options.minimizeSize) { options = options.copy(minimizeSize = it) }
+                        ExportSlider("Keyframe distance", options.keyframeDistance, 2..1000, !options.minimizeSize) { options = options.copy(keyframeDistance = it) }
+                        ExportSlider("Delay between frames (ms)", options.frameDelay, 1..10000) { options = options.copy(frameDelay = it) }
+                        ExportToggle("Use delay for all frames", options.forceFrameDelay) { options = options.copy(forceFrameDelay = it) }
+                    }
+                
+                }
+            }
+            if (previewBusy) LinearProgressIndicator(Modifier.fillMaxWidth())
+            preview?.let { Image(it.asImageBitmap(), "Export preview", Modifier.fillMaxWidth().heightIn(max = 160.dp)) }
+            previewError?.let { Text(it, color = MaterialTheme.colorScheme.error) }
+            if (options.format != ImageFormat.GIF) {
+            TextButton(onClick = { metadataOpen = !metadataOpen }) {
+                Text("Metadata", modifier = Modifier.weight(1f))
+                Icon(if (metadataOpen) Icons.Rounded.ExpandLess else Icons.Rounded.ExpandMore, null)
+            }
+            if (metadataOpen) {
+                TextButton(onClick = { editMetadata = true }) { Text("Edit…") }
+                ExportToggle("Save Exif data", options.saveExif && info.exportMetadata.exif != null, info.exportMetadata.exif != null) { options = options.copy(saveExif = it) }
+                ExportToggle("Save XMP data", options.saveXmp && info.exportMetadata.xmp != null, info.exportMetadata.xmp != null) { options = options.copy(saveXmp = it) }
+                ExportToggle("Save IPTC data", options.saveIptc && info.exportMetadata.iptc != null && options.format != ImageFormat.WEBP, info.exportMetadata.iptc != null && options.format != ImageFormat.WEBP) { options = options.copy(saveIptc = it) }
+                ExportToggle("Save color profile", options.saveProfile && !(options.format == ImageFormat.JPEG && options.cmyk), !(options.format == ImageFormat.JPEG && options.cmyk)) { options = options.copy(saveProfile = it) }
+                ExportToggle("Save thumbnail", options.saveThumbnail) { options = options.copy(saveThumbnail = it) }
+                if (options.format == ImageFormat.JPEG) ExportToggle("Save comment", options.saveComment) { options = options.copy(saveComment = it) }
+            }
+            }
+            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
+                TextButton(onClick = { preferences.getString("saved", null)?.let { options = ImageExportOptions.fromJson(it) } }, enabled = hasSavedSettings) { Text("Load saved settings") }
+                TextButton(onClick = { preferences.edit().putString("saved", options.toJson()).apply(); hasSavedSettings = true }) { Text("Save settings") }
+            }
             }
         } }, confirmButton = { TextButton(onClick = { save(options) }) { Text("Export") } },
         dismissButton = { TextButton(onClick = close) { Text("Cancel") } })
+    if (editMetadata) AlertDialog(onDismissRequest = { editMetadata = false }, containerColor = Ui.panel,
+        title = { Text("Metadata") }, text = { Column(Modifier.verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+            OutlinedTextField(options.comment, { options = options.copy(comment = it) }, label = { Text("Comment") }, modifier = Modifier.fillMaxWidth())
+            ExportSlider("Resolution (ppi)", options.resolution, 1..2400) { options = options.copy(resolution = it) }
+        } }, confirmButton = { TextButton(onClick = { editMetadata = false }) { Text("Done") } })
 }
 
 @Composable

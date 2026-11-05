@@ -10,3 +10,5 @@ bugreport-*.zip
 *.keystore
 *.jks
 __pycache__/
+
+.cxx/

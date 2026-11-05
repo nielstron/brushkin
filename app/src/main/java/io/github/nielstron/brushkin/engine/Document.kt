@@ -106,6 +106,7 @@ data class Stack(
     val guides: List<Guide> = emptyList(),
     /** Saved channels (stored selections), top-most first. */
     val channels: List<SavedChannel> = emptyList(),
+    val exportMetadata: io.github.nielstron.brushkin.export.ExportMetadata = io.github.nielstron.brushkin.export.ExportMetadata(),
 ) {
     /** Every layer and group, depth-first, bottom-most first. */
     val all: List<Layer> get() = flatten(layers)
