@@ -94,6 +94,16 @@ fun EditorScreen(vm: EditorViewModel, files: FileActions, store: StoreIntegratio
     var viewVersion by remember { androidx.compose.runtime.mutableIntStateOf(0) }
     val snack = remember { SnackbarHostState() }
     LaunchedEffect(Unit) { vm.messages.collect { snack.showSnackbar(it) } }
+    LaunchedEffect(vm.exportedImage) {
+        vm.exportedImage?.let { result ->
+            snack.currentSnackbarData?.dismiss()
+            if (snack.showSnackbar("Image exported", actionLabel = "Open", withDismissAction = true,
+                duration = androidx.compose.material3.SnackbarDuration.Indefinite) == androidx.compose.material3.SnackbarResult.ActionPerformed) {
+                files.openExport(result.uri, result.mime)
+            }
+            vm.exportedImage = null
+        }
+    }
     // Pause the GL thread with the activity so it doesn't render (or hold the GPU) in the background.
     val lifecycle = androidx.lifecycle.compose.LocalLifecycleOwner.current.lifecycle
     androidx.compose.runtime.DisposableEffect(lifecycle) {
@@ -305,7 +315,7 @@ fun EditorScreen(vm: EditorViewModel, files: FileActions, store: StoreIntegratio
             }
         }
 
-        val anyBusy = busy ?: vm.mlBusy
+        val anyBusy = vm.exportStatus ?: busy ?: vm.mlBusy
         val progress by vm.engine.progress.collectAsState()
         if (anyBusy != null) {
             // Full-width card: what's happening, and a bar that fills when the progress is known.
@@ -314,13 +324,13 @@ fun EditorScreen(vm: EditorViewModel, files: FileActions, store: StoreIntegratio
                     .clip(RoundedCornerShape(16.dp)).background(Ui.panel).padding(horizontal = 16.dp, vertical = 12.dp),
                 verticalArrangement = Arrangement.spacedBy(8.dp),
             ) {
-                val canCancel = vm.engine.cancellable.collectAsState().value || (busy == null && vm.mlBusy != null)
+                val canCancel = vm.exportStatus == null && (vm.engine.cancellable.collectAsState().value || (busy == null && vm.mlBusy != null))
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Text("$anyBusy…", color = Ui.text, fontSize = 13.sp, modifier = Modifier.weight(1f))
                     if (canCancel) Icon(Icons.Rounded.Close, "Cancel", tint = Ui.text,
                         modifier = Modifier.clip(CircleShape).clickable { vm.cancelWork() }.padding(4.dp).size(20.dp))
                 }
-                val p = progress.takeIf { busy != null }
+                val p = progress.takeIf { busy != null && vm.exportStatus == null }
                 val mod = Modifier.fillMaxWidth().height(6.dp).clip(RoundedCornerShape(3.dp))
                 if (p != null) LinearProgressIndicator(progress = { p }, modifier = mod, color = Ui.accent, trackColor = Ui.panel2, drawStopIndicator = {})
                 else LinearProgressIndicator(modifier = mod, color = Ui.accent, trackColor = Ui.panel2)
