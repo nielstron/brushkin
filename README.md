@@ -7,16 +7,18 @@
 
 -----
 
-A layered image editor for Android with GIMP's toolbox, redesigned for fingers and styluses:
+A layered image editor for Android, inspired by GIMP and designed for fingers and styluses:
 
 - Insert other images, emojis, stickers and text.
 - Paint with brushes, pencil, airbrush, ink and MyPaint-style brushes, plus smudge, clone, heal, dodge/burn and symmetry painting.
 - Select with rectangle, lasso, fuzzy, Intelligent Scissors and quick mask.
 - Lightweight AI tools: select objects, remove objects, background depth blur, upscale, denoise and deblur.
 - Transform with move, scale, rotate, perspective, warp, cage and more, snapping to guides and a grid.
-- Over 30 filters with live preview: curves, levels, colorize, blurs, noise reduction, drop shadow, distortions…
-- Work with layers, groups, blend modes, masks, editable text and non-destructive filters, and import GIMP brushes, gradients, palettes and patterns.
-- Sharing, export PNG/JPEG/WebP/GIF, export as WhatsApp/Telegram Sticker, open and save GIMP `.xcf` and OpenRaster `.ora`.
+- Color adjustments and filters with live preview, including GIMP’s upstream GEGL operations: curves, levels, blur, noise, edge detection, lighting, distortions and artistic effects.
+- Work with layers, groups, blend modes, masks and editable text; import GIMP brushes, gradients, palettes and patterns. Use **Effect** mode for editable, non-destructive filters.
+- Share images, save projects as GIMP `.xcf` or OpenRaster `.ora`, and export PNG, JPEG, WebP or GIF with format-specific controls under **Advanced**. Exports show progress and offer to open the completed file.
+- Import GIF/WebP animations as timed layers, export layers as animated GIF/WebP, and send custom stickers to WhatsApp or Telegram.
+- Find tools and actions through command search, with recent operations shown when the search is empty.
 
 
 ## Screenshots
@@ -30,30 +32,66 @@ A layered image editor for Android with GIMP's toolbox, redesigned for fingers a
 
 ## Installation
 
+Requires Android 10 or newer and an ARM device (`arm64-v8a` or `armeabi-v7a`).
+
 Install it with [Komi Store](https://komistore.app) (formerly GitHub Store), which also keeps it updated, or download the APK from the [Releases page](https://github.com/nielstron/brushkin/releases). F-Droid submission pending.
 
-The AI tools use open models that aren't part of the APK. Each one is downloaded the first time its tool is used, after asking, and kept in the app's cache: [MobileSAM](https://github.com/ChaoningZhang/MobileSAM) (object selection), [MI-GAN](https://github.com/Picsart-AI-Research/MI-GAN) (object removal), [ZipDepth](https://github.com/fabiotosi92/ZipDepth) (depth of field), [PLKSR-Rep](https://github.com/Innocentlove321/ntire2026-mobile-realworld-sr-vipsl19) (upscaling) and [NAFNet](https://github.com/megvii-research/NAFNet) (denoise, deblur). They run on the GPU where possible.
+The AI tools use open models that aren't part of the APK. Each one is downloaded the first time its tool is used, after asking, and kept in the app's cache: [MobileSAM](https://github.com/ChaoningZhang/MobileSAM) (object selection), [MI-GAN](https://github.com/Picsart-AI-Research/MI-GAN) (object removal), [ZipDepth](https://github.com/fabiotosi92/ZipDepth) (depth of field), [PLKSR-Rep](https://github.com/Innocentlove321/ntire2026-mobile-realworld-sr-vipsl19) (upscaling) and [NAFNet](https://github.com/megvii-research/NAFNet) (denoise, deblur). The model files come from a [shared model release](https://github.com/nielstron/brushkin/releases/tag/models-2), are verified by size and SHA-256, and run locally through LiteRT, using the GPU where supported and the CPU otherwise.
+
+## Filters and performance
+
+Brushkin uses pinned GEGL 0.4.62 operations for many filters. On devices that expose
+an OpenCL GPU driver to Android apps, selected operations use GPU acceleration:
+
+- Linear motion blur, box blur, bilateral filtering, pixelize and single-axis Sobel.
+- Selective Gaussian blur, oilify, Laplace, alien map and vignette.
+- HSV/hurl noise, cell/simplex noise and diffraction patterns.
+- Gaussian blur’s FIR paths, including one-dimensional Gaussian blur. Automatic
+  mode retains GEGL’s FIR/IIR selection; IIR runs on the CPU.
+
+The allowlist was measured on a Pixel 6 Pro at 0.8 and 3.1 megapixels, with opaque
+and transparent output compared against CPU rendering. Speedups depend on the
+operation, settings, image size and device. Kernels with observed output discrepancies
+remain on CPU. OpenCL is optional: unsupported devices and operation settings use
+CPU rendering. LiteRT model acceleration is separate from GEGL’s OpenCL support.
+
+Live effects stay editable and reuse cached stages and incremental updates where
+supported, but can be expensive when drawing beneath them. Filter previews include existing effects, show computing progress, and allow pan and pinch
+zoom while the dialog is open.
+
+Brushkin is not a complete GIMP port. The editing pipeline stores 8-bit sRGB pixels
+and clips filter output to layer bounds; selecting 16-bit PNG export does not add
+editing precision. A GEGL graph editor and auxiliary-image inputs are not exposed.
+Additional filter dialogs use GEGL’s numeric, boolean and enum metadata;
+color/object parameters retain upstream defaults until dedicated controls are added.
 
 ## Build
 
-Install Python 3.12+, pkg-config, Meson 1.12.1, and Ninja (for example,
+Use JDK 21. Install Python 3.12+, pkg-config, Meson 1.12.1, and Ninja (for example,
 `uv tool install meson==1.12.1` and `brew install pkg-config ninja` on macOS).
 The Android SDK needs NDK 27.1.12297006 and CMake 3.22.1. The first native build
 also downloads and compiles GEGL 0.4.62, babl 0.1.114, GLib 2.84.4, and
 json-glib 1.10.8 for both ARM architectures; subsequent builds reuse the cache.
 `tools/build_gegl.py` pins source checksums and the libffi dependency revision.
 
-GEGL filters run on the CPU using the same upstream operations as GIMP. Brushkin
-still stores 8-bit sRGB pixels and clips filter output to the layer bounds. A graph
-editor and auxiliary-image inputs are not exposed. Additional filter dialogs use
-GEGL's numeric, boolean, and enum metadata; color/object parameters retain their
-upstream defaults until dedicated controls are added.
-
 ```sh
 ./gradlew :app:testDebugUnitTest :app:assembleDebug
 ```
 
-Device tests: `./gradlew :app:connectedDebugAndroidTest`. `tools/export_mobilesam.py` and `tools/export_models.py` reproduce the model files.
+Device tests (excluding the hardware-only survey):
+
+```sh
+./gradlew :app:connectedDebugAndroidTest \
+  -Pandroid.testInstrumentationRunnerArguments.notClass=io.github.nielstron.brushkin.OpenClSurveyTest
+```
+
+To install a separate preview without replacing the normal app, build with `-PopenClPrototype=true`;
+this changes only the debug app ID/version suffix, not which filters are accelerated.
+`OpenClPrototypeTest` checks enabled GPU paths and CPU fallback;
+`OpenClSurveyTest` benchmarks all packaged OpenCL candidates and requires an
+OpenCL-capable device. Run the survey explicitly rather than as part of the default
+suite on devices without OpenCL. `tools/export_mobilesam.py` and
+`tools/export_models.py` reproduce the model files.
 
 The default build stays ad-free and contains only free software. The Google Play distribution
 includes a small banner below the title bar and a one-time ad-removal purchase (US$5 base price;
