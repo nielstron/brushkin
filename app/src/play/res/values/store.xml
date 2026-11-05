@@ -1,0 +1,6 @@
+<resources>
+    <!-- Test IDs until the app-specific AdMob unit is provisioned. Release validation rejects these. -->
+    <string name="admob_app_id" translatable="false">ca-app-pub-2079363477505727~7599203585</string>
+    <string name="admob_banner_id" translatable="false">ca-app-pub-2079363477505727/4781468558</string>
+    <string name="play_billing_public_key" translatable="false">MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEA7G0CZoj3iVsTnZsrDYTyyh4LdSi2/QzUuXRxFyhc4QAqBU7bflw23hJU9PTaenE0KOp+YRBoqEENRy8+cS6IpKoasvBlHxlc4jVARrVDqsy6kfixpyNM7oMxlt7WXRvVel5TaYpb6nouFdIivHr3WRO8dGDfA212gLV13e22LYeF4WuIQ+h4EvfTaDFcqJHbW9/jNJdL3Ut0+RzkMm3FraNX+86gEahJ3xhcIzmwmJkogQLAQZ90QHRxDJ1wVAuNAl3iYRTvbrNFDWp4yl8fNIJzFsEB1XtNqZka7g98k9iG4dgv1IpcZAPMgyoALdhAmlKLfRD4ECYifCgOV9HbHQIDAQAB</string>
+</resources>

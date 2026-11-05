@@ -1,0 +1,5 @@
+Landscape: side-by-side brush size and opacity sliders, a compact bottom toolbar, and canvas fitting that keeps the image clear of controls. Improved handling of screen cutouts and larger text.
+
+Fixed Android 10 compatibility for window insets and WebP export.
+
+The GitHub APK remains ad-free. The optional Google Play edition adds a small banner, a US$5 one-time ad-removal purchase, purchase restoration, and ad privacy controls.

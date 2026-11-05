@@ -13,10 +13,9 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.imePadding
-import androidx.compose.foundation.layout.navigationBarsPadding
+import androidx.compose.foundation.layout.safeDrawingPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
@@ -276,17 +275,17 @@ fun commands(vm: EditorViewModel, info: DocInfo, files: FileActions, view: () ->
 }
 
 @Composable
-fun MenuScreen(vm: EditorViewModel, info: DocInfo, files: FileActions, holder: CanvasHolder) {
+fun MenuScreen(vm: EditorViewModel, info: DocInfo, files: FileActions, holder: CanvasHolder, storeCommands: List<Cmd> = emptyList()) {
     var query by remember { mutableStateOf("") }
     val open = remember { mutableStateListOf<String>() }
-    val all = remember(info, vm.fg, vm.bg) { commands(vm, info, files) { holder.view } }
+    val all = commands(vm, info, files) { holder.view } + storeCommands
     val search = remember(all) { CommandSearch(all) }
     BackHandler { vm.showMenu = false }
     val focus = remember { androidx.compose.ui.focus.FocusRequester() }
     androidx.compose.runtime.LaunchedEffect(Unit) { focus.requestFocus() }
     fun run(c: Cmd) { vm.showMenu = false; c.run() }
 
-    Column(Modifier.fillMaxSize().background(Ui.panel).statusBarsPadding().navigationBarsPadding().imePadding().clickable(enabled = false) {}) {
+    Column(Modifier.fillMaxSize().background(Ui.panel).safeDrawingPadding().imePadding().clickable(enabled = false) {}) {
         Row(Modifier.padding(12.dp), verticalAlignment = Alignment.CenterVertically) {
             IconButton(onClick = { vm.showMenu = false }) { Icon(Icons.AutoMirrored.Rounded.ArrowBack, "Back to canvas", tint = Ui.text) }
             Row(

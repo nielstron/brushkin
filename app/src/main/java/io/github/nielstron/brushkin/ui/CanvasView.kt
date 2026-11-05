@@ -45,6 +45,19 @@ class CanvasView(context: Context, private val vm: EditorViewModel) : View(conte
     private var fittedFor = 0L
     var flipped = false; private set
     var onViewChanged: (() -> Unit)? = null
+    /** Unobscured editor area, measured by the Compose controls in view coordinates. */
+    var contentBounds: RectF? = null
+        set(value) {
+            if (field == value) return
+            field = value
+            fit()
+        }
+    var adSpaceDp = 0
+        set(value) {
+            if (field == value) return
+            field = value
+            fit()
+        }
 
     private val checker: Paint = Paint().apply {
         val s = (8 * density).toInt().coerceAtLeast(4)
@@ -77,16 +90,21 @@ class CanvasView(context: Context, private val vm: EditorViewModel) : View(conte
     val scale: Float get() { val v = FloatArray(9); viewMatrix.getValues(v); return hypot(v[0], v[3]) }
     val viewRotation: Float get() { val v = FloatArray(9); viewMatrix.getValues(v); return Math.toDegrees(atan2(v[3].toDouble(), v[0].toDouble())).toFloat() }
 
+    override fun onSizeChanged(w: Int, h: Int, oldw: Int, oldh: Int) {
+        super.onSizeChanged(w, h, oldw, oldh)
+        if (oldw > 0 && oldh > 0 && (w != oldw || h != oldh)) fit()
+    }
+
     fun fit() {
         val s = engine.stack
         if (width == 0 || s.width <= 1) return
-        val pad = 24 * density
-        val top = 80 * density; val bottom = 180 * density
-        val avW = width - 2 * pad; val avH = height - top - bottom
+        val bounds = contentBounds ?: return // The editor supplies its bounds after layout.
+        val avW = bounds.width(); val avH = bounds.height()
+        if (avW <= 0 || avH <= 0) return
         val sc = min(avW / s.width, avH / s.height)
         viewMatrix.reset()
         viewMatrix.postScale(sc, sc)
-        viewMatrix.postTranslate((width - s.width * sc) / 2f, top + (avH - s.height * sc) / 2f)
+        viewMatrix.postTranslate(bounds.left + (avW - s.width * sc) / 2f, bounds.top + (avH - s.height * sc) / 2f)
         flipped = false
         changed()
     }
@@ -181,7 +199,7 @@ class CanvasView(context: Context, private val vm: EditorViewModel) : View(conte
     private var guideDrag: Pair<Int, io.github.nielstron.brushkin.engine.Guide>? = null
 
     private val rulerSize get() = 18 * density
-    private val rulerTop get() = (rootWindowInsets?.getInsets(android.view.WindowInsets.Type.statusBars())?.top ?: 0) + 76 * density
+    private val rulerTop get() = (androidx.core.view.ViewCompat.getRootWindowInsets(this)?.getInsets(androidx.core.view.WindowInsetsCompat.Type.statusBars())?.top ?: 0) + (76 + adSpaceDp) * density
 
     private fun inRuler(x: Float, y: Float) = vm.showRulers && ((y >= rulerTop && y < rulerTop + rulerSize) || (x < rulerSize && y >= rulerTop))
 
@@ -418,7 +436,7 @@ class CanvasView(context: Context, private val vm: EditorViewModel) : View(conte
         if (!active) return
         val size = 132 * density
         val margin = 12 * density
-        val top = (rootWindowInsets?.getInsets(android.view.WindowInsets.Type.statusBars())?.top ?: 0) + 128 * density
+        val top = (androidx.core.view.ViewCompat.getRootWindowInsets(this)?.getInsets(androidx.core.view.WindowInsetsCompat.Type.statusBars())?.top ?: 0) + 128 * density
         val left = if (touch.x < width / 2f) width - size - margin else margin
         val box = RectF(left, top, left + size, top + size)
         // Move out of the way if the finger is right under the loupe.

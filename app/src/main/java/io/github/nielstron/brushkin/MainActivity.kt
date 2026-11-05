@@ -18,6 +18,7 @@ import androidx.activity.viewModels
 import androidx.core.content.FileProvider
 import androidx.lifecycle.lifecycleScope
 import io.github.nielstron.brushkin.engine.Ora
+import io.github.nielstron.brushkin.store.StoreIntegration
 import io.github.nielstron.brushkin.ui.BrushkinTheme
 import io.github.nielstron.brushkin.ui.EditorScreen
 import io.github.nielstron.brushkin.ui.EditorViewModel
@@ -30,6 +31,7 @@ import java.io.File
 class MainActivity : ComponentActivity(), FileActions {
     private val vm: EditorViewModel by viewModels()
     private val autosave by lazy { File(filesDir, "autosave.ora") }
+    private lateinit var store: StoreIntegration
 
     private val pickLayer = registerForActivityResult(ActivityResultContracts.PickVisualMedia()) { uri -> uri?.let { insertImage(it) } }
     private val pickLayerFile = registerForActivityResult(ActivityResultContracts.OpenDocument()) { uri -> uri?.let { insertImage(it) } }
@@ -47,7 +49,9 @@ class MainActivity : ComponentActivity(), FileActions {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
-        setContent { BrushkinTheme { EditorScreen(vm, this) } }
+        store = StoreIntegration(this)
+        store.start()
+        setContent { BrushkinTheme { EditorScreen(vm, this, store) } }
         if (savedInstanceState == null) {
             val shared = incomingUri(intent)
             when {
@@ -103,6 +107,16 @@ class MainActivity : ComponentActivity(), FileActions {
     }
 
     private fun prefs() = getSharedPreferences("brushkin", MODE_PRIVATE)
+
+    override fun onResume() {
+        super.onResume()
+        store.resume()
+    }
+
+    override fun onDestroy() {
+        store.close()
+        super.onDestroy()
+    }
 
     override fun onStop() {
         super.onStop()

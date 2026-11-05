@@ -42,6 +42,21 @@ The AI tools use open models that aren't part of the APK. Each one is downloaded
 
 Device tests: `./gradlew :app:connectedDebugAndroidTest`. `tools/export_mobilesam.py` and `tools/export_models.py` reproduce the model files.
 
+The default build stays ad-free and contains only free software. The Google Play distribution
+includes a small banner below the title bar and a one-time ad-removal purchase (US$5 base price;
+Google Play shows the local price). Build it explicitly with:
+
+```sh
+./gradlew -PplayStore=true :app:testDebugUnitTest :app:assembleDebug
+./gradlew -PplayStore=true :app:bundleRelease
+```
+
+Debug Play builds use Google's test ads. Production AdMob IDs and the Play billing verification
+public key are in `app/src/play/res/values/store.xml`. The non-consumable product ID is
+`remove_ads`. The menu includes purchase restoration and, where required, ad privacy choices.
+Signing still uses the `BRUSHKIN_KEYSTORE`, `BRUSHKIN_KEYSTORE_PASSWORD`, `BRUSHKIN_KEY_ALIAS`
+and `BRUSHKIN_KEY_PASSWORD` environment variables. Keep private signing material outside the repository.
+
 ## License
 
 GPL-3.0-or-later. Emoji names and keywords come from Unicode CLDR (Unicode License v3); the meme font is Anton (SIL Open Font License 1.1); the downloadable models are Apache-2.0 (MobileSAM) and MIT (the others).

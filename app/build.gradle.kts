@@ -4,6 +4,10 @@ plugins {
     id("org.jetbrains.kotlin.plugin.compose")
 }
 
+// The default remains the free-software build used by GitHub and F-Droid.
+// Google Play integrations are compiled only with -PplayStore=true.
+val playStore = providers.gradleProperty("playStore").orNull == "true"
+
 android {
     namespace = "io.github.nielstron.brushkin"
     compileSdk = 36
@@ -12,8 +16,8 @@ android {
         applicationId = "de.nielstron.brushkin"
         minSdk = 29
         targetSdk = 36
-        versionCode = 5
-        versionName = "0.4.0"
+        versionCode = 6
+        versionName = "0.4.1"
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         // LiteRT (object selection) ships native code: ARM only (phones), which keeps the APK small.
         ndk { abiFilters += listOf("arm64-v8a", "armeabi-v7a") }
@@ -32,6 +36,9 @@ android {
     }
 
     buildTypes {
+        debug {
+            resValue("string", "app_name", "Brushkin Preview")
+        }
         release {
             isMinifyEnabled = true
             isShrinkResources = true
@@ -56,7 +63,17 @@ android {
         includeInBundle = false
     }
 
-    buildFeatures { compose = true }
+    sourceSets {
+        getByName("main").java.srcDir(if (playStore) "src/play/java" else "src/foss/java")
+        if (playStore) {
+            getByName("main").res.srcDir("src/play/res")
+            getByName("debug").res.srcDir("src/playDebug/res")
+            getByName("debug").manifest.srcFile("src/play/AndroidManifest.xml")
+            getByName("release").manifest.srcFile("src/play/AndroidManifest.xml")
+            getByName("test").java.srcDir("src/testPlay/java")
+        }
+    }
+    buildFeatures { compose = true; buildConfig = true }
 
 
     compileOptions {
@@ -65,7 +82,20 @@ android {
     }
 }
 
+if (playStore) tasks.matching { it.name == "preReleaseBuild" }.configureEach {
+    doFirst {
+        val settings = file("src/play/res/values/store.xml").readText()
+        check(!settings.contains("ca-app-pub-3940256099942544")) { "Configure Brushkin's production AdMob IDs before building a Play release." }
+        check(!settings.contains("translatable=\"false\"></string>")) { "Configure the Play billing public key before building a Play release." }
+    }
+}
+
 dependencies {
+    if (playStore) {
+        implementation("com.google.android.libraries.ads.mobile.sdk:ads-mobile-sdk:1.6.0")
+        implementation("com.google.android.ump:user-messaging-platform:4.0.0")
+        implementation("com.android.billingclient:billing:9.1.0")
+    }
     val composeBom = platform("androidx.compose:compose-bom:2026.06.01")
     implementation(composeBom)
 
