@@ -14,6 +14,7 @@
     </queries>
 
     <application
+        android:name=".BrushkinApplication"
         android:allowBackup="true"
         android:hardwareAccelerated="true"
         android:icon="@mipmap/ic_launcher"

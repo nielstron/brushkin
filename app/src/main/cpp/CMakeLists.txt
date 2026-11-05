@@ -37,3 +37,28 @@ target_include_directories(brushkin_export PRIVATE ${jpeg_SOURCE_DIR}/src ${jpeg
 target_link_libraries(brushkin_export PRIVATE jpeg_codec png_static webp webpdemux libwebpmux gif_codec)
 target_compile_features(brushkin_export PRIVATE cxx_std_17)
 target_link_options(brushkin_export PRIVATE -Wl,--gc-sections -Wl,--exclude-libs,ALL -Wl,-z,max-page-size=16384)
+
+# GEGL filter runtime is built from source (no opaque prebuilt binaries).
+set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/../../../../tools/build_gegl.py")
+find_package(Python3 REQUIRED COMPONENTS Interpreter)
+find_program(MESON_EXECUTABLE meson REQUIRED)
+set(GEGL_ROOT "${CMAKE_CURRENT_SOURCE_DIR}/../../../build/gegl/${ANDROID_ABI}")
+execute_process(COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/../../../../tools/build_gegl.py
+ --output ${GEGL_ROOT} --ndk ${ANDROID_NDK} --abi ${ANDROID_ABI} --meson ${MESON_EXECUTABLE}
+ RESULT_VARIABLE GEGL_BUILD_RESULT)
+if(NOT GEGL_BUILD_RESULT EQUAL 0)
+ message(FATAL_ERROR "GEGL Android build failed; see ${GEGL_ROOT}/*.log")
+endif()
+file(GLOB GEGL_LIBRARIES "${GEGL_ROOT}/jni/*.so")
+add_library(brushkin_gegl SHARED gegl.cpp)
+target_compile_features(brushkin_gegl PRIVATE cxx_std_17)
+target_include_directories(brushkin_gegl PRIVATE
+ ${GEGL_ROOT}/prefix/include/gegl-0.4 ${GEGL_ROOT}/prefix/include/babl-0.1 ${GEGL_ROOT}/prefix/include/json-glib-1.0
+ ${GEGL_ROOT}/prefix/include/glib-2.0 ${GEGL_ROOT}/prefix/lib/glib-2.0/include)
+foreach(library ${GEGL_LIBRARIES})
+ get_filename_component(target ${library} NAME_WE)
+ add_library(${target} SHARED IMPORTED)
+ set_target_properties(${target} PROPERTIES IMPORTED_LOCATION ${library})
+ target_link_libraries(brushkin_gegl PRIVATE ${target})
+endforeach()
+target_link_options(brushkin_gegl PRIVATE -Wl,--as-needed -Wl,-z,max-page-size=16384)

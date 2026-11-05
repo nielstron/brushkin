@@ -334,13 +334,13 @@ class Engine {
     }
 
     /** Fills tiles of the active layer through [draw], respecting the selection. */
-    private fun paintRegion(name: String, region: Rect?, opacity: Float, mode: LayerMode, eraser: Boolean = false, draw: (Canvas) -> Unit) {
+    private fun paintRegion(name: String, region: Rect?, opacity: Float, mode: LayerMode, eraser: Boolean = false, respectSelection: Boolean = true, draw: (Canvas) -> Unit) {
         val s = stack
         val layer = s.active ?: return
         val qm = s.quickMask
         if (qm == null && layer.isGroup) { onMessage?.invoke("Layer groups can't be painted on. Pick a layer."); return }
         if (qm == null && layer.lockPixels) { onMessage?.invoke("The active layer's pixels are locked"); return }
-        val sel = if (qm == null) clipSelection(s, layer) else s.selection
+        val sel = if (!respectSelection) clipSelection(s.copy(selection = null),layer) else if (qm == null) clipSelection(s, layer) else s.selection
         val r = Rect(0, 0, s.width, s.height)
         if (region != null && !r.intersect(region)) return
         if (sel != null && !r.intersect(sel.bounds)) return
@@ -377,6 +377,18 @@ class Engine {
 
     fun fillSelection(color: Int, name: String = "Fill") = post {
         paintRegion(name, null, 1f, LayerMode.NORMAL) { it.drawColor(color) }
+    }
+
+    fun selectionOutline(color: Int, width: Float?, pattern: Bitmap? = null, antialias: Boolean = true) = post {
+        val selection = stack.selection ?: run { onMessage?.invoke("Make a selection first"); return@post }
+        val paint = Paint().apply {
+            this.color = color; isAntiAlias = antialias
+            if (width != null) { style = Paint.Style.STROKE; strokeWidth = width; strokeJoin = Paint.Join.ROUND }
+            if (pattern != null) shader = android.graphics.BitmapShader(pattern,Shader.TileMode.REPEAT,Shader.TileMode.REPEAT)
+        }
+        paintRegion(if (width == null) "Fill Selection Outline" else "Stroke Selection",null,1f,LayerMode.NORMAL,respectSelection = width == null) {
+            if (width == null) it.drawPaint(paint) else it.drawPath(selection.outline,paint)
+        }
     }
 
     fun clearSelection(name: String = "Clear") = post {
@@ -713,12 +725,14 @@ class Engine {
         }
     }
 
-    fun alphaToSelection() = post {
+    fun alphaToSelection(mode: SelectMode = SelectMode.REPLACE) = post {
         val s = stack
         val l = s.active ?: return@post
         val px = l.pixels.toPixels()
         val b = ByteArray(px.size) { (px[it] ushr 24).toByte() }
-        stack = s.copy(selection = Selection.fromBytes(b, s.width, s.height)); record("Alpha to Selection", s)
+        val mask = Bitmap.createBitmap(s.width, s.height, Bitmap.Config.ALPHA_8)
+        Selection.writeMaskBytes(mask,b,s.width,s.height)
+        stack = s.copy(selection = Selection.combineMask(s.selection,mask,mode)); record("Alpha to Selection", s)
     }
 
     // ---------------------------------------------------------------- layers
@@ -799,6 +813,67 @@ class Engine {
             stack = s.withSiblings(parent, list.toMutableList().apply { removeAt(idx); set(idx - 1, merged) }).copy(activeId = merged.id)
             record("Merge Down", s, extraBytes = s.width.toLong() * s.height * 4)
         }
+    }
+
+    private fun rendered(s: Stack): Bitmap = Compositor.flatten(s.copy(layers = Stack.mapTree(s.layers) { l ->
+        if (l.effects.isEmpty()) l else l.copy(pixels = Effects.pixelsSync(l), effects = emptyList())
+    }))
+
+    fun newFromVisible() = post {
+        val s = stack
+        busy("New from visible") {
+            val bmp = rendered(s)
+            val layer = Layer(name = uniqueName("Visible"), pixels = TiledBitmap.fromBitmap(bmp))
+            bmp.recycle()
+            stack = s.copy(layers = s.layers + layer, activeId = layer.id)
+            record("New from Visible",s,extraBytes = s.width.toLong()*s.height*4)
+        }
+    }
+
+    fun mergeVisible() = post {
+        val s = stack
+        if (s.layers.none { it.visible }) return@post
+        busy("Merging visible layers") {
+            val bmp = rendered(s)
+            val layer = Layer(name = "Merged",pixels = TiledBitmap.fromBitmap(bmp))
+            bmp.recycle()
+            fun hidden(list: List<Layer>): List<Layer> = list.mapNotNull { l ->
+                if (!l.visible) l else if (l.isGroup) {
+                    val children = hidden(l.children!!)
+                    if (children.isEmpty()) null else l.copy(children = children)
+                } else null
+            }
+            stack = s.copy(layers = hidden(s.layers) + layer,activeId = layer.id)
+            record("Merge Visible Layers",s,extraBytes = s.width.toLong()*s.height*4)
+        }
+    }
+
+    fun mergeGroup() = post {
+        val s = stack
+        val group = s.active ?: return@post
+        if (!group.isGroup) { onMessage?.invoke("Select a layer group first"); return@post }
+        busy("Merging group") {
+            val isolated = group.copy(visible = true,opacity = 1f,mode = LayerMode.NORMAL)
+            val bmp = rendered(s.copy(layers = listOf(isolated)))
+            val layer = Layer(id = group.id,name = group.name,pixels = TiledBitmap.fromBitmap(bmp),
+                visible = group.visible,opacity = group.opacity,lockPosition = group.lockPosition,linked = group.linked)
+            bmp.recycle()
+            stack = s.replace(layer)
+            record("Merge Group",s,extraBytes = s.width.toLong()*s.height*4)
+        }
+    }
+
+    fun resizeLayerToSelection() = post {
+        val bounds = stack.selection?.bounds ?: run { onMessage?.invoke("Make a selection first"); return@post }
+        setLayerBoundary(Rect(bounds)).join()
+    }
+
+    fun sharpenSelection() = post {
+        val s = stack
+        val selection = s.selection ?: return@post
+        val bytes = selection.bytes().map { if ((it.toInt() and 255) >= 128) 255.toByte() else 0.toByte() }.toByteArray()
+        stack = s.copy(selection = Selection.fromBytes(bytes,s.width,s.height))
+        record("Sharpen Selection",s)
     }
 
     fun flatten() = post {
@@ -1098,11 +1173,13 @@ class Engine {
         if (l.editMask != edit) onMessage?.invoke(if (edit) "Editing mask: paint black to hide, white to reveal" else "Editing layer pixels")
     }
 
-    fun maskToSelection() = post {
+    fun maskToSelection(mode: SelectMode = SelectMode.REPLACE) = post {
         val s = stack
         val m = s.active?.mask ?: return@post
         val px = m.toPixels()
-        stack = s.copy(selection = Selection.fromBytes(ByteArray(px.size) { luma(px[it]).toByte() }, s.width, s.height))
+        val mask = Bitmap.createBitmap(s.width,s.height,Bitmap.Config.ALPHA_8)
+        Selection.writeMaskBytes(mask,ByteArray(px.size) { luma(px[it]).toByte() },s.width,s.height)
+        stack = s.copy(selection = Selection.combineMask(s.selection,mask,mode))
         record("Mask to Selection", s)
     }
 

@@ -25,6 +25,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.rounded.ArrowBack
 import androidx.compose.material.icons.rounded.ExpandLess
 import androidx.compose.material.icons.rounded.ExpandMore
+import androidx.compose.material.icons.rounded.History
 import androidx.compose.material.icons.rounded.Search
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -275,7 +276,7 @@ fun commands(vm: EditorViewModel, info: DocInfo, files: FileActions, view: () ->
         Cmd("Filters", "Unsharp Mask…", run = dlg("filter:Unsharp Mask")),
         Cmd("Filters", "Pixelize…", run = dlg("filter:Pixelize")),
         Cmd("Filters", "RGB Noise…", run = dlg("filter:RGB Noise")),
-    ) + panelCommands(vm, info, files, view) + Tool.entries.filter { !it.isAction }.map { t -> Cmd("Tools", t.label, t.group.label, run = { vm.selectTool(t) }) }
+    ) + GEGL_ACTIONS.keys.map { name -> Cmd("Filters", "$name…", run = dlg("filter:$name")) } + panelCommands(vm, info, files, view) + Tool.entries.filter { !it.isAction }.map { t -> Cmd("Tools", t.label, t.group.label, run = { vm.selectTool(t) }) }
 }
 
 @Composable
@@ -292,7 +293,7 @@ fun MenuScreen(vm: EditorViewModel, info: DocInfo, files: FileActions, holder: C
     BackHandler { vm.showMenu = false }
     val focus = remember { androidx.compose.ui.focus.FocusRequester() }
     androidx.compose.runtime.LaunchedEffect(Unit) { focus.requestFocus() }
-    fun run(c: Cmd) { vm.showMenu = false; c.run() }
+    fun run(c: Cmd) { vm.recentCommands.record(c); vm.showMenu = false; c.run() }
 
     Column(Modifier.fillMaxSize().background(Ui.panel).safeDrawingPadding().imePadding().clickable(enabled = false) {}) {
         Row(Modifier.padding(12.dp), verticalAlignment = Alignment.CenterVertically) {
@@ -316,6 +317,17 @@ fun MenuScreen(vm: EditorViewModel, info: DocInfo, files: FileActions, holder: C
                 items(hits) { c -> CmdRow(c, showSection = true) { run(c) } }
                 if (hits.isEmpty()) item { Text("No command matches “$query”", color = Ui.muted, modifier = Modifier.padding(24.dp)) }
             } else {
+                val recent = vm.recentCommands.resolve(all)
+                if (recent.isNotEmpty()) {
+                    item(key = "recent-header") {
+                        Row(Modifier.padding(horizontal = 16.dp, vertical = 12.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                            Icon(Icons.Rounded.History, null, tint = Ui.muted, modifier = Modifier.size(18.dp))
+                            Text("Recent operations", color = Ui.muted, fontSize = 13.sp, fontWeight = FontWeight.Medium)
+                        }
+                    }
+                    items(recent, key = { "recent/${it.section}/${it.label}" }) { c -> CmdRow(c, showSection = true) { run(c) } }
+                    item(key = "recent-divider") { Box(Modifier.fillMaxWidth().height(1.dp).background(Ui.border)) }
+                }
                 for (section in all.map { it.section }.distinct()) {
                     val expanded = section in open
                     item(key = "h$section") {

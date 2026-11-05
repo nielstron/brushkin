@@ -7,3 +7,5 @@
 -keep class io.github.nielstron.brushkin.export.NativeExport { *; }
 
 -keep class io.github.nielstron.brushkin.export.NativeDecode { *; }
+
+-keep class io.github.nielstron.brushkin.engine.NativeGegl { *; }

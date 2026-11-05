@@ -711,6 +711,8 @@ class EditorViewModel(app: Application) : AndroidViewModel(app) {
 
     // Favorite tools (shown in the toolbar strip and first in the tool list) and how often each tool
     // is picked (the tool list shows the most used ones per section first). Both persist.
+    val recentCommands = RecentCommands(app.getSharedPreferences("brushkin-recent-commands", 0))
+
     private val toolPrefs = app.getSharedPreferences("brushkin-tools", 0)
     val favorites = mutableStateListOf<Tool>().apply {
         addAll(toolPrefs.getString("favorites", "")!!.split(',').mapNotNull { n -> Tool.entries.firstOrNull { it.name == n } })

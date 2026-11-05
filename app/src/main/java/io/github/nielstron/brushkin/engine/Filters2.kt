@@ -27,37 +27,6 @@ private fun toSrgb(v: Float): Int {
     return ((if (c <= 0.0031308f) c * 12.92f else 1.055f * c.pow(1 / 2.4f) - 0.055f) * 255f).roundToInt()
 }
 
-/** Bilinear sample with premultiplied interpolation; outside the image is transparent. */
-private fun sample(src: IntArray, w: Int, h: Int, x: Float, y: Float): Int {
-    val x0 = kotlin.math.floor(x - 0.5f).toInt(); val y0 = kotlin.math.floor(y - 0.5f).toInt()
-    val fx = x - 0.5f - x0; val fy = y - 0.5f - y0
-    var sa = 0f; var sr = 0f; var sg = 0f; var sb = 0f
-    for (j in 0..1) for (i in 0..1) {
-        val px = x0 + i; val py = y0 + j
-        if (px < 0 || py < 0 || px >= w || py >= h) continue
-        val wgt = (if (i == 0) 1 - fx else fx) * (if (j == 0) 1 - fy else fy)
-        val c = src[py * w + px]; val al = a(c) * wgt
-        sa += al; sr += r(c) * al; sg += g(c) * al; sb += b(c) * al
-    }
-    if (sa <= 0.001f) return 0
-    return argb(sa.roundToInt(), (sr / sa).roundToInt(), (sg / sa).roundToInt(), (sb / sa).roundToInt())
-}
-
-/** A filter that remaps each output pixel to a source position. */
-private abstract class Distort(override val name: String) : Filter {
-    override val wholeImage get() = true
-    abstract fun map(x: Float, y: Float, w: Int, h: Int, out: FloatArray)
-    override fun apply(src: IntArray, w: Int, h: Int) = IntArray(src.size).also { o ->
-        parallelRows(h) { y0, y1 ->
-            val p = FloatArray(2)
-            for (y in y0 until y1) for (x in 0 until w) {
-                map(x + 0.5f, y + 0.5f, w, h, p)
-                o[y * w + x] = sample(src, w, h, p[0], p[1])
-            }
-        }
-    }
-}
-
 // ---------------------------------------------------------------------------- light & shadow
 
 /** Shadow of the layer's own alpha, offset and blurred, placed underneath it. */
@@ -109,60 +78,12 @@ class VignetteFilter(private val radius: Float, private val softness: Float, pri
 
 // ---------------------------------------------------------------------------- blur
 
-class MotionBlurFilter(private val length: Float, private val angle: Float) : Filter {
-    override val name = "Motion Blur"
-    override val margin get() = length.roundToInt() + 2
-    override fun scaled(k: Float) = MotionBlurFilter(length * k, angle)
-    override fun apply(src: IntArray, w: Int, h: Int): IntArray {
-        val n = max(1, length.roundToInt())
-        val ux = cos(angle * PI / 180).toFloat(); val uy = sin(angle * PI / 180).toFloat()
-        return IntArray(src.size).also { o ->
-            parallelRows(h) { y0, y1 ->
-                for (y in y0 until y1) for (x in 0 until w) {
-                    var sa = 0f; var sr = 0f; var sg = 0f; var sb = 0f
-                    for (i in 0..n) {
-                        val t = i.toFloat() / n - 0.5f
-                        val px = (x + ux * t * length).roundToInt().coerceIn(0, w - 1)
-                        val py = (y + uy * t * length).roundToInt().coerceIn(0, h - 1)
-                        val c = src[py * w + px]; val al = a(c).toFloat()
-                        sa += al; sr += r(c) * al; sg += g(c) * al; sb += b(c) * al
-                    }
-                    o[y * w + x] = if (sa <= 0f) 0 else argb((sa / (n + 1)).roundToInt(), (sr / sa).roundToInt(), (sg / sa).roundToInt(), (sb / sa).roundToInt())
-                }
-            }
-        }
-    }
-}
+class MotionBlurFilter(length: Float, angle: Float) : Filter by GeglFilter("Motion Blur", "gegl:motion-blur-linear",
+    mapOf("length" to length.toDouble(), "angle" to angle.toDouble()), setOf("length"))
 
-/** Edge-preserving smoothing (iterated bilateral filter). */
-class NoiseReductionFilter(private val strength: Int) : Filter {
-    override val name = "Noise Reduction"
-    override val margin get() = strength * 2 + 2
-    override fun apply(src: IntArray, w: Int, h: Int): IntArray {
-        if (strength < 1) return src.copyOf()
-        var cur = src
-        repeat(strength.coerceIn(1, 10)) {
-            val prev = cur
-            cur = IntArray(prev.size).also { o ->
-                parallelRows(h) { y0, y1 ->
-                    for (y in y0 until y1) for (x in 0 until w) {
-                        val c0 = prev[y * w + x]
-                        var ws = 0f; var sr = 0f; var sg = 0f; var sb = 0f
-                        for (j in -2..2) for (i in -2..2) {
-                            val px = (x + i).coerceIn(0, w - 1); val py = (y + j).coerceIn(0, h - 1)
-                            val c = prev[py * w + px]
-                            val dc = abs(r(c) - r(c0)) + abs(g(c) - g(c0)) + abs(b(c) - b(c0))
-                            val wt = exp(-(dc * dc) / 1800f - (i * i + j * j) / 8f)
-                            ws += wt; sr += r(c) * wt; sg += g(c) * wt; sb += b(c) * wt
-                        }
-                        o[y * w + x] = argb(a(c0), (sr / ws).roundToInt(), (sg / ws).roundToInt(), (sb / ws).roundToInt())
-                    }
-                }
-            }
-        }
-        return cur
-    }
-}
+/** GEGL edge-preserving noise reduction, as used by GIMP. */
+class NoiseReductionFilter(strength: Int) : Filter by GeglFilter("Noise Reduction", "gegl:noise-reduction",
+    mapOf("iterations" to strength.toDouble()))
 
 // ---------------------------------------------------------------------------- colors
 
@@ -189,40 +110,11 @@ class ColorToAlphaFilter(private val color: Int) : Filter {
     }
 }
 
-class ShadowsHighlightsFilter(private val shadows: Float, private val highlights: Float, private val radius: Float) : Filter {
-    override val name = "Shadows-Highlights"
-    override val margin get() = (radius * 2).roundToInt() + 4
-    override fun scaled(k: Float) = ShadowsHighlightsFilter(shadows, highlights, radius * k)
-    override fun apply(src: IntArray, w: Int, h: Int): IntArray {
-        // Local brightness decides how much each pixel is lifted (shadows) or pulled down (highlights).
-        val lum = IntArray(src.size) { val l = luma(src[it]); (255 shl 24) or (l shl 16) or (l shl 8) or l }
-        val local = blurArgb(lum, w, h, radius.roundToInt())
-        return IntArray(src.size).also { o ->
-            parallelRows(h) { y0, y1 ->
-                for (i in y0 * w until y1 * w) {
-                    val c = src[i]; val l = (local[i] and 0xFF) / 255f
-                    val lift = shadows * (1 - l) * (1 - l)
-                    val pull = highlights * l * l
-                    fun ch(v: Int): Int {
-                        val x = v / 255f
-                        val y = x + lift * (1 - x) - pull * x
-                        return (y * 255).roundToInt()
-                    }
-                    o[i] = argb(a(c), ch(r(c)), ch(g(c)), ch(b(c)))
-                }
-            }
-        }
-    }
-}
+class ShadowsHighlightsFilter(shadows: Float, highlights: Float, radius: Float) : Filter by GeglFilter("Shadows-Highlights", "gegl:shadows-highlights",
+    mapOf("shadows" to shadows * 100.0, "highlights" to highlights * -100.0, "radius" to radius.toDouble()), setOf("radius"))
 
-class ExposureFilter(private val stops: Float, private val black: Float) : Filter {
-    override val name = "Exposure"
-    override fun apply(src: IntArray, w: Int, h: Int): IntArray {
-        val k = 2f.pow(stops)
-        val lut = IntArray(256) { toSrgb((TO_LIN[it] - black) * k / (1 - black).coerceAtLeast(0.01f)) }
-        return LutFilter(name, lut, LutFilter.ID, LutFilter.ID, LutFilter.ID).apply(src, w, h)
-    }
-}
+class ExposureFilter(stops: Float, black: Float) : Filter by GeglFilter("Exposure", "gegl:exposure",
+    mapOf("exposure" to stops.toDouble(), "black-level" to black.toDouble()))
 
 /** Paint the image in one hue, keeping its lightness (GIMP Colorize). */
 class ColorizeFilter(private val hue: Float, private val saturation: Float, private val lightness: Float) : Filter {
@@ -291,39 +183,11 @@ class AutoLevelsFilter(override val name: String, private val perChannel: Boolea
 
 // ---------------------------------------------------------------------------- distortions
 
-class RippleFilter(private val amplitude: Float, private val period: Float, private val vertical: Boolean) : Filter by object : Distort("Ripple") {
-    override fun map(x: Float, y: Float, w: Int, h: Int, out: FloatArray) {
-        if (vertical) { out[0] = x; out[1] = y + amplitude * sin(2 * PI * x / period).toFloat() }
-        else { out[0] = x + amplitude * sin(2 * PI * y / period).toFloat(); out[1] = y }
-    }
-} {
-    override fun scaled(k: Float): Filter = RippleFilter(amplitude * k, period * k, vertical)
-}
+class RippleFilter(amplitude: Float, period: Float, vertical: Boolean) : Filter by GeglFilter("Ripple", "gegl:ripple",
+    mapOf("amplitude" to amplitude.toDouble(), "period" to period.toDouble(), "angle" to if (vertical) 90.0 else 0.0), setOf("amplitude", "period"))
 
-class WhirlPinchFilter(private val whirl: Float, private val pinch: Float, private val radius: Float) : Filter by object : Distort("Whirl and Pinch") {
-    override fun map(x: Float, y: Float, w: Int, h: Int, out: FloatArray) {
-        val cx = w / 2f; val cy = h / 2f
-        val rad = radius * min(cx, cy)
-        val dx = x - cx; val dy = y - cy
-        val d = hypot(dx, dy)
-        if (d >= rad || rad <= 0f) { out[0] = x; out[1] = y; return }
-        val t = d / rad
-        // Pinch scales the distance; whirl rotates more toward the center.
-        val p = if (pinch == 0f) 1f else (sin(PI / 2 * t).toFloat()).pow(-pinch)
-        val ang = whirl * PI.toFloat() / 180f * (1 - t) * (1 - t)
-        val sx = dx * p; val sy = dy * p
-        out[0] = cx + sx * cos(ang) - sy * sin(ang)
-        out[1] = cy + sx * sin(ang) + sy * cos(ang)
-    }
-}
+class WhirlPinchFilter(whirl: Float, pinch: Float, radius: Float) : Filter by GeglFilter("Whirl and Pinch", "gegl:whirl-pinch",
+    mapOf("whirl" to whirl.toDouble(), "pinch" to pinch.toDouble(), "radius" to radius.toDouble()))
 
-class LensDistortionFilter(private val main: Float, private val edge: Float, private val zoom: Float) : Filter by object : Distort("Lens Distortion") {
-    override fun map(x: Float, y: Float, w: Int, h: Int, out: FloatArray) {
-        val cx = w / 2f; val cy = h / 2f
-        val norm = sqrt(cx * cx + cy * cy)
-        val nx = (x - cx) / norm; val ny = (y - cy) / norm
-        val r2 = nx * nx + ny * ny
-        val k = (1 + main * r2 + edge * r2 * r2) / (1 + zoom)
-        out[0] = cx + nx * k * norm; out[1] = cy + ny * k * norm
-    }
-}
+class LensDistortionFilter(main: Float, edge: Float, zoom: Float) : Filter by GeglFilter("Lens Distortion", "gegl:lens-distortion",
+    mapOf("main" to main * 100.0, "edge" to edge * 100.0, "zoom" to zoom * 100.0))
