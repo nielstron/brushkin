@@ -16,6 +16,18 @@ fun panelCommands(vm: EditorViewModel, info: DocInfo, files: FileActions, view: 
     cmd("Colors", "Foreground and background colors…", "palette swatches color picker") { vm.sheet = Sheet.COLOR }
     cmd("Colors", "Swap foreground and background colors") { vm.swapColors() }
 
+    cmd("Layer", "Resize layer to selection") { e.resizeLayerToSelection() }
+    cmd("Layer", "New from visible") { e.newFromVisible() }
+    cmd("Layer", "Merge group", "rasterize selected group") { e.mergeGroup() }
+    cmd("Image", "Merge visible layers", "preserve hidden layers and transparency; clipped to canvas") { e.mergeVisible() }
+    cmd("Select", "Sharpen selection", "remove feathering hard edge") { e.sharpenSelection() }
+    for ((verb,mode) in listOf("Add" to SelectMode.ADD,"Subtract" to SelectMode.SUBTRACT,"Intersect" to SelectMode.INTERSECT)) {
+        cmd("Select", "$verb alpha with selection") { e.alphaToSelection(mode) }
+        cmd("Select", "$verb mask with selection") { e.maskToSelection(mode) }
+    }
+    cmd("Edit", "Stroke selection…") { vm.dialog = "stroke-selection" }
+    cmd("Edit", "Fill selection outline…") { vm.dialog = "fill-selection-outline" }
+
     info.layers.firstOrNull { it.id == info.activeId }?.let { l ->
         cmd("Layer", if (l.visible) "Hide layer" else "Show layer", l.name) { e.setLayer(l.id,"Layer Visibility") { it.copy(visible = !it.visible) } }
         cmd("Layer", "Rename layer…", l.name) { vm.dialog = "rename-layer:${l.id}" }

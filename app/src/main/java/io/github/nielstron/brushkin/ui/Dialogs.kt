@@ -32,6 +32,7 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.rememberScrollState
@@ -127,6 +128,7 @@ fun Dialogs(vm: EditorViewModel, info: DocInfo, files: FileActions) {
     val close = { vm.dialog = null }
     val e = vm.engine
     when {
+        d == "stroke-selection" || d == "fill-selection-outline" -> SelectionOutlineDialog(vm, d == "stroke-selection", close)
         d == "save" -> SaveMenuDialog(close) { vm.dialog = it }
         d == "export-image" -> ImageExportDialog(info, files, close) { options -> close(); files.export(options) }
         d == "save-project" -> SaveProjectDialog(close) { xcf -> close(); if (xcf) files.saveXcf() else files.saveProject() }
@@ -292,12 +294,12 @@ val FONTS = listOf("Sans" to "sans-serif", "Serif" to "serif", "Mono" to "monosp
 // ---------------------------------------------------------------------------- filters
 
 /** A filter parameter; [default] is "no change" wherever the filter has such a setting (what Reset goes back to). */
-private data class Param(val label: String, val range: ClosedFloatingPointRange<Float>, val default: Float, val fmt: (Float) -> String = { "%.2f".format(it) })
+internal data class Param(val label: String, val range: ClosedFloatingPointRange<Float>, val default: Float, val choices: List<Pair<Float, String>> = emptyList(), val integral: Boolean = false, val allowedRange: ClosedFloatingPointRange<Float> = range, val gamma: Float = 1f, val fmt: (Float) -> String = { "%.2f".format(it) })
 
-private class FilterSpec(val params: List<Param>, val build: (List<Float>) -> Filter)
+internal class FilterSpec(val params: List<Param>, val defaultIsIdentity: Boolean = true, val build: (List<Float>) -> Filter)
 
 /** Filters with parameters; colors come from the current foreground/background. */
-private fun specs(fg: Int, bg: Int): Map<String, FilterSpec> = BASE_SPECS + mapOf(
+private fun specs(fg: Int, bg: Int): Map<String, FilterSpec> = BASE_SPECS + geglSpecs + mapOf(
     "Drop Shadow" to FilterSpec(listOf(
         Param("Offset X", -100f..100f, 16f) { "${it.roundToInt()} px" }, Param("Offset Y", -100f..100f, 16f) { "${it.roundToInt()} px" },
         Param("Blur", 0f..100f, 12f) { "${it.roundToInt()} px" }, Param("Opacity", 0f..1f, 0f),
@@ -370,7 +372,7 @@ private fun FilterPanel(vm: EditorViewModel, name: String, close: () -> Unit) {
     // defaults (no change) closing just drops the preview. Filters with parameters become an
     // editable layer effect (merge it into the pixels later); with a selection, or for filters an
     // effect can't hold (curves, a picked color), the pixels change directly.
-    val unchanged = { !toAlpha && values.all { (i, v) -> spec?.params?.getOrNull(i)?.default == v } && curves.isEmpty() }
+    val unchanged = { spec?.defaultIsIdentity != false && !toAlpha && values.all { (i, v) -> spec?.params?.getOrNull(i)?.default == v } && curves.isEmpty() }
     var finished by remember { mutableStateOf(false) }
     var allLayers by remember { mutableStateOf(false) }
     // The preview shows exactly what closing applies: this layer, or with "All layers" every layer.
@@ -421,9 +423,24 @@ private fun FilterPanel(vm: EditorViewModel, name: String, close: () -> Unit) {
                 }
                 if (vm.filterPicking != null) Text("Touch the image to pick the color to remove", color = Ui.muted, fontSize = 13.sp, modifier = Modifier.padding(top = 8.dp))
             } else if (spec != null) {
-                spec.params.forEachIndexed { i, p ->
-                    val v = values[i] ?: p.default
-                    LabeledSlider(p.label, v, p.range, p.fmt(v), { values[i] = it })
+                Column(Modifier.heightIn(max = 320.dp).verticalScroll(rememberScrollState())) {
+                    spec.params.forEachIndexed { i, p ->
+                        val v = values[i] ?: p.default
+                        when {
+                            p.choices.isNotEmpty() -> {
+                                var expanded by remember { mutableStateOf(false) }
+                                Box {
+                                    TextButton(onClick = { expanded = true }) { Text("${p.label}: ${p.choices.firstOrNull { it.first == v }?.second ?: v}") }
+                                    androidx.compose.material3.DropdownMenu(expanded, { expanded = false }) {
+                                        p.choices.forEach { (number, label) ->
+                                            androidx.compose.material3.DropdownMenuItem(text = { Text(label) }, onClick = { values[i] = number; expanded = false })
+                                        }
+                                    }
+                                }
+                            }
+                            else -> FilterParameterRow(p, v) { values[i] = it }
+                        }
+                    }
                 }
             } else CurvesEditor(curves) { curves = it }
         }
@@ -561,7 +578,7 @@ fun GradientEditor(vm: EditorViewModel, close: () -> Unit) {
  * Every filter with parameters at its defaults, which must change nothing (tested) — except those
  * no setting of which leaves the image as it is.
  */
-internal fun filtersAtDefaults(): Map<String, Filter> = specs(0xFF000000.toInt(), -1).filterKeys { it !in setOf("Color to Alpha", "Colorize", "Threshold", "Posterize") }
+internal fun filtersAtDefaults(): Map<String, Filter> = specs(0xFF000000.toInt(), -1).filterValues { it.defaultIsIdentity }.filterKeys { it !in setOf("Color to Alpha", "Colorize", "Threshold", "Posterize") }
     .mapValues { (_, sp) -> sp.build(sp.params.map { it.default }) }
 
 fun buildEffect(e: io.github.nielstron.brushkin.engine.LayerEffect): Filter? = specs(e.fg, e.bg)[e.name]?.let { sp ->
@@ -707,4 +724,23 @@ private fun DepthOfFieldPanel(vm: EditorViewModel, close: () -> Unit) {
             LabeledSlider("Sharp depth range", range, 0f..1f, "${(range * 100).roundToInt()}%", { range = it })
         }
     }
+}
+
+
+@Composable
+private fun SelectionOutlineDialog(vm: EditorViewModel, stroke: Boolean, close: () -> Unit) {
+    var source by remember { mutableStateOf("Foreground") }
+    var width by remember { mutableStateOf("4") }
+    var antialias by remember { mutableStateOf(true) }
+    AlertDialog(onDismissRequest = close, title = { Text(if (stroke) "Stroke selection" else "Fill selection outline") },
+        text = { Column {
+            Row { for (option in listOf("Foreground","Background","Pattern")) Chip(option,source == option) { source = option } }
+            if (stroke) OutlinedTextField(width,{width = it},label = { Text("Width (px)") },keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal))
+            if (stroke) Toggle("Antialiasing",antialias) { antialias = it }
+            if (source == "Pattern" && vm.pattern == null) Text("Choose a pattern in Patterns first.")
+        } },
+        confirmButton = { TextButton(enabled = (!stroke || (width.toFloatOrNull()?.let { it > 0 && it.isFinite() } == true)) && (source != "Pattern" || vm.pattern != null), onClick = {
+            vm.engine.selectionOutline(if (source == "Background") vm.bg else vm.fg,if (stroke) width.toFloat() else null,vm.pattern?.bitmap?.takeIf { source == "Pattern" },antialias)
+            close()
+        }) { Text("Apply") } }, dismissButton = { TextButton(onClick = close) { Text("Cancel") } })
 }

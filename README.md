@@ -36,6 +36,19 @@ The AI tools use open models that aren't part of the APK. Each one is downloaded
 
 ## Build
 
+Install Python 3.12+, pkg-config, Meson 1.12.1, and Ninja (for example,
+`uv tool install meson==1.12.1` and `brew install pkg-config ninja` on macOS).
+The Android SDK needs NDK 27.1.12297006 and CMake 3.22.1. The first native build
+also downloads and compiles GEGL 0.4.62, babl 0.1.114, GLib 2.84.4, and
+json-glib 1.10.8 for both ARM architectures; subsequent builds reuse the cache.
+`tools/build_gegl.py` pins source checksums and the libffi dependency revision.
+
+GEGL filters run on the CPU using the same upstream operations as GIMP. Brushkin
+still stores 8-bit sRGB pixels and clips filter output to the layer bounds. A graph
+editor and auxiliary-image inputs are not exposed. Additional filter dialogs use
+GEGL's numeric, boolean, and enum metadata; color/object parameters retain their
+upstream defaults until dedicated controls are added.
+
 ```sh
 ./gradlew :app:testDebugUnitTest :app:assembleDebug
 ```

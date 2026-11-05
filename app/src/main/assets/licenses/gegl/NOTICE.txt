@@ -1,0 +1,8 @@
+Brushkin builds these free-software components from source:
+GEGL 0.4.62: LGPL-3.0-or-later core and GPL-3.0-or-later operations; https://gegl.org/
+babl 0.1.114: LGPL-3.0-or-later; https://gegl.org/babl/
+GLib 2.84.4 and json-glib 1.10.8: LGPL-2.1-or-later; https://gitlab.gnome.org/GNOME/
+GLib dependencies include PCRE2 10.44 (BSD), libffi (MIT), proxy-libintl (LGPL), and gvdb (LGPL).
+Source archives, checksums, dependency revision, and Android build modifications are recorded in tools/build_gegl.py in the Brushkin source repository:
+https://github.com/nielstron/brushkin
+The dynamically linked libraries are included separately in the APK. License texts accompany this notice.

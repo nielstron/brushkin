@@ -179,75 +179,17 @@ class ColorBalanceFilter(private val cyanRed: Float, private val magentaGreen: F
     }
 }
 
-class GaussianBlurFilter(private val radius: Float) : Filter {
-    override val name = "Gaussian Blur"
-    override fun apply(src: IntArray, w: Int, h: Int) = blurArgb(src, w, h, radius.roundToInt())
-    override fun scaled(k: Float) = GaussianBlurFilter(radius * k)
-    override val margin get() = (radius * 2).roundToInt() + 4
-}
+class GaussianBlurFilter(radius: Float) : Filter by GeglFilter("Gaussian Blur", "gegl:gaussian-blur",
+    mapOf("std-dev-x" to radius.toDouble(), "std-dev-y" to radius.toDouble()), setOf("std-dev-x", "std-dev-y"))
 
-class UnsharpMaskFilter(private val radius: Float, private val amount: Float) : Filter {
-    override val name = "Unsharp Mask"
-    override fun scaled(k: Float) = UnsharpMaskFilter((radius * k).coerceAtLeast(1f), amount)
-    override val margin get() = (radius * 2).roundToInt() + 4
-    override fun apply(src: IntArray, w: Int, h: Int): IntArray {
-        val blur = blurArgb(src, w, h, radius.roundToInt())
-        val out = IntArray(src.size)
-        parallelRows(h) { y0, y1 ->
-            for (i in y0 * w until y1 * w) {
-                val c = src[i]; val bl = blur[i]
-                fun ch(sh: Int): Int {
-                    val o = (c shr sh) and 0xFF; val b = (bl shr sh) and 0xFF
-                    return (o + (o - b) * amount).roundToInt().coerceIn(0, 255)
-                }
-                out[i] = (c and 0xFF000000.toInt()) or (ch(16) shl 16) or (ch(8) shl 8) or ch(0)
-            }
-        }
-        return out
-    }
-}
+class UnsharpMaskFilter(radius: Float, amount: Float) : Filter by GeglFilter("Unsharp Mask", "gegl:unsharp-mask",
+    mapOf("std-dev" to radius.toDouble(), "scale" to amount.toDouble()), setOf("std-dev"))
 
-class PixelizeFilter(private val block: Int) : Filter {
-    override val name = "Pixelize"
-    override fun scaled(k: Float) = PixelizeFilter((block * k).roundToInt().coerceAtLeast(1))
-    override val bandAlign get() = block.coerceAtLeast(1)
-    override fun apply(src: IntArray, w: Int, h: Int): IntArray {
-        val out = IntArray(src.size)
-        val bs = block.coerceAtLeast(1)
-        val by = (h + bs - 1) / bs
-        IntStream.range(0, by).parallel().forEach { bj ->
-            val y0 = bj * bs; val y1 = min(h, y0 + bs)
-            var x0 = 0
-            while (x0 < w) {
-                val x1 = min(w, x0 + bs)
-                var a = 0L; var r = 0L; var g = 0L; var b = 0L; var n = 0
-                for (y in y0 until y1) for (x in x0 until x1) {
-                    val c = src[y * w + x]; val al = c ushr 24
-                    a += al; r += ((c shr 16) and 0xFF) * al; g += ((c shr 8) and 0xFF) * al; b += (c and 0xFF) * al; n++
-                }
-                val c = if (a == 0L) 0 else Color.argb((a / n).toInt(), (r / a).toInt(), (g / a).toInt(), (b / a).toInt())
-                for (y in y0 until y1) for (x in x0 until x1) out[y * w + x] = c
-                x0 = x1
-            }
-        }
-        return out
-    }
-}
+class PixelizeFilter(block: Int) : Filter by GeglFilter("Pixelize", "gegl:pixelize",
+    mapOf("size-x" to block.toDouble(), "size-y" to block.toDouble()), setOf("size-x", "size-y"))
 
-class NoiseFilter(private val amount: Float, private val seed: Long = 42) : Filter {
-    override val name = "RGB Noise"
-    override fun apply(src: IntArray, w: Int, h: Int) = IntArray(src.size).also { out ->
-        parallelRows(h) { y0, y1 ->
-            val rnd = Random(seed + y0)
-            val a = amount * 255
-            for (i in y0 * w until y1 * w) {
-                val c = src[i]
-                fun ch(sh: Int) = (((c shr sh) and 0xFF) + (rnd.nextFloat() - 0.5f) * 2 * a).roundToInt().coerceIn(0, 255)
-                out[i] = (c and 0xFF000000.toInt()) or (ch(16) shl 16) or (ch(8) shl 8) or ch(0)
-            }
-        }
-    }
-}
+class NoiseFilter(amount: Float, seed: Long = 42) : Filter by GeglFilter("RGB Noise", "gegl:noise-rgb",
+    mapOf("red" to amount.toDouble(), "green" to amount.toDouble(), "blue" to amount.toDouble(), "seed" to seed.toDouble()))
 
 fun luma(c: Int) = ((((c shr 16) and 0xFF) * 77 + ((c shr 8) and 0xFF) * 150 + (c and 0xFF) * 29) shr 8)
 

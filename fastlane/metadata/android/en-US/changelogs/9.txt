@@ -1,0 +1,6 @@
+GEGL image processing: 37 new filters and 11 existing filters replaced with GIMP’s upstream algorithms.
+Editable filter values, sensible slider ranges, and pan/pinch navigation during previews.
+Recent operations in the command menu.
+New crop, canvas-fit, layer merge/resize, selection-combine, fill and stroke actions.
+More commands discoverable through search.
+APK size increases by about 6 MiB for the native filter engine.

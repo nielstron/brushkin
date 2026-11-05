@@ -685,7 +685,7 @@ class CanvasView(context: Context, private val vm: EditorViewModel) : View(conte
 
     // ------------------------------------------------------------------ input
 
-    private enum class Mode { NONE, STROKE, VIEW, SHAPE, PICK, FLOAT_MOVE, FLOAT_SCALE, FLOAT_ROTATE, CROP, IGNORE, PATH_POINT, PATH_HANDLE, PATH_NEW,
+    private enum class Mode { NONE, STROKE, VIEW, PAN, SHAPE, PICK, FLOAT_MOVE, FLOAT_SCALE, FLOAT_ROTATE, CROP, IGNORE, PATH_POINT, PATH_HANDLE, PATH_NEW,
         FLOAT_SHEAR, FLOAT_CORNER, FLOAT_3D, FLOAT_HANDLE, WARP_PUSH, CAGE_DRAG, GUIDE, PLANE_CORNER, FOCUS }
 
     private var mode = Mode.NONE
@@ -726,16 +726,20 @@ class CanvasView(context: Context, private val vm: EditorViewModel) : View(conte
     }
 
     private var lastTouch: PointF? = null
+    private var effectGesture = false
+    private var navigationOnly = false
 
     @SuppressLint("ClickableViewAccessibility")
     override fun onTouchEvent(e: MotionEvent): Boolean {
         lastTouch = if (e.actionMasked == MotionEvent.ACTION_UP || e.actionMasked == MotionEvent.ACTION_CANCEL) null else PointF(e.getX(0), e.getY(0))
         when (e.actionMasked) {
             MotionEvent.ACTION_DOWN -> {
+                effectGesture = vm.dialog?.startsWith("filter:") == true
+                navigationOnly = effectGesture && vm.filterPicking == null
                 maxPointers = 1; moved = false
                 downTime = e.eventTime
                 down = PointF(e.x, e.y); downDoc = docPoint(e.x, e.y)
-                if (!startGuide(e)) startSingle(e)
+                if (navigationOnly || !startGuide(e)) startSingle(e)
             }
             MotionEvent.ACTION_POINTER_DOWN -> {
                 maxPointers = max(maxPointers, e.pointerCount)
@@ -755,6 +759,11 @@ class CanvasView(context: Context, private val vm: EditorViewModel) : View(conte
             MotionEvent.ACTION_MOVE -> {
                 if (!moved && hypot(e.x - down.x, e.y - down.y) > slop) { moved = true; removeCallbacks(longPress) }
                 when (mode) {
+                    Mode.PAN -> {
+                        viewMatrix.set(gStartMatrix)
+                        viewMatrix.postTranslate(e.x - down.x, e.y - down.y)
+                        changed()
+                    }
                     Mode.VIEW -> if (e.pointerCount >= 2) {
                         val g = gesture(e)
                         viewMatrix.set(gStartMatrix)
@@ -775,7 +784,13 @@ class CanvasView(context: Context, private val vm: EditorViewModel) : View(conte
                 }
             }
             MotionEvent.ACTION_POINTER_UP -> {
-                if (mode == Mode.VIEW && e.pointerCount - 1 >= 2) {
+                if (mode == Mode.VIEW && navigationOnly && e.pointerCount == 2) {
+                    // Continue panning with the remaining finger after a pinch.
+                    val remaining = if (e.actionIndex == 0) 1 else 0
+                    down = PointF(e.getX(remaining), e.getY(remaining))
+                    gStartMatrix.set(viewMatrix)
+                    mode = Mode.PAN
+                } else if (mode == Mode.VIEW && e.pointerCount - 1 >= 2) {
                     // Re-anchor on remaining fingers.
                     gStartMatrix.set(viewMatrix)
                 }
@@ -783,7 +798,7 @@ class CanvasView(context: Context, private val vm: EditorViewModel) : View(conte
             MotionEvent.ACTION_UP -> {
                 removeCallbacks(longPress)
                 if (mode == Mode.VIEW) {
-                    val quick = e.eventTime - downTime < 300
+                    val quick = !effectGesture && e.eventTime - downTime < 300
                     if (quick && maxPointers == 2 && !moved) engine.undo()
                     if (quick && maxPointers == 3 && !moved) engine.redo()
                 } else endSingle(e)
@@ -821,6 +836,11 @@ class CanvasView(context: Context, private val vm: EditorViewModel) : View(conte
     }
 
     private fun startSingle(e: MotionEvent) {
+        if (navigationOnly) {
+            mode = Mode.PAN
+            gStartMatrix.set(viewMatrix)
+            return
+        }
         if (vm.pipette) { mode = Mode.PICK; pick(e.x, e.y); return }
         // A filter panel is picking a color from the image.
         vm.filterPicking?.let { cb ->
