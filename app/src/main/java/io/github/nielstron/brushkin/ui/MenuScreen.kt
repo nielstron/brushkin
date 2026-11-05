@@ -30,6 +30,7 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.mutableStateOf
@@ -80,6 +81,8 @@ val KEYWORDS = mapOf(
     "Pixelize…" to "pixelate mosaic censor hide face",
     "RGB Noise…" to "add grain film noise texture",
     "Select foreground (AI)" to "remove background cut out person subject object automatically",
+    "Crop to content" to "autocrop image trim transparent solid background borders",
+    "Fit canvas to layers" to "crop image to layers resize canvas reveal off canvas layers",
     "Crop to selection" to "trim cut image to the selected area",
     "Scale image…" to "resize make smaller bigger change resolution",
     "Upscale ×2 (AI)" to "super resolution enhance enlarge increase resolution sharpen small photo",
@@ -213,6 +216,8 @@ fun commands(vm: EditorViewModel, info: DocInfo, files: FileActions, view: () ->
         Cmd("Image", "Upscale ×4 (AI)", "enlarge with detail, on-device", run = { vm.upscale(4) }),
         Cmd("Image", "Canvas size…", run = dlg("canvas")),
         Cmd("Image", "Crop to selection", run = { e.cropToSelection() }),
+        Cmd("Image", "Crop to content", run = { e.cropToContent() }),
+        Cmd("Image", "Fit canvas to layers", run = { e.fitCanvasToLayers() }),
         Cmd("Image", "Flatten image", run = { e.flatten() }),
 
         Cmd("Layer", "New layer", run = { e.addLayer() }),
@@ -270,14 +275,19 @@ fun commands(vm: EditorViewModel, info: DocInfo, files: FileActions, view: () ->
         Cmd("Filters", "Unsharp Mask…", run = dlg("filter:Unsharp Mask")),
         Cmd("Filters", "Pixelize…", run = dlg("filter:Pixelize")),
         Cmd("Filters", "RGB Noise…", run = dlg("filter:RGB Noise")),
-    ) + Tool.entries.filter { !it.isAction }.map { t -> Cmd("Tools", t.label, t.group.label, run = { vm.selectTool(t) }) }
+    ) + panelCommands(vm, info, files, view) + Tool.entries.filter { !it.isAction }.map { t -> Cmd("Tools", t.label, t.group.label, run = { vm.selectTool(t) }) }
 }
 
 @Composable
 fun MenuScreen(vm: EditorViewModel, info: DocInfo, files: FileActions, holder: CanvasHolder, storeCommands: List<Cmd> = emptyList()) {
     var query by remember { mutableStateOf("") }
     val open = remember { mutableStateListOf<String>() }
-    val all = commands(vm, info, files) { holder.view } + storeCommands
+    val brushes by vm.resources.brushes.collectAsState()
+    val gradients by vm.resources.gradients.collectAsState()
+    val patterns by vm.resources.patterns.collectAsState()
+    val palettes by vm.resources.palettes.collectAsState()
+    val mypaint by vm.resources.mypaint.collectAsState()
+    val all = commands(vm, info, files) { holder.view } + resourceCommands(vm, brushes, gradients, patterns, palettes, mypaint) + storeCommands
     val search = remember(all) { CommandSearch(all) }
     BackHandler { vm.showMenu = false }
     val focus = remember { androidx.compose.ui.focus.FocusRequester() }

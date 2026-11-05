@@ -585,7 +585,7 @@ class Engine {
         if (l.isGroup) return@post
         val canvas = Rect(0, 0, s.width, s.height)
         val b = Rect(r).takeIf { !it.isEmpty } ?: return@post
-        val full = b.contains(canvas)
+        val full = b == canvas
         val outside = l.outside.filter { (k, _) -> Rect.intersects(b, Rect(LayerExtent.cx(k) * TILE, LayerExtent.cy(k) * TILE, LayerExtent.cx(k) * TILE + TILE, LayerExtent.cy(k) * TILE + TILE)) }
         stack = s.replace(l.copy(bounds = if (full) null else b, outside = outside))
         if (full) record("Layer Boundary Size", s) else replaceLayerPixels(s, l, LayerExtent.clipTo(l.pixels, b), "Layer Boundary Size")
@@ -870,13 +870,14 @@ class Engine {
             Canvas(dst).drawBitmap(t.toBitmap(), m, p)
             return TiledBitmap.fromBitmap(dst, fill = t.fill)
         }
-        val layers = Stack.mapTree(s.layers) { l ->
+        val layers = Stack.mapTree(s.layers) { original ->
+            val l = original.copy(text = original.text?.let { text -> text.withMatrix(Matrix().apply { setConcat(m, text.matrix()) }) })
             if (l.isGroup) l.copy(pixels = TiledBitmap(newW, newH), mask = l.mask?.let { xf(it) })
             else if (l.id in replace) l.copy(pixels = replace.getValue(l.id), mask = l.mask?.let { xf(it) })
             else {
                 // Content off the canvas comes along (a canvas resize can bring it back into view).
                 val (px, outside) = LayerExtent.transform(l, m, newW, newH)
-                val bounds = l.bounds?.let { b -> val r = RectF(b); m.mapRect(r); Rect().also { r.round(it) } }?.takeIf { !it.contains(Rect(0, 0, newW, newH)) }
+                val bounds = l.bounds?.let { b -> val r = RectF(b); m.mapRect(r); Rect().also { r.round(it) } }?.takeIf { it != Rect(0, 0, newW, newH) }
                 l.copy(pixels = bounds?.let { LayerExtent.clipTo(px, it) } ?: px, outside = outside, bounds = bounds, mask = l.mask?.let { xf(it) })
             }
         }
@@ -894,7 +895,7 @@ class Engine {
             if (pos < 0 || pos > (if (vertical) newW else newH)) null else Guide(vertical, pos)
         }
         val channels = s.channels.map { c -> c.copy(mask = transformMask(c.mask, m, newW, newH)) }
-        stack = Stack(newW, newH, layers, s.activeId, sel, guides = guides, channels = channels)
+        stack = s.copy(width = newW, height = newH, layers = layers, selection = sel, quickMask = null, guides = guides, channels = channels)
         thumbs.clear()
         record(name, s, extraBytes = newW.toLong() * newH * 4 * layers.size)
     }
@@ -926,6 +927,29 @@ class Engine {
 
     fun canvasSize(nw: Int, nh: Int, dx: Int, dy: Int) = post {
         busy("Resizing canvas") { transformAll("Canvas Size", nw, nh, Matrix().apply { setTranslate(dx.toFloat(), dy.toFloat()) }) }
+    }
+
+    fun cropToContent() = post {
+        busy("Cropping to content") {
+            val s = stack
+            val rendered = s.copy(layers = Stack.mapTree(s.layers) { layer ->
+                if (layer.effects.isEmpty()) layer else layer.copy(pixels = Effects.pixelsSync(layer), effects = emptyList())
+            })
+            val image = Compositor.flatten(rendered)
+            val bounds = try { ImageBounds.content(image) } finally { image.recycle() }
+            if (bounds == null) { onMessage?.invoke("No content to crop"); return@busy }
+            if (bounds == Rect(0, 0, s.width, s.height)) return@busy
+            transformAll("Crop to Content", bounds.width(), bounds.height(), Matrix().apply { setTranslate(-bounds.left.toFloat(), -bounds.top.toFloat()) })
+        }
+    }
+
+    fun fitCanvasToLayers() = post {
+        val s = stack
+        val bounds = ImageBounds.layers(s) ?: return@post
+        if (bounds == Rect(0, 0, s.width, s.height)) return@post
+        busy("Fitting canvas to layers") {
+            transformAll("Fit Canvas to Layers", bounds.width(), bounds.height(), Matrix().apply { setTranslate(-bounds.left.toFloat(), -bounds.top.toFloat()) })
+        }
     }
 
     fun cropToSelection() = post {

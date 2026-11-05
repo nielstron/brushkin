@@ -59,7 +59,7 @@ data class Layer(
     val text: TextSpec? = null,
     /** Content beyond the canvas edges (see [LayerExtent]). */
     val outside: Map<Long, android.graphics.Bitmap> = emptyMap(),
-    /** A layer boundary smaller than the canvas: painting is clipped to it. Null = canvas-sized. */
+    /** Layer boundary, possibly outside the canvas: painting is clipped to it. Null = canvas-sized. */
     val bounds: android.graphics.Rect? = null,
     /** GIMP's "lock position": move/transform tools leave the layer alone. */
     val lockPosition: Boolean = false,

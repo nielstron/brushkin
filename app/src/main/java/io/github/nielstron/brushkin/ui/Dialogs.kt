@@ -135,6 +135,11 @@ fun Dialogs(vm: EditorViewModel, info: DocInfo, files: FileActions) {
         d == "emoji" -> EmojiDialog(vm, close)
         d == "text" -> { close(); vm.selectTool(Tool.TEXT); vm.messages.tryEmit("Tap where the text should go") }
         d.startsWith("text-edit:") -> { close(); vm.selectTool(Tool.TEXT); vm.editTextLayer(d.removePrefix("text-edit:").toLong()) }
+        d.startsWith("rename-layer:") -> {
+            val id = d.removePrefix("rename-layer:").toLong()
+            val layer = info.layers.first { it.id == id }
+            TextPrompt("Rename layer", layer.name, onDismiss = close) { name -> close(); e.setLayer(id, "Rename Layer") { it.copy(name = name) } }
+        }
         d == "scale" -> SizeDialog("Scale image", info.width, info.height, true, close) { w, h -> e.scaleImage(w, h) }
         d == "layer-bounds" -> {
             val al = info.layers.firstOrNull { it.id == info.activeId }
