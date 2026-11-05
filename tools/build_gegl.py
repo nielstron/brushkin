@@ -55,6 +55,9 @@ cpp = '{ndk}/{triple}29-clang++'
 ar = '{ndk}/llvm-ar'
 strip = '{ndk}/llvm-strip'
 pkg-config = '{shutil.which('pkg-config')}'
+# These are Python scripts from the pinned GLib build, runnable on the build host.
+glib-mkenums = '{prefix}/bin/glib-mkenums'
+glib-genmarshal = '{prefix}/bin/glib-genmarshal'
 [host_machine]
 system = 'android'
 cpu_family = '{family}'
