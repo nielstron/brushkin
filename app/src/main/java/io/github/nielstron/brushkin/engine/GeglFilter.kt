@@ -26,6 +26,7 @@ object NativeGegl {
         }
         val swap = File(context.cacheDir, "gegl-swap").apply { mkdirs() }
         initialize(operations.absolutePath, babl.absolutePath, swap.absolutePath)
+        android.util.Log.i("Brushkin", "GEGL OpenCL GPU available: ${isOpenClActive()}")
         ready = true
     }
     private external fun initialize(operations: String, babl: String, swap: String)
@@ -33,9 +34,12 @@ object NativeGegl {
     external fun updateSession(handle: Long, x: Int, y: Int, width: Int, height: Int, pixels: IntArray)
     external fun renderSession(handle: Long): IntArray
     external fun destroySession(handle: Long)
+    external fun isOpenClActive(): Boolean
+    /** Diagnostic for serial hardware tests: at least one prototype kernel completed its GPU path. */
+    external fun lastRenderUsedOpenCl(): Boolean
     external fun describe(operation: String): String
     external fun render(pixels: IntArray, width: Int, height: Int, operation: String,
-        keys: Array<String>, values: DoubleArray): IntArray
+        keys: Array<String>, values: DoubleArray, useOpenCl: Boolean = true, benchmarkOpenCl: Boolean = false): IntArray
 }
 
 /** Render the full extent so global statistics and coordinate-dependent filters have no band seams. */

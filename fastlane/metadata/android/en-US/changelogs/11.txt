@@ -1,0 +1,3 @@
+GPU acceleration for selected GEGL filters on supported devices, including selective blur, oilify, motion blur, bilateral blur, noise generators and diffraction patterns.
+Gaussian blur preserves its automatic algorithm selection. Filters with CPU/GPU output differences remain on CPU, and devices without OpenCL use the CPU fallback.
+Verified opaque and transparent output on Pixel 6 Pro, plus emulator fallback and rendering regression tests.

@@ -88,10 +88,60 @@ build('babl', 'babl-0.1.114', ['-Dwith-docs=false','-Denable-gir=false','-Denabl
 build('json', 'json-glib-1.10.8', ['-Dtests=false','-Dconformance=false','-Dinstalled_tests=false'])
 # Brushkin owns decoding/export. Exclude GEGL's external I/O modules and desktop tools.
 # No placeholder codecs are linked; their dependencies disappear with those modules.
+# Re-extract instrumented sources so reconfiguration never stacks patches.
 with tarfile.open(root/'gegl-0.4.62.tar.xz') as tar:
-    for name in ['gegl-0.4.62/meson.build', 'gegl-0.4.62/operations/meson.build']:
-        tar.extract(name, root, filter='data')
+    for member in tar.getmembers():
+        name = member.name
+        if name in ['gegl-0.4.62/meson.build', 'gegl-0.4.62/operations/meson.build',
+                    'gegl-0.4.62/gegl/opencl/gegl-cl-init.c'] or (
+            name.endswith('.c') and any(part in name for part in
+                ['/operations/common/', '/operations/common-gpl3+/', '/gegl/operation/'])):
+            tar.extract(member, root, filter='data')
 source = root/'gegl-0.4.62'
+# Android exposes vendor OpenCL through optional native-library declarations.
+cl_init = source/'gegl/opencl/gegl-cl-init.c'
+cl_init.write_text(cl_init.read_text().replace(
+    '#else\n  GModule *module = g_module_open (CL_LIBRARY_NAME, G_MODULE_BIND_LAZY);',
+    '#elif defined(__ANDROID__)\n'
+    '  GModule *module = g_module_open ("libOpenCL.so", G_MODULE_BIND_LAZY);\n'
+    '  if (!module) module = g_module_open ("libOpenCL-pixel.so", G_MODULE_BIND_LAZY);\n'
+    '#else\n  GModule *module = g_module_open (CL_LIBRARY_NAME, G_MODULE_BIND_LAZY);'))
+# Record successful operation GPU paths, including generic cl-source kernels.
+mark = 'g_object_set_data (G_OBJECT (operation), "brushkin-opencl-used", GINT_TO_POINTER (1));'
+for kind in ['filter', 'composer']:
+    path = source/f'gegl/operation/gegl-operation-point-{kind}.c'
+    code = path.read_text()
+    start = code.index(f'\ngegl_operation_point_{kind}_cl_process (')
+    end = code.index('\n}', start) + 2
+    part = code[start:end]
+    assert '  return TRUE;' in part
+    part = part.replace('  return TRUE;', '  ' + mark + '\n  return TRUE;')
+    path.write_text(code[:start] + part + code[end:])
+for directory in ['common', 'common-gpl3+']:
+    for path in (source/'operations'/directory).glob('*.c'):
+        code = path.read_text()
+        if 'GEGL_OP_POINT_FILTER' in code or 'GEGL_OP_POINT_COMPOSER' in code:
+            continue
+        signature = '\ncheckerboard_cl_process (' if path.stem == 'checkerboard' else '\ncl_process ('
+        if signature not in code:
+            continue
+        start = code.rindex(signature)
+        end = code.index('\n}', start) + 2
+        part = code[start:end]
+        if 'GEGL_OP_POINT_RENDER' in code:
+            assert '  return FALSE;' in part, path
+            part = part.replace('  return FALSE;', '  ' + mark + '\n  return FALSE;')
+        elif '  return !err;' in part:
+            part = part.replace('  return !err;', '  if (!err) ' + mark + '\n  return !err;')
+        else:
+            assert '  return TRUE;' in part, path
+            part = part.replace('  return TRUE;', '  ' + mark + '\n  return TRUE;')
+        path.write_text(code[:start] + part + code[end:])
+path = source/'operations/common/gblur-1d.c'
+code = path.read_text()
+code = code.replace('          gegl_free (cmatrix);\n          return TRUE;',
+                    '          ' + mark + '\n          gegl_free (cmatrix);\n          return TRUE;')
+path.write_text(code)
 main = source/'meson.build'
 s = main.read_text()
 s = re.sub(r"libjpeg   = dependency\('libjpeg'.*", 'libjpeg = declare_dependency()', s)
