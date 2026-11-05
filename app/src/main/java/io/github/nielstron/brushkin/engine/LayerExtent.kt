@@ -31,7 +31,10 @@ object LayerExtent {
 
     /** Draws every tile of the layer (canvas and outside) onto [c], which is in image coordinates. */
     fun draw(c: Canvas, l: Layer, paint: Paint? = null) {
+        c.save()
+        c.clipRect(0, 0, l.pixels.width, l.pixels.height)
         Compositor.drawTiles(c, l.pixels, null, null)
+        c.restore()
         for ((k, t) in l.outside) c.drawBitmap(t, cx(k) * TILE.toFloat(), cy(k) * TILE.toFloat(), paint)
     }
 
@@ -40,16 +43,17 @@ object LayerExtent {
      * image coordinates). Fully transparent tiles are dropped.
      */
     fun outsideTiles(area: Rect, w: Int, h: Int, render: (Canvas) -> Unit): Map<Long, Bitmap> {
-        val cols = (w + TILE - 1) / TILE; val rows = (h + TILE - 1) / TILE
         val out = HashMap<Long, Bitmap>()
         val x0 = Math.floorDiv(area.left, TILE); val x1 = Math.floorDiv(area.right - 1, TILE)
         val y0 = Math.floorDiv(area.top, TILE); val y1 = Math.floorDiv(area.bottom - 1, TILE)
         // Don't let a far-flung transform allocate without bound.
         if ((x1 - x0 + 1).toLong() * (y1 - y0 + 1) > 4096) return out
         for (ty in y0..y1) for (tx in x0..x1) {
-            if (tx in 0 until cols && ty in 0 until rows) continue
+            if (tx >= 0 && ty >= 0 && (tx + 1) * TILE <= w && (ty + 1) * TILE <= h) continue
             val tile = Bitmap.createBitmap(TILE, TILE, Bitmap.Config.ARGB_8888)
             val c = Canvas(tile); c.translate(-tx * TILE.toFloat(), -ty * TILE.toFloat())
+            // A boundary tile may contain both canvas and off-canvas pixels. Store only the latter.
+            c.clipOutRect(0, 0, w, h)
             render(c)
             if (alphaBounds(tile) != null) out[key(tx, ty)] = tile
         }
@@ -82,8 +86,8 @@ object LayerExtent {
         val px = TiledBitmap.fromBitmap(bmp, w, h, x, y)
         val outside = if (Rect(0, 0, w, h).let { r.left >= it.left && r.top >= it.top && r.right <= it.right && r.bottom <= it.bottom }) emptyMap()
             else outsideTiles(r, w, h) { c -> c.drawBitmap(bmp, x.toFloat(), y.toFloat(), null) }
-        // A layer that doesn't cover the whole canvas has a smaller boundary (like in GIMP).
-        val bounds = if (r.contains(Rect(0, 0, w, h))) null else r
+        // Keep larger boundaries too, including their transparent padding.
+        val bounds = if (r == Rect(0, 0, w, h)) null else r
         return Triple(px, outside, bounds)
     }
 
