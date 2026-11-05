@@ -2,6 +2,7 @@ name: Release
 
 # Push a tag like v0.2.0 (matching versionName in app/build.gradle.kts) to publish a release.
 on:
+  workflow_dispatch:
   push:
     tags: ["v*"]
 
