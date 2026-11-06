@@ -1,0 +1,2 @@
+Filters and live effects respond faster on large images. Each layer keeps a ready copy for filtering, GEGL holds more of the image in memory instead of swapping it to disk, and only the edited parts are processed again.
+Live Levels and Curves effects update only where you paint, brush strokes are recomposited only where paint lands, and the canvas redraws only the document area.
