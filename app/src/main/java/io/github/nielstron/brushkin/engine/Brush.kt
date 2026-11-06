@@ -234,11 +234,14 @@ class StrokeOp(
     private var smudgeTmp: Bitmap? = null
 
     private val dirty = HashSet<Int>()
+    /** Per dirty tile: the tile-local area this batch's dabs drew into (recompositing is clipped to it). */
+    private val dirtyArea = HashMap<Int, Rect>()
     val bounds = Rect()
 
     /** Adds input points; returns the doc-space rect that changed. */
     fun add(points: List<StrokePoint>): Rect {
         dirty.clear()
+        dirtyArea.clear()
         val changed = Rect()
         for (raw in points) {
             val p = smooth(raw)
@@ -339,6 +342,11 @@ class StrokeOp(
             canvas.drawBitmap(tip, tipRect, dst, dabPaint)
             canvas.restore()
             dirty.add(i)
+            // ir already covers the (rotated) dab; one extra pixel guards filtering at its edge.
+            val tx = target.tileX(i); val ty = target.tileY(i)
+            val area = Rect(ir.left - tx - 1, ir.top - ty - 1, ir.right - tx + 1, ir.bottom - ty + 1)
+            area.intersect(0, 0, TILE, TILE)
+            dirtyArea.getOrPut(i) { Rect() }.union(area)
         }
         canvas.setBitmap(null)
     }
@@ -442,6 +450,9 @@ class StrokeOp(
         target.touched(i)
     }
 
+    /** Tiles recomposited in full at least once during this stroke. */
+    private val composited = HashSet<Int>()
+
     private fun recomposite(i: Int) {
         if (tool.isEffect) { recompositeEffect(i); return }
         val tile = session.writable(i)
@@ -456,7 +467,11 @@ class StrokeOp(
             src = sc
         }
         val stroke = src
-        LinearTile.composite(tile, orig, target.fill) { c -> c.drawBitmap(stroke, 0f, 0f, compPaint) }
+        // Outside this batch's dabs the stroke buffer is unchanged, so the tile already holds
+        // the result there (the first touch of a tile recomposites all of it).
+        val clip = if (i in composited) dirtyArea[i] else null
+        LinearTile.composite(tile, orig, target.fill, clip) { c -> c.drawBitmap(stroke, 0f, 0f, compPaint) }
+        composited.add(i)
         target.touched(i)
     }
 
@@ -521,24 +536,29 @@ object LinearTile {
     private val copy = Paint().apply { xfermode = PorterDuffXfermode(PorterDuff.Mode.SRC) }
     private val tileCanvas = ThreadLocal.withInitial { Canvas() }
 
-    fun composite(tile: Bitmap, orig: Bitmap?, fill: Int, draw: (Canvas) -> Unit) {
+    private val linCanvas = ThreadLocal.withInitial { Canvas() }
+
+    /** [clip] (tile coordinates) limits the work to pixels that may have changed; null = whole tile. */
+    fun composite(tile: Bitmap, orig: Bitmap?, fill: Int, clip: Rect? = null, draw: (Canvas) -> Unit) {
         // Unbinding the canvas afterwards (setBitmap(null)) is what bumps the bitmap's generation
         // ID; the GPU renderer relies on it to re-upload changed tiles.
         val c = tileCanvas.get()!!
         c.setBitmap(tile)
         try {
             if (fill != 0) {
-                tile.eraseColor(fill)
+                if (clip != null) { c.clipRect(clip); c.drawColor(fill, PorterDuff.Mode.SRC) } else tile.eraseColor(fill)
                 if (orig != null) c.drawBitmap(orig, 0f, 0f, null)
                 draw(c)
                 return
             }
             val l = lin.get()!!
-            l.eraseColor(0)
-            val lc = Canvas(l)
+            val lc = linCanvas.get()!!
+            lc.setBitmap(l)
+            if (clip != null) { lc.clipRect(clip); lc.drawColor(0, PorterDuff.Mode.CLEAR); c.clipRect(clip) } else l.eraseColor(0)
             if (orig != null) lc.drawBitmap(orig, 0f, 0f, null)
             draw(lc)
             c.drawBitmap(l, 0f, 0f, copy)
+            lc.setBitmap(null)
         } finally { c.setBitmap(null) }
     }
 }
