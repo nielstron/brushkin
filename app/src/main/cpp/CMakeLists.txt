@@ -52,6 +52,8 @@ endif()
 file(GLOB GEGL_LIBRARIES "${GEGL_ROOT}/jni/*.so")
 add_library(brushkin_gegl SHARED gegl.cpp)
 target_compile_features(brushkin_gegl PRIVATE cxx_std_17)
+# The pixel copy loops in gegl.cpp dominate small renders; debug builds otherwise run them at -O0.
+target_compile_options(brushkin_gegl PRIVATE -O2)
 target_include_directories(brushkin_gegl PRIVATE
  ${GEGL_ROOT}/prefix/include/gegl-0.4 ${GEGL_ROOT}/prefix/include/babl-0.1 ${GEGL_ROOT}/prefix/include/json-glib-1.0
  ${GEGL_ROOT}/prefix/include/glib-2.0 ${GEGL_ROOT}/prefix/lib/glib-2.0/include)
