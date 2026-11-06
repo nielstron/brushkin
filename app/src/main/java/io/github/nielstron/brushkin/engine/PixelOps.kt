@@ -79,6 +79,8 @@ sealed interface Filter {
 
 /** Per-channel LUT filter used by Curves, Brightness-Contrast, Invert, Threshold, Posterize. */
 open class LutFilter(override val name: String, private val v: IntArray, private val r: IntArray, private val g: IntArray, private val b: IntArray, private val a: IntArray? = null) : Filter {
+    /** Purely per-pixel, so live effects only recompute changed tiles. Final: subclasses may not be. */
+    final override fun incremental(width: Int, height: Int): IncrementalFilter? = if (wholeImage) null else PointIncremental(this)
     override fun apply(src: IntArray, w: Int, h: Int): IntArray {
         val out = IntArray(src.size)
         parallelRows(h) { y0, y1 ->
