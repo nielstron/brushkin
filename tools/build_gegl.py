@@ -2,6 +2,7 @@
 """Build the GEGL filter runtime from pinned sources for one Android ABI (called by CMake)."""
 import argparse
 import hashlib
+import io
 import os
 from pathlib import Path
 import platform
@@ -22,7 +23,17 @@ prefix = root / 'prefix'
 ndk = a.ndk / 'toolchains/llvm/prebuilt' / ('darwin-x86_64' if platform.system() == 'Darwin' else 'linux-x86_64') / 'bin'
 triple, family, cpu = ('aarch64-linux-android', 'aarch64', 'aarch64') if a.abi == 'arm64-v8a' else ('armv7a-linux-androideabi', 'arm', 'armv7')
 # The stamp changes with this script, the toolchain, or ABI; Gradle/CMake retains the build cache.
-stamp = hashlib.sha256(Path(__file__).read_bytes() + str(a.ndk).encode() + a.abi.encode()).hexdigest()
+# GEGL comes from the OpenCL fork (github.com/nielstron/gegl-opencl), pinned by
+# commit and checksum. BRUSHKIN_GEGL_SOURCE=<checkout> builds a local checkout's
+# HEAD instead (committed state only), for developing GEGL changes.
+GEGL_REPO = 'nielstron/gegl-opencl'
+GEGL_REV = 'e8324490ccda5b639266b7448e0990b625064bfb'
+GEGL_SHA256 = '4a87738d34bce06ef58d52aaf28f1963c1de7028a2f90f279a8e69efd65756ec'
+gegl_local = os.environ.get('BRUSHKIN_GEGL_SOURCE')
+if gegl_local:
+    GEGL_REV = subprocess.check_output(['git', '-C', gegl_local, 'rev-parse', 'HEAD'], text=True).strip()
+stamp = hashlib.sha256(Path(__file__).read_bytes() + str(a.ndk).encode() + a.abi.encode() +
+                       GEGL_REV.encode()).hexdigest()
 if (root/'stamp').exists() and (root/'stamp').read_text() == stamp:
     raise SystemExit(0)
 
@@ -35,9 +46,8 @@ def run(args, label):
 
 sources = [
  ('glib-2.84.4', 'https://download.gnome.org/sources/glib/2.84/', '8a9ea10943c36fc117e253f80c91e477b673525ae45762942858aef57631bb90'),
- ('babl-0.1.114', 'https://download.gimp.org/pub/babl/0.1/', 'bcbb7786c1e447703db3bc7fa34d62d0d2d117b22f04d8834c7b2d5ded456487'),
+ ('babl-0.1.128', 'https://download.gimp.org/pub/babl/0.1/', 'e676507b421d414d49db8627415dc1eadbd787536baa7d6fe94a1f1971cbe73e'),
  ('json-glib-1.10.8', 'https://download.gnome.org/sources/json-glib/1.10/', '55c5c141a564245b8f8fbe7698663c87a45a7333c2a2c56f06f811ab73b212dd'),
- ('gegl-0.4.62', 'https://download.gimp.org/pub/gegl/0.4/', '5887576371ebf1d9e90797d10e4b9a7f1658228d4827583e79e1db3d94505c6c'),
 ]
 for name, url, checksum in sources:
     archive = root/(name+'.tar.xz')
@@ -73,89 +83,59 @@ cpp_link_args = ['-Wl,-z,max-page-size=16384']
 pkg_config_path = ['{prefix}/lib/pkgconfig']
 """)
 
+def skip_def_check(meson_file):
+    # The .def export-list check runs the build machine's nm on Windows/macOS
+    # library names; it does not apply to Android libraries.
+    code = meson_file.read_text()
+    guard = "if host_machine.system() != 'emscripten'\n  nm = find_program('nm', required: false)"
+    patched = "if host_machine.system() not in ['emscripten', 'android']\n  nm = find_program('nm', required: false)"
+    assert code.count(guard) + code.count(patched) == 1, meson_file
+    meson_file.write_text(code.replace(guard, patched))
+
 def build(name, source, options):
+    if name in ('babl', 'gegl'): skip_def_check(root/source/'meson.build')
     dest = root/(name+'-build')
     setup = ['--reconfigure'] if (dest/'build.ninja').exists() else []
     run([a.meson, 'setup', *setup, dest, root/source, '--cross-file', cross, '--prefix', prefix,
          '--libdir', 'lib', '--buildtype=minsize', '-Dauto_features=disabled', *options], name+'-setup')
-    run([a.meson, 'compile', '-C', dest, '-j', '6'], name+'-build')
+    run([a.meson, 'compile', '-C', dest, '-j', os.environ.get('BRUSHKIN_BUILD_JOBS', '6')], name+'-build')
     run([a.meson, 'install', '-C', dest], name+'-install')
 
 build('glib', 'glib-2.84.4', ['-Dtests=false','-Dinstalled_tests=false','-Dintrospection=disabled',
  '-Ddocumentation=false','-Dman-pages=disabled','-Dnls=disabled','-Dlibmount=disabled',
  '-Dselinux=disabled','-Dxattr=false','-Dsysprof=disabled','-Ddefault_library=shared'])
-build('babl', 'babl-0.1.114', ['-Dwith-docs=false','-Denable-gir=false','-Denable-vapi=false','-Dwith-lcms=false'])
+build('babl', 'babl-0.1.128', ['-Dwith-docs=false','-Denable-gir=false','-Denable-vapi=false','-Dwith-lcms=disabled'])
 build('json', 'json-glib-1.10.8', ['-Dtests=false','-Dconformance=false','-Dinstalled_tests=false'])
 # Brushkin owns decoding/export. Exclude GEGL's external I/O modules and desktop tools.
 # No placeholder codecs are linked; their dependencies disappear with those modules.
-# Re-extract instrumented sources so reconfiguration never stacks patches.
-with tarfile.open(root/'gegl-0.4.62.tar.xz') as tar:
-    for member in tar.getmembers():
-        name = member.name
-        if name in ['gegl-0.4.62/meson.build', 'gegl-0.4.62/operations/meson.build',
-                    'gegl-0.4.62/gegl/opencl/gegl-cl-init.c'] or (
-            name.endswith('.c') and any(part in name for part in
-                ['/operations/common/', '/operations/common-gpl3+/', '/gegl/operation/'])):
-            tar.extract(member, root, filter='data')
-source = root/'gegl-0.4.62'
-# Android exposes vendor OpenCL through optional native-library declarations.
-cl_init = source/'gegl/opencl/gegl-cl-init.c'
-loader = '#else\n  GModule *module = g_module_open (CL_LIBRARY_NAME, G_MODULE_BIND_LAZY);'
-# Fail loudly if upstream changes the loader; otherwise Android silently loses OpenCL.
-assert cl_init.read_text().count(loader) == 1, cl_init
-cl_init.write_text(cl_init.read_text().replace(
-    loader,
-    '#elif defined(__ANDROID__)\n'
-    '  GModule *module = g_module_open ("libOpenCL.so", G_MODULE_BIND_LAZY);\n'
-    '  if (!module) module = g_module_open ("libOpenCL-pixel.so", G_MODULE_BIND_LAZY);\n'
-    '#else\n  GModule *module = g_module_open (CL_LIBRARY_NAME, G_MODULE_BIND_LAZY);'))
-# Record successful operation GPU paths, including generic cl-source kernels.
-mark = 'g_object_set_data (G_OBJECT (operation), "brushkin-opencl-used", GINT_TO_POINTER (1));'
-for kind in ['filter', 'composer']:
-    path = source/f'gegl/operation/gegl-operation-point-{kind}.c'
-    code = path.read_text()
-    start = code.index(f'\ngegl_operation_point_{kind}_cl_process (')
-    end = code.index('\n}', start) + 2
-    part = code[start:end]
-    assert '  return TRUE;' in part
-    part = part.replace('  return TRUE;', '  ' + mark + '\n  return TRUE;')
-    path.write_text(code[:start] + part + code[end:])
-for directory in ['common', 'common-gpl3+']:
-    for path in (source/'operations'/directory).glob('*.c'):
-        code = path.read_text()
-        if 'GEGL_OP_POINT_FILTER' in code or 'GEGL_OP_POINT_COMPOSER' in code:
-            continue
-        signature = '\ncheckerboard_cl_process (' if path.stem == 'checkerboard' else '\ncl_process ('
-        if signature not in code:
-            continue
-        start = code.rindex(signature)
-        end = code.index('\n}', start) + 2
-        part = code[start:end]
-        if 'GEGL_OP_POINT_RENDER' in code:
-            assert '  return FALSE;' in part, path
-            part = part.replace('  return FALSE;', '  ' + mark + '\n  return FALSE;')
-        elif '  return !err;' in part:
-            part = part.replace('  return !err;', '  if (!err) ' + mark + '\n  return !err;')
-        else:
-            assert '  return TRUE;' in part, path
-            part = part.replace('  return TRUE;', '  ' + mark + '\n  return TRUE;')
-        path.write_text(code[:start] + part + code[end:])
-path = source/'operations/common/gblur-1d.c'
-code = path.read_text()
-fir_success = '          gegl_free (cmatrix);\n          return TRUE;'
-assert code.count(fir_success) == 1, path
-code = code.replace(fir_success, '          ' + mark + '\n' + fir_success)
-path.write_text(code)
+# Extract fresh sources every build so reconfiguration never stacks patches.
+source = root/'gegl'
+if source.exists(): shutil.rmtree(source)
+if gegl_local:
+    archive = subprocess.run(['git', '-C', gegl_local, 'archive', '--format=tar', '--prefix=gegl/', 'HEAD'],
+                             check=True, capture_output=True).stdout
+    with tarfile.open(fileobj=io.BytesIO(archive)) as tar: tar.extractall(root, filter='data')
+else:
+    archive = root/f'gegl-{GEGL_REV}.tar.gz'
+    if not archive.exists():
+        urllib.request.urlretrieve(f'https://github.com/{GEGL_REPO}/archive/{GEGL_REV}.tar.gz', archive)
+    assert hashlib.sha256(archive.read_bytes()).hexdigest() == GEGL_SHA256, archive
+    with tarfile.open(archive) as tar: tar.extractall(root, filter='data')
+    (root/f'gegl-opencl-{GEGL_REV}').rename(source)
 main = source/'meson.build'
 s = main.read_text()
-s = re.sub(r"libjpeg   = dependency\('libjpeg'.*", 'libjpeg = declare_dependency()', s)
-s = re.sub(r"libpng    = dependency\('libpng'.*", 'libpng = declare_dependency()', s)
+s, n = re.subn(r"^libjpeg   = dependency\(.*", 'libjpeg = declare_dependency()', s, flags=re.M)
+assert n == 1, 'libjpeg dependency'
+s, n = re.subn(r"^libpng    = dependency\(.*", 'libpng = declare_dependency()', s, flags=re.M)
+assert n == 1, 'libpng dependency'
 for directory in ['bin','examples','tests','perf','po','docs']:
+    assert s.count(f"subdir('{directory}')") == 1, directory
     s = s.replace(f"subdir('{directory}')", f"# Brushkin omits {directory}")
 main.write_text(s)
 ops = source/'operations/meson.build'
+assert ops.read_text().count("subdir('external')") == 1, ops
 ops.write_text(ops.read_text().replace("subdir('external')", '# Brushkin owns file I/O'))
-build('gegl', 'gegl-0.4.62', ['-Ddocs=false','-Dintrospection=false','-Dvapigen=disabled','-Dworkshop=false'])
+build('gegl', 'gegl', ['-Ddocs=false','-Dintrospection=false','-Dvapigen=disabled','-Dworkshop=false'])
 # Package only the main filter modules and their recursive Android dependency closure.
 libs = {p.name:p for p in (prefix/'lib').rglob('*.so') if not p.is_symlink()}
 names = {'libgegl-0.4.so','gegl-core.so','gegl-common.so','gegl-common-cxx.so',
