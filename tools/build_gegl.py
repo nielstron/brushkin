@@ -100,8 +100,11 @@ with tarfile.open(root/'gegl-0.4.62.tar.xz') as tar:
 source = root/'gegl-0.4.62'
 # Android exposes vendor OpenCL through optional native-library declarations.
 cl_init = source/'gegl/opencl/gegl-cl-init.c'
+loader = '#else\n  GModule *module = g_module_open (CL_LIBRARY_NAME, G_MODULE_BIND_LAZY);'
+# Fail loudly if upstream changes the loader; otherwise Android silently loses OpenCL.
+assert cl_init.read_text().count(loader) == 1, cl_init
 cl_init.write_text(cl_init.read_text().replace(
-    '#else\n  GModule *module = g_module_open (CL_LIBRARY_NAME, G_MODULE_BIND_LAZY);',
+    loader,
     '#elif defined(__ANDROID__)\n'
     '  GModule *module = g_module_open ("libOpenCL.so", G_MODULE_BIND_LAZY);\n'
     '  if (!module) module = g_module_open ("libOpenCL-pixel.so", G_MODULE_BIND_LAZY);\n'
@@ -139,8 +142,9 @@ for directory in ['common', 'common-gpl3+']:
         path.write_text(code[:start] + part + code[end:])
 path = source/'operations/common/gblur-1d.c'
 code = path.read_text()
-code = code.replace('          gegl_free (cmatrix);\n          return TRUE;',
-                    '          ' + mark + '\n          gegl_free (cmatrix);\n          return TRUE;')
+fir_success = '          gegl_free (cmatrix);\n          return TRUE;'
+assert code.count(fir_success) == 1, path
+code = code.replace(fir_success, '          ' + mark + '\n' + fir_success)
 path.write_text(code)
 main = source/'meson.build'
 s = main.read_text()

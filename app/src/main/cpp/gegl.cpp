@@ -31,8 +31,11 @@ Java_io_github_nielstron_brushkin_engine_NativeGegl_initialize(JNIEnv *env, jobj
     g_setenv("BABL_PATH", utf(env, bablPath).c_str(), TRUE);
     g_setenv("GEGL_USE_OPENCL", "gpu", TRUE);
     g_setenv("GEGL_SWAP", utf(env, swapPath).c_str(), TRUE);
+    // Set the license before gegl_init: changing it afterwards makes GEGL rescan
+    // GEGL_PATH and register every operation module a second time.
+    g_object_set(gegl_config(), "application-license", "GPL3", nullptr);
     gegl_init(nullptr, nullptr);
-    g_object_set(gegl_config(), "application-license", "GPL3", "threads", 2, "tile-cache-size", guint64(32*1024*1024), nullptr);
+    g_object_set(gegl_config(), "threads", 2, "tile-cache-size", guint64(32*1024*1024), nullptr);
 }
 static GeglNode *createGraph(JNIEnv *env, jstring operation, jobjectArray keys, jdoubleArray values, GeglNode **output, bool allowOpenCl = true, bool benchmarkOpenCl = false) {
     const auto op = utf(env, operation);
