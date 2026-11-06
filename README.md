@@ -40,20 +40,28 @@ The AI tools use open models that aren't part of the APK. Each one is downloaded
 
 ## Filters and performance
 
-Brushkin uses pinned GEGL 0.4.62 operations for many filters. On devices that expose
-an OpenCL GPU driver to Android apps, selected operations use GPU acceleration:
+Brushkin builds its filters from [gegl-opencl](https://github.com/nielstron/gegl-opencl),
+a fork of GEGL master with fixed and new OpenCL kernels. On devices that expose an
+OpenCL GPU driver to Android apps, these filters use GPU acceleration:
 
-- Linear motion blur, box blur, bilateral filtering, pixelize and single-axis Sobel.
-- Selective Gaussian blur, oilify, Laplace, alien map and vignette.
-- HSV/hurl noise, cell/simplex noise and diffraction patterns.
-- Gaussian blur’s FIR paths, including one-dimensional Gaussian blur. Automatic
-  mode retains GEGL’s FIR/IIR selection; IIR runs on the CPU.
+- Blurs: Gaussian (FIR and IIR, including one-dimensional), selective Gaussian, box,
+  bilateral, linear/circular/zoom motion, median, mean curvature, lens, and SNN mean.
+- Distortions: whirl and pinch, polar coordinates, ripple, waves, lens distortion.
+- Noise: HSV, RGB, LCH, pick, slur, spread, noise reduction, simplex noise.
+- Edges and artistic filters: Sobel, Laplace, emboss, normal map, newsprint, oilify,
+  pixelize, cartoon, photocopy, soft glow, high pass, bloom, deinterlace, video
+  degradation.
+- Colour: stretch contrast (RGB and HSV), colour enhance, brightness and contrast,
+  levels, colour temperature, exposure, mono mixer, posterize, linear invert,
+  vignette, plus diffraction patterns and checkerboard.
 
-The allowlist was measured on a Pixel 6 Pro at 0.8 and 3.1 megapixels, with opaque
-and transparent output compared against CPU rendering. Speedups depend on the
-operation, settings, image size and device. Kernels with observed output discrepancies
-remain on CPU. OpenCL is optional: unsupported devices and operation settings use
-CPU rendering. LiteRT model acceleration is separate from GEGL’s OpenCL support.
+The allowlist comes from Brushkin's OpenCL survey on a Pixel 6 Pro at 1024×768.
+Each enabled operation matched CPU rendering within 1/255, both opaque and with
+transparency. Each was also at least 1.5× faster than the 2-thread CPU path.
+Operations with smaller gains stay on the CPU. Speedups depend on the operation,
+settings, image size and device. OpenCL is optional: unsupported devices and
+operation settings use CPU rendering. LiteRT model acceleration is separate from
+GEGL's OpenCL support.
 
 Live effects stay editable and reuse cached stages and incremental updates where
 supported, but can be expensive when drawing beneath them. Filter previews include existing effects, show computing progress, and allow pan and pinch
@@ -70,9 +78,12 @@ color/object parameters retain upstream defaults until dedicated controls are ad
 Use JDK 21. Install Python 3.12+, pkg-config, Meson 1.12.1, and Ninja (for example,
 `uv tool install meson==1.12.1` and `brew install pkg-config ninja` on macOS).
 The Android SDK needs NDK 27.1.12297006 and CMake 3.22.1. The first native build
-also downloads and compiles GEGL 0.4.62, babl 0.1.114, GLib 2.84.4, and
-json-glib 1.10.8 for both ARM architectures; subsequent builds reuse the cache.
-`tools/build_gegl.py` pins source checksums and the libffi dependency revision.
+also downloads and compiles GEGL (the gegl-opencl fork), babl 0.1.128,
+GLib 2.84.4, and json-glib 1.10.8 for both ARM architectures; subsequent builds
+reuse the cache. `tools/build_gegl.py` pins the GEGL commit, source checksums, and
+the libffi dependency revision. To build a local GEGL checkout instead, set
+`BRUSHKIN_GEGL_SOURCE=<path>`; it builds that checkout's committed HEAD.
+`BRUSHKIN_BUILD_JOBS` sets the native build's parallelism (default 6).
 
 ```sh
 ./gradlew :app:testDebugUnitTest :app:assembleDebug

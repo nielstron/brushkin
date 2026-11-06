@@ -4,18 +4,75 @@
 #include <vector>
 #include <string>
 #include <mutex>
+#include <unordered_set>
+#include <atomic>
+#include <cstring>
+#include <dlfcn.h>
+#include <chrono>
+#include <android/log.h>
+
+typedef int cl_int_t;
 
 static std::mutex gate;
 static bool lastRenderUsedOpenCl = false;
-static bool graphUsedOpenCl(GeglNode *node) {
-    bool used = false;
-    auto *operation = gegl_node_get_gegl_operation(node);
-    if (operation) used = g_object_get_data(G_OBJECT(operation), "brushkin-opencl-used") != nullptr;
-    GSList *children = gegl_node_get_children(node);
-    for (GSList *child = children; child; child = child->next)
-        used = graphUsedOpenCl(static_cast<GeglNode *>(child->data)) || used;
-    g_slist_free(children);
-    return used;
+// Counts OpenCL kernel launches of operations, so renders can report whether
+// the GPU path ran. GEGL's color conversion kernels are not counted: they
+// also run when an operation itself falls back to the CPU.
+typedef cl_int_t (*EnqueueKernel)(void *, void *, unsigned, const size_t *, const size_t *,
+                                 const size_t *, unsigned, const void *, void *);
+typedef cl_int_t (*KernelInfo)(void *, unsigned, size_t, void *, size_t *);
+extern "C" EnqueueKernel gegl_clEnqueueNDRangeKernel;
+static EnqueueKernel realEnqueueKernel;
+static KernelInfo kernelInfo;
+static std::atomic<int> operationKernelLaunches{0};
+static bool isConversionKernel(const char *name) {
+    const bool prefix = !strncmp(name, "rgb", 3) || !strncmp(name, "ragab", 5) || name[0] == 'y';
+    return prefix && strstr(name, "_to_");
+}
+static cl_int_t countingEnqueueKernel(void *queue, void *kernel, unsigned dims, const size_t *offset,
+                                      const size_t *global, const size_t *local, unsigned events,
+                                      const void *wait, void *event) {
+    char name[128] = "";
+    if (kernelInfo) kernelInfo(kernel, 0x1190 /* CL_KERNEL_FUNCTION_NAME */, sizeof name, name, nullptr);
+    if (!isConversionKernel(name)) operationKernelLaunches++;
+    return realEnqueueKernel(queue, kernel, dims, offset, global, local, events, wait, event);
+}
+// Host time spent blocked in OpenCL calls during a render (profiling only).
+typedef cl_int_t (*FinishFn)(void *);
+typedef cl_int_t (*ReadWriteFn)(void *, void *, unsigned, size_t, size_t, void *, unsigned, const void *, void *);
+typedef void *(*MapFn)(void *, void *, unsigned, unsigned long long, size_t, size_t, unsigned, const void *, void *, cl_int_t *);
+extern "C" FinishFn gegl_clFinish;
+extern "C" ReadWriteFn gegl_clEnqueueReadBuffer, gegl_clEnqueueWriteBuffer;
+extern "C" MapFn gegl_clEnqueueMapBuffer;
+static FinishFn realFinish; static ReadWriteFn realRead, realWrite; static MapFn realMap;
+static std::atomic<long long> clBlockedNs{0}, clFinishNs{0}, clReadNs{0}, clWriteNs{0}, clMapNs{0};
+static long long nowNs() {
+    return std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::steady_clock::now().time_since_epoch()).count();
+}
+static cl_int_t timedFinish(void *q) { auto t=nowNs(); auto r=realFinish(q); auto d=nowNs()-t; clFinishNs+=d; clBlockedNs+=d; return r; }
+static cl_int_t timedRead(void *q, void *m, unsigned b, size_t o, size_t n, void *p, unsigned e, const void *w, void *ev) {
+    auto t=nowNs(); auto r=realRead(q,m,b,o,n,p,e,w,ev); auto d=nowNs()-t; clReadNs+=d; clBlockedNs+=d; return r; }
+static cl_int_t timedWrite(void *q, void *m, unsigned b, size_t o, size_t n, void *p, unsigned e, const void *w, void *ev) {
+    auto t=nowNs(); auto r=realWrite(q,m,b,o,n,p,e,w,ev); auto d=nowNs()-t; clWriteNs+=d; clBlockedNs+=d; return r; }
+static void *timedMap(void *q, void *m, unsigned b, unsigned long long f, size_t o, size_t n, unsigned e, const void *w, void *ev, cl_int_t *err) {
+    auto t=nowNs(); auto r=realMap(q,m,b,f,o,n,e,w,ev,err); auto d=nowNs()-t; clMapNs+=d; clBlockedNs+=d; return r; }
+static void timeOpenClCalls() {
+    if (realFinish || !gegl_clFinish) return;
+    realFinish=gegl_clFinish; gegl_clFinish=timedFinish;
+    if (gegl_clEnqueueReadBuffer) { realRead=gegl_clEnqueueReadBuffer; gegl_clEnqueueReadBuffer=timedRead; }
+    if (gegl_clEnqueueWriteBuffer) { realWrite=gegl_clEnqueueWriteBuffer; gegl_clEnqueueWriteBuffer=timedWrite; }
+    if (gegl_clEnqueueMapBuffer) { realMap=gegl_clEnqueueMapBuffer; gegl_clEnqueueMapBuffer=timedMap; }
+}
+static void countOpenClLaunches() {
+    if (!gegl_clEnqueueNDRangeKernel || realEnqueueKernel) return;
+    for (const char *library : {"libOpenCL.so", "libOpenCL-pixel.so"}) {
+        if (void *handle = dlopen(library, RTLD_NOW | RTLD_NOLOAD)) {
+            kernelInfo = reinterpret_cast<KernelInfo>(dlsym(handle, "clGetKernelInfo"));
+            if (kernelInfo) break;
+        }
+    }
+    realEnqueueKernel = gegl_clEnqueueNDRangeKernel;
+    gegl_clEnqueueNDRangeKernel = countingEnqueueKernel;
 }
 static void fail(JNIEnv *env, const std::string &message) {
     env->ThrowNew(env->FindClass("java/lang/IllegalArgumentException"), message.c_str());
@@ -35,25 +92,41 @@ Java_io_github_nielstron_brushkin_engine_NativeGegl_initialize(JNIEnv *env, jobj
     // GEGL_PATH and register every operation module a second time.
     g_object_set(gegl_config(), "application-license", "GPL3", nullptr);
     gegl_init(nullptr, nullptr);
+    countOpenClLaunches();
+    timeOpenClCalls();
     g_object_set(gegl_config(), "threads", 2, "tile-cache-size", guint64(32*1024*1024), nullptr);
 }
 static GeglNode *createGraph(JNIEnv *env, jstring operation, jobjectArray keys, jdoubleArray values, GeglNode **output, bool allowOpenCl = true, bool benchmarkOpenCl = false) {
     const auto op = utf(env, operation);
     if (!gegl_has_operation(op.c_str())) { fail(env, "Unavailable GEGL operation: " + op); return nullptr; }
     GeglNode *graph = gegl_node_new();
-    // Measured end-to-end on Pixel 6 Pro; each enabled kernel passed opaque
-    // and alpha comparisons. GEGL retains its parameter-specific CPU fallback.
-    // Gaussian keeps GEGL's FIR/IIR selection; only its FIR path uses OpenCL.
-    // Kernels with output discrepancies remain CPU-only.
-    const bool accelerated = op == "gegl:motion-blur-linear" ||
-        op == "gegl:box-blur" || op == "gegl:bilateral-filter" ||
-        op == "gegl:pixelize" || op == "gegl:edge-sobel" ||
-        op == "gegl:alien-map" || op == "gegl:noise-hsv" ||
-        op == "gegl:noise-hurl" || op == "gegl:vignette" ||
-        op == "gegl:edge-laplace" || op == "gegl:gaussian-blur-selective" ||
-        op == "gegl:oilify" || op == "gegl:cell-noise" ||
-        op == "gegl:simplex-noise" || op == "gegl:diffraction-patterns" ||
-        op == "gegl:gblur-1d" || op == "gegl:gaussian-blur";
+    // Survey on a Pixel 6 Pro (Mali-G78) with the gegl-opencl fork, 1024x768,
+    // GPU against the 2-thread CPU path: every listed operation matched the CPU
+    // within 1/255 (opaque and alpha) and was at least 1.5x faster. Faster-but-
+    // marginal kernels (alien-map, cell-noise, noise-hurl, opacity, threshold,
+    // value-invert, ...) stay on the CPU. GEGL keeps its own CPU fallback for
+    // parameter combinations a kernel does not support.
+    static const std::unordered_set<std::string> acceleratedOps = {
+        "gegl:bilateral-filter", "gegl:bloom", "gegl:box-blur",
+        "gegl:brightness-contrast", "gegl:cartoon", "gegl:checkerboard",
+        "gegl:color-enhance", "gegl:color-temperature", "gegl:deinterlace",
+        "gegl:diffraction-patterns", "gegl:edge-laplace", "gegl:edge-sobel",
+        "gegl:emboss", "gegl:exposure", "gegl:gaussian-blur",
+        "gegl:gaussian-blur-selective", "gegl:gblur-1d", "gegl:high-pass",
+        "gegl:invert-linear", "gegl:lens-blur", "gegl:lens-distortion",
+        "gegl:levels", "gegl:mean-curvature-blur", "gegl:median-blur",
+        "gegl:mono-mixer", "gegl:motion-blur-circular", "gegl:motion-blur-linear",
+        "gegl:motion-blur-zoom", "gegl:newsprint", "gegl:noise-cie-lch",
+        "gegl:noise-hsv", "gegl:noise-pick", "gegl:noise-reduction",
+        "gegl:noise-rgb", "gegl:noise-slur", "gegl:noise-spread",
+        "gegl:normal-map", "gegl:oilify", "gegl:photocopy", "gegl:pixelize",
+        "gegl:polar-coordinates", "gegl:posterize", "gegl:ripple",
+        "gegl:simplex-noise", "gegl:snn-mean", "gegl:softglow",
+        "gegl:stretch-contrast", "gegl:stretch-contrast-hsv",
+        "gegl:video-degradation", "gegl:vignette", "gegl:waves",
+        "gegl:weighted-blend", "gegl:whirl-pinch", "svg:src-over",
+    };
+    const bool accelerated = acceleratedOps.count(op) != 0;
     g_object_set(graph, "use-opencl", allowOpenCl && (accelerated || benchmarkOpenCl), nullptr);
     GeglNode *filter = gegl_node_new_child(graph, "operation", op.c_str(), nullptr);
     const int count = env->GetArrayLength(keys);
@@ -87,18 +160,22 @@ Java_io_github_nielstron_brushkin_engine_NativeGegl_render(JNIEnv *env, jobject,
     if (w <= 0 || h <= 0 || int64_t(w)*h != env->GetArrayLength(pixels) || env->GetArrayLength(keys) != env->GetArrayLength(values)) {
         fail(env, "Invalid GEGL image or parameters"); return nullptr;
     }
+    const long long t0 = nowNs();
     GeglNode *filter;
     GeglNode *graph = createGraph(env, operation, keys, values, &filter, useOpenCl, benchmarkOpenCl);
     if (!graph) return nullptr;
+    const long long tGraph = nowNs();
     std::vector<jint> data(w*h);
     env->GetIntArrayRegion(pixels, 0, w*h, data.data());
     // Convert Android's straight-alpha ARGB integers to babl's explicit RGBA byte order.
     auto swapRB = [](jint c) -> jint { auto u=static_cast<uint32_t>(c); return (u & 0xff00ff00u) | ((u & 255u)<<16) | ((u>>16)&255u); };
     for (auto &c : data) c = (static_cast<uint32_t>(c) >> 24) == 0 ? 0 : swapRB(c);
+    const long long tCopyIn = nowNs();
     const Babl *format = babl_format("R'G'B'A u8");
     GeglRectangle extent{0,0,w,h};
     GeglBuffer *buffer = gegl_buffer_new(&extent, format);
     gegl_buffer_set(buffer, &extent, 0, format, data.data(), GEGL_AUTO_ROWSTRIDE);
+    const long long tBufferSet = nowNs();
     GeglNode *input = gegl_node_new_child(graph, "operation", "gegl:buffer-source", "buffer", buffer, nullptr);
     if (gegl_node_has_pad(filter, "input")) gegl_node_link(input, filter);
     GeglBuffer *auxBuffer = nullptr;
@@ -122,13 +199,28 @@ Java_io_github_nielstron_brushkin_engine_NativeGegl_render(JNIEnv *env, jobject,
         gegl_node_set(filter, "curve", curve, nullptr);
         g_object_unref(curve);
     }
+    operationKernelLaunches = 0;
+    clBlockedNs = 0; clFinishNs = 0; clReadNs = 0; clWriteNs = 0; clMapNs = 0;
+    const long long tBlitStart = nowNs();
     gegl_node_blit(filter, 1.0, &extent, format, data.data(), GEGL_AUTO_ROWSTRIDE, GEGL_BLIT_DEFAULT);
-    lastRenderUsedOpenCl = graphUsedOpenCl(filter);
+    const long long tBlit = nowNs();
+    lastRenderUsedOpenCl = operationKernelLaunches > 0;
     g_object_unref(graph); g_object_unref(buffer);
     if (auxBuffer) g_object_unref(auxBuffer);
+    const long long tTeardown = nowNs();
     for (auto &c : data) c=swapRB(c);
     jintArray result = env->NewIntArray(w*h);
     if (result) env->SetIntArrayRegion(result, 0, w*h, data.data());
+    const long long tEnd = nowNs();
+    if (benchmarkOpenCl) {
+        auto ms = [](long long ns) { return ns / 1e6; };
+        __android_log_print(ANDROID_LOG_INFO, "BrushkinProfile",
+            "%s %dx%d gpu=%d total=%.2f graph=%.2f copyIn=%.2f bufferSet=%.2f setup=%.2f blit=%.2f "
+            "[clBlocked=%.2f finish=%.2f read=%.2f write=%.2f map=%.2f launches=%d] teardown=%.2f copyOut=%.2f",
+            op.c_str(), w, h, lastRenderUsedOpenCl ? 1 : 0, ms(tEnd-t0), ms(tGraph-t0), ms(tCopyIn-tGraph),
+            ms(tBufferSet-tCopyIn), ms(tBlitStart-tBufferSet), ms(tBlit-tBlitStart), ms(clBlockedNs), ms(clFinishNs),
+            ms(clReadNs), ms(clWriteNs), ms(clMapNs), operationKernelLaunches.load(), ms(tTeardown-tBlit), ms(tEnd-tTeardown));
+    }
     return result;
 }
 
@@ -251,9 +343,9 @@ Java_io_github_nielstron_brushkin_engine_NativeGegl_renderSession(JNIEnv *env,jo
     data[0]=rect.x; data[1]=rect.y; data[2]=rect.width; data[3]=rect.height;
     lastRenderUsedOpenCl = false;
     if (count) {
-        g_object_set_data(G_OBJECT(gegl_node_get_gegl_operation(s->filter)), "brushkin-opencl-used", nullptr);
+        operationKernelLaunches = 0;
         gegl_node_blit(s->filter,1.0,&rect,babl_format("R'G'B'A u8"),data.data()+4,GEGL_AUTO_ROWSTRIDE,s->regional ? GEGL_BLIT_CACHE : GEGL_BLIT_DEFAULT);
-        lastRenderUsedOpenCl = g_object_get_data(G_OBJECT(gegl_node_get_gegl_operation(s->filter)), "brushkin-opencl-used") != nullptr;
+        lastRenderUsedOpenCl = operationKernelLaunches > 0;
         for (int i=4;i<count+4;i++) data[i]=swapChannels(data[i]);
     }
     s->dirty=GeglRectangle{0,0,0,0};

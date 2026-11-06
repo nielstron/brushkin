@@ -65,18 +65,21 @@ class OpenClPrototypeTest {
             verifyOpaque(w,h,op,keys,values,pixels,active)
             verifyAlpha(w,h,op,keys,values,pixels)
         }
-        // Automatic Gaussian at sigma 4 must retain CPU IIR, not force GPU FIR.
+        // Automatic Gaussian at sigma 4 keeps GEGL's IIR selection, which now runs on the GPU.
         val keys=arrayOf("std-dev-x","std-dev-y","filter")
         val values=doubleArrayOf(4.0,4.0,0.0)
-        verifyOpaque(w,h,"gegl:gaussian-blur",keys,values,pixels,false)
+        verifyOpaque(w,h,"gegl:gaussian-blur",keys,values,pixels,active)
         verifyAlpha(w,h,"gegl:gaussian-blur",keys,values,pixels)
     }
+
+    // Kernels that work but were under 1.5x the 2-thread CPU path on the Pixel 6 Pro survey.
+    private val cpuOnly=setOf("gegl:alien-map","gegl:noise-hurl","gegl:cell-noise")
 
     private fun verifyOpaque(w:Int,h:Int,op:String,keys:Array<String>,values:DoubleArray,pixels:IntArray,active:Boolean):Int {
         val cpu=NativeGegl.render(pixels,w,h,op,keys,values,false)
         assertFalse("Forced CPU path must not use OpenCL",NativeGegl.lastRenderUsedOpenCl())
         val gpu=NativeGegl.render(pixels,w,h,op,keys,values,true)
-        assertEquals("$op must follow the measured OpenCL allowlist",active && op != "gegl:exposure",NativeGegl.lastRenderUsedOpenCl())
+        assertEquals("$op must follow the measured OpenCL allowlist",active && op !in cpuOnly,NativeGegl.lastRenderUsedOpenCl())
         var maximum=0
         val shifts=intArrayOf(0,8,16,24)
         for(i in cpu.indices) for(shift in shifts) maximum=maxOf(maximum,abs((cpu[i] ushr shift and 255)-(gpu[i] ushr shift and 255)))

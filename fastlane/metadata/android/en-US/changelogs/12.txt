@@ -1,0 +1,2 @@
+GPU acceleration now covers about 50 filters, including distortions (whirl and pinch, polar coordinates, ripple, waves), median and mean-curvature blur, the noise filters, emboss, newsprint, cartoon, soft glow and high pass. Several kernels that gave wrong output or crashed now match CPU rendering.
+GPU renders are about twice as fast, and CPU rendering uses both threads again on OpenCL devices.
