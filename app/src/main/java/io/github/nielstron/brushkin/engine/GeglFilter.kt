@@ -35,12 +35,17 @@ object NativeGegl {
     private external fun initialize(operations: String, babl: String, swap: String)
 
     /** Under memory pressure, and whenever the UI is hidden, GEGL keeps only a 32 MB tile cache
-     * (the rest moves to its swap file); [restoreTileCache] brings back the full size. */
+     * (the rest moves to its swap file); [restoreTileCache] brings back the full size.
+     * Shrinking writes dirty tiles to swap first, so both run on one background thread
+     * (in call order) instead of the main thread that delivers the callbacks. */
+    private val cacheThread = java.util.concurrent.Executors.newSingleThreadExecutor { r ->
+        Thread(r, "gegl-tile-cache").apply { isDaemon = true; priority = Thread.MIN_PRIORITY }
+    }
     fun trimMemory(level: Int) {
         @Suppress("DEPRECATION") // RUNNING_LOW is no longer sent from API 34 on; UI_HIDDEN and up still are.
-        if (ready && level >= ComponentCallbacks2.TRIM_MEMORY_RUNNING_LOW) shrinkTileCache(true)
+        if (ready && level >= ComponentCallbacks2.TRIM_MEMORY_RUNNING_LOW) cacheThread.execute { shrinkTileCache(true) }
     }
-    fun restoreTileCache() { if (ready) shrinkTileCache(false) }
+    fun restoreTileCache() { if (ready) cacheThread.execute { shrinkTileCache(false) } }
     private external fun shrinkTileCache(shrink: Boolean)
     external fun createSession(width: Int, height: Int, operation: String, keys: Array<String>, values: DoubleArray, regional: Boolean): Long
     /** Uploads width×height ARGB ints (row stride width; [pixels] may be larger). */

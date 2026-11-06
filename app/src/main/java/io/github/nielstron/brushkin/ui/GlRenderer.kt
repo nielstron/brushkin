@@ -126,7 +126,10 @@ class GlRenderer(private val engine: Engine) : GLSurfaceView.Renderer {
         glDisable(GL_SCISSOR_TEST)
     }
 
-    /** Composites [list] into a pool buffer at [depth] and returns it. */
+    /** Composites [list] into a pool buffer at [depth] and returns it.
+     * Runs under [draw]'s document-bounds scissor: pool buffers keep stale pixels outside the
+     * document. A pass that samples neighbouring pixels (e.g. a GPU blur or drop shadow) must
+     * widen or drop that scissor, or it will read those stale pixels. */
     private fun composite(s: Stack, list: List<Layer>, depth: Int, m: FloatArray, filter: Boolean): Target {
         var acc = target(depth * 3); var other = target(depth * 3 + 1)
         val layerBuf = target(depth * 3 + 2)

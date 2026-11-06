@@ -32,6 +32,7 @@ import kotlin.math.sin
  * offscreen ES3 pbuffer at screen size). Results go to logcat tag "BrushkinBench" and to
  * files/bench.txt of the app under test.
  *
+ * Runs only with -e benchmark true (skipped in normal suite runs).
  * Args: -e sizes 1024x768,3000x2000 -e scenarios draw,filter,live,layers,brush -e reps 3
  *       -e segments 40 -e liveSegments 10 -e liveVariants paintOnEffectLayer,blurOnly
  *       -e filterReps 3 -e filters gaussian-blur8,exposure -e screen 1440x3120
@@ -418,6 +419,7 @@ class LatencyBenchmarkTest {
     }
 
     @Test fun latency() {
+        org.junit.Assume.assumeTrue("Benchmark; run with -e benchmark true", args.getString("benchmark") == "true")
         NativeGegl.prepare(ctx)
         val sizes = arg("sizes", "1024x768,3000x2000,4000x3000").split(',').map { s -> s.split('x').map { it.toInt() } }
         val scenarios = arg("scenarios", "draw,filter,live,layers,brush").split(',')
