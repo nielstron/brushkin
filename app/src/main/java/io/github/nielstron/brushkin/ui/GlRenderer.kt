@@ -2,6 +2,7 @@ package io.github.nielstron.brushkin.ui
 
 import android.graphics.Bitmap
 import android.graphics.Matrix
+import android.graphics.Rect
 import android.graphics.RectF
 import android.opengl.GLES30.*
 import android.opengl.GLSurfaceView
@@ -99,9 +100,17 @@ class GlRenderer(private val engine: Engine) : GLSurfaceView.Renderer {
     }
 
     private fun draw(s: Stack, view: Matrix, filter: Boolean, scissor: IntArray?) {
-        if (scissor != null) { glEnable(GL_SCISSOR_TEST); glScissor(scissor[0], scissor[1], scissor[2], scissor[3]) } else glDisable(GL_SCISSOR_TEST)
+        // The output pass never samples the composite outside the document, so the layer passes
+        // only need to cover the document's on-screen bounds (1 px margin for rounding).
+        val doc = RectF(0f, 0f, s.width.toFloat(), s.height.toFloat()).also { view.mapRect(it) }
+        val area = Rect(doc.left.toInt() - 1, h - doc.bottom.toInt() - 2, doc.right.toInt() + 2, h - doc.top.toInt() + 1)
+        val visible = area.intersect(0, 0, w, h) &&
+            (scissor == null || area.intersect(scissor[0], scissor[1], scissor[0] + scissor[2], scissor[1] + scissor[3]))
+        if (!visible) area.set(0, 0, 0, 0)
+        glEnable(GL_SCISSOR_TEST); glScissor(area.left, area.top, area.width(), area.height())
         val m = docToNdc(view)
         val result = composite(s, s.layers, 0, m, filter)
+        if (scissor != null) { glEnable(GL_SCISSOR_TEST); glScissor(scissor[0], scissor[1], scissor[2], scissor[3]) } else glDisable(GL_SCISSOR_TEST)
         // Output: linear premultiplied → over checkerboard → sRGB.
         glBindFramebuffer(GL_FRAMEBUFFER, 0)
         glViewport(0, 0, w, h)
