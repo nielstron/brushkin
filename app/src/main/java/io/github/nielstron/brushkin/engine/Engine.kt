@@ -143,6 +143,7 @@ class Engine {
 
     private fun replaceDocument(s: Stack, name: String) {
         history.clear()
+        LayerBuffers.clear()
         floating = null; preview = null
         stack = s
         docName = name
@@ -550,7 +551,7 @@ class Engine {
             for (l in s.all) {
                 if (l.isGroup || l.lockPixels) continue
                 val out = withContext(Dispatchers.Default) {
-                    applyFilterBanded(if (afterEffects) Effects.pixelsSync(l) else l.pixels, f, clipSelection(s, l)?.mask)
+                    applyFilterBanded(if (afterEffects) Effects.pixelsSync(l) else l.pixels, f, clipSelection(s, l)?.mask, persistent = !afterEffects)
                 }
                 if (afterEffects) next = next.replace(next.find(l.id)!!.copy(effects = emptyList()))
                 val changes = HashMap<Int, Pair<Bitmap?, Bitmap?>>()
@@ -775,6 +776,8 @@ class Engine {
         if (leaves.isEmpty()) { onMessage?.invoke("An image needs at least one layer"); return@post }
         val newActive = if (removed.find(s.activeId) != null) s.activeId else leaves.last().id
         stack = removed.copy(activeId = newActive)
+        // Undo brings the layer back; its buffer is then rebuilt on the next filter.
+        s.find(id)?.let { l -> Stack.flatten(listOf(l)).forEach { LayerBuffers.release(it.pixels); it.mask?.let(LayerBuffers::release) } }
         record("Delete Layer", s)
     }
 
@@ -1287,7 +1290,8 @@ class Engine {
             // images never need more than a few band-sized arrays on the Java heap.
             val out = withContext(Dispatchers.Default) {
                 val source = if (afterEffects && !filterOnMask) Effects.pixelsSync(l) else target
-                applyFilterBanded(source, f, clipSelection(s, l)?.mask)
+                // The layer's own pixels keep a GEGL buffer for the next filter (LayerBuffers).
+                applyFilterBanded(source, f, clipSelection(s, l)?.mask, persistent = source === target)
             }
             preview = null
             if (afterEffects && !filterOnMask) stack = stack.replace(l.copy(effects = emptyList()))

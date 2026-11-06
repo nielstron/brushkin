@@ -9,9 +9,10 @@
 #include <cstring>
 #include <dlfcn.h>
 #include <chrono>
+#include <memory>
+#include <algorithm>
 #include <android/log.h>
 #include <unistd.h>
-#include <algorithm>
 
 typedef int cl_int_t;
 
@@ -169,8 +170,126 @@ static GeglNode *createGraph(JNIEnv *env, jstring operation, jobjectArray keys, 
     *output = filter;
     return graph;
 }
+// Android's ARGB ints are B,G,R,A bytes in little-endian memory; babl's "R'G'B'A u8" is R,G,B,A.
+// The R/B swap is folded into the copies that cross the JNI boundary anyway (in cache-sized
+// bands), so no whole-image pass exists just for it. On input, fully transparent pixels become 0,
+// as they always did. (A babl format with B'G'R'A component order would have no registered fast
+// conversions, so babl would fall back to its slow reference path, and its path search could
+// pick a different rounding than the u8 conversions used so far.)
+static_assert(__BYTE_ORDER__ == __ORDER_LITTLE_ENDIAN__, "ARGB int byte order");
+static inline uint32_t swapRB(uint32_t u) { return (u & 0xff00ff00u) | ((u & 255u)<<16) | ((u>>16)&255u); }
+static inline uint32_t argbToRgba(uint32_t c) { return (c >> 24) == 0 ? 0u : swapRB(c); }
+static const Babl *rgbaU8() { return babl_format("R'G'B'A u8"); }
+static constexpr int64_t BAND_PIXELS = 1 << 16; // 256 KB staging: stays in cache
+
+// Uploads rect.width×rect.height ARGB ints (row stride rect.width) from pixels into rect of buffer.
+// Bands span whole GEGL tile rows, so tiles are overwritten in one go rather than first being
+// allocated (zeroed) and then filled piece by piece.
+static void uploadArgb(JNIEnv *env, jintArray pixels, GeglBuffer *buffer, const GeglRectangle &rect) {
+    gint tileHeight = 128;
+    g_object_get(buffer, "tile-height", &tileHeight, nullptr);
+    const int tileRows = (int)std::max<int64_t>(1, BAND_PIXELS / (int64_t(rect.width)*tileHeight));
+    const int rows = tileRows*tileHeight;
+    std::unique_ptr<uint32_t[]> band(new uint32_t[size_t(std::min(rows, rect.height)) * rect.width]);
+    for (int y=0; y<rect.height; y+=rows) {
+        const int n = std::min(rows, rect.height-y);
+        const jsize count = n*rect.width;
+        env->GetIntArrayRegion(pixels, y*rect.width, count, reinterpret_cast<jint *>(band.get()));
+        for (jsize i=0; i<count; i++) band[i] = argbToRgba(band[i]);
+        const GeglRectangle r{rect.x, rect.y+y, rect.width, n};
+        gegl_buffer_set(buffer, &r, 0, rgbaU8(), band.get(), GEGL_AUTO_ROWSTRIDE);
+    }
+}
+// Copies a w×h region of an RGBA image (row stride `stride` pixels, starting at src) into pixels
+// as ARGB ints with row stride w.
+static void downloadArgb(JNIEnv *env, const uint32_t *src, int stride, int w, int h, jintArray pixels) {
+    const int rows = (int)std::max<int64_t>(1, BAND_PIXELS / w);
+    std::unique_ptr<uint32_t[]> band(new uint32_t[size_t(std::min(rows, h)) * w]);
+    for (int y=0; y<h; y+=rows) {
+        const int n = std::min(rows, h-y);
+        for (int r=0; r<n; r++) {
+            const uint32_t *in = src + int64_t(y+r)*stride;
+            uint32_t *out = band.get() + int64_t(r)*w;
+            for (int x=0; x<w; x++) out[x] = swapRB(in[x]);
+        }
+        env->SetIntArrayRegion(pixels, y*w, n*w, reinterpret_cast<const jint *>(band.get()));
+    }
+}
+
 extern "C" JNIEXPORT jintArray JNICALL
 Java_io_github_nielstron_brushkin_engine_NativeGegl_render(JNIEnv *env, jobject, jintArray pixels, jint w, jint h,
+                                                        jstring operation, jobjectArray keys, jdoubleArray values, jboolean useOpenCl, jboolean benchmarkOpenCl) {
+    std::lock_guard<std::mutex> lock(gate);
+    if (w <= 0 || h <= 0 || int64_t(w)*h != env->GetArrayLength(pixels) || env->GetArrayLength(keys) != env->GetArrayLength(values)) {
+        fail(env, "Invalid GEGL image or parameters"); return nullptr;
+    }
+    const long long t0 = nowNs();
+    GeglNode *filter;
+    GeglNode *graph = createGraph(env, operation, keys, values, &filter, useOpenCl, benchmarkOpenCl);
+    if (!graph) return nullptr;
+    const long long tGraph = nowNs();
+    const Babl *format = rgbaU8();
+    GeglRectangle extent{0,0,w,h};
+    GeglBuffer *buffer = gegl_buffer_new(&extent, format);
+    uploadArgb(env, pixels, buffer, extent);
+    const long long tCopyIn = nowNs();
+    const long long tBufferSet = tCopyIn; // fused into copyIn
+    GeglNode *input = gegl_node_new_child(graph, "operation", "gegl:buffer-source", "buffer", buffer, nullptr);
+    if (gegl_node_has_pad(filter, "input")) gegl_node_link(input, filter);
+    GeglBuffer *auxBuffer = nullptr;
+    const auto op = utf(env, operation);
+    if (benchmarkOpenCl && (op == "svg:src-over" || op == "gegl:weighted-blend" ||
+                            op == "gegl:shadows-highlights-correction")) {
+        // Separate deterministic auxiliary image for compositor benchmarks.
+        std::vector<uint32_t> data(size_t(w)*h);
+        env->GetIntArrayRegion(pixels, 0, w*h, reinterpret_cast<jint *>(data.data()));
+        for (auto &c : data) c = argbToRgba(c);
+        std::vector<uint32_t> aux(data.size());
+        for (size_t i=0; i<data.size(); ++i) aux[i] = (data[data.size()-1-i] & 0x00ffffff) | 0x80000000;
+        auxBuffer = gegl_buffer_new(&extent, format);
+        gegl_buffer_set(auxBuffer, &extent, 0, format, aux.data(), GEGL_AUTO_ROWSTRIDE);
+        GeglNode *auxInput = gegl_node_new_child(graph, "operation", "gegl:buffer-source", "buffer", auxBuffer, nullptr);
+        gegl_node_connect_to(auxInput, "output", filter, "aux");
+    }
+    if (benchmarkOpenCl && op == "gegl:contrast-curve") {
+        GeglCurve *curve = gegl_curve_new(0.0, 1.0);
+        gegl_curve_add_point(curve, 0.0, 0.0);
+        gegl_curve_add_point(curve, 0.25, 0.15);
+        gegl_curve_add_point(curve, 0.75, 0.85);
+        gegl_curve_add_point(curve, 1.0, 1.0);
+        gegl_node_set(filter, "curve", curve, nullptr);
+        g_object_unref(curve);
+    }
+    operationKernelLaunches = 0;
+    clBlockedNs = 0; clFinishNs = 0; clReadNs = 0; clWriteNs = 0; clMapNs = 0;
+    // Uninitialized: the blit writes every pixel.
+    std::unique_ptr<uint32_t[]> out(new uint32_t[size_t(w)*h]);
+    const long long tBlitStart = nowNs();
+    gegl_node_blit(filter, 1.0, &extent, format, out.get(), GEGL_AUTO_ROWSTRIDE, GEGL_BLIT_DEFAULT);
+    const long long tBlit = nowNs();
+    lastRenderUsedOpenCl = operationKernelLaunches > 0;
+    g_object_unref(graph); g_object_unref(buffer);
+    if (auxBuffer) g_object_unref(auxBuffer);
+    const long long tTeardown = nowNs();
+    jintArray result = env->NewIntArray(w*h);
+    if (result) downloadArgb(env, out.get(), w, w, h, result);
+    const long long tEnd = nowNs();
+    if (benchmarkOpenCl) {
+        auto ms = [](long long ns) { return ns / 1e6; };
+        __android_log_print(ANDROID_LOG_INFO, "BrushkinProfile",
+            "%s %dx%d gpu=%d total=%.2f graph=%.2f copyIn=%.2f bufferSet=%.2f setup=%.2f blit=%.2f "
+            "[clBlocked=%.2f finish=%.2f read=%.2f write=%.2f map=%.2f launches=%d] teardown=%.2f copyOut=%.2f",
+            op.c_str(), w, h, lastRenderUsedOpenCl ? 1 : 0, ms(tEnd-t0), ms(tGraph-t0), ms(tCopyIn-tGraph),
+            ms(tBufferSet-tCopyIn), ms(tBlitStart-tBufferSet), ms(tBlit-tBlitStart), ms(clBlockedNs), ms(clFinishNs),
+            ms(clReadNs), ms(clWriteNs), ms(clMapNs), operationKernelLaunches.load(), ms(tTeardown-tBlit), ms(tEnd-tTeardown));
+    }
+    return result;
+}
+
+// Brushkin 0.6.3's render(), unchanged: the reference that EquivalenceTest compares the
+// copy-reduced paths against. Not used by the app.
+extern "C" JNIEXPORT jintArray JNICALL
+Java_io_github_nielstron_brushkin_engine_NativeGegl_renderLegacy(JNIEnv *env, jobject, jintArray pixels, jint w, jint h,
                                                         jstring operation, jobjectArray keys, jdoubleArray values, jboolean useOpenCl, jboolean benchmarkOpenCl) {
     std::lock_guard<std::mutex> lock(gate);
     if (w <= 0 || h <= 0 || int64_t(w)*h != env->GetArrayLength(pixels) || env->GetArrayLength(keys) != env->GetArrayLength(values)) {
@@ -294,17 +413,25 @@ struct EffectSession {
     GeglBuffer *input;
     GeglRectangle extent, dirty;
     bool regional, updated;
+    // The last rendered rectangle (RGBA), read back tile by tile; reused across renders.
+    std::unique_ptr<uint32_t[]> out;
+    size_t outCapacity = 0;
+    GeglRectangle rendered{0,0,0,0};
     ~EffectSession() { g_object_unref(graph); g_object_unref(input); }
 };
-static jint swapChannels(jint c) {
-    const auto u=static_cast<uint32_t>(c);
-    return (u & 0xff00ff00u) | ((u & 255u)<<16) | ((u>>16)&255u);
-}
 static void invalidateEffect(GeglNode *, const GeglRectangle *rect, gpointer data) {
     auto *s=static_cast<EffectSession *>(data);
     GeglRectangle clipped;
     if (gegl_rectangle_intersect(&clipped,rect,&s->extent))
         gegl_rectangle_bounding_box(&s->dirty,&s->dirty,&clipped);
+}
+// Checks that the w×h rectangle at (x, y) lies in extent and that pixels holds at least w×h values.
+static bool validRect(JNIEnv *env, const GeglRectangle &extent, jint x, jint y, jint w, jint h, jintArray pixels) {
+    if (w<=0 || h<=0 || x<extent.x || y<extent.y || int64_t(x)+w>int64_t(extent.x)+extent.width ||
+        int64_t(y)+h>int64_t(extent.y)+extent.height || int64_t(w)*h>env->GetArrayLength(pixels)) {
+        fail(env,"Invalid GEGL rectangle"); return false;
+    }
+    return true;
 }
 extern "C" JNIEXPORT jlong JNICALL
 Java_io_github_nielstron_brushkin_engine_NativeGegl_createSession(JNIEnv *env, jobject, jint w, jint h,
@@ -317,7 +444,7 @@ Java_io_github_nielstron_brushkin_engine_NativeGegl_createSession(JNIEnv *env, j
     GeglNode *graph=createGraph(env,operation,keys,values,&filter);
     if (!graph) return 0;
     GeglRectangle extent{0,0,w,h};
-    auto *buffer=gegl_buffer_new(&extent,babl_format("R'G'B'A u8"));
+    auto *buffer=gegl_buffer_new(&extent,rgbaU8());
     auto *input=gegl_node_new_child(graph,"operation","gegl:buffer-source","buffer",buffer,nullptr);
     gegl_node_link(input,filter);
     auto *session=new EffectSession{graph,filter,buffer,extent,extent,regional != 0,false};
@@ -326,21 +453,18 @@ Java_io_github_nielstron_brushkin_engine_NativeGegl_createSession(JNIEnv *env, j
     gegl_node_get_bounding_box(filter);
     return reinterpret_cast<jlong>(session);
 }
+/** Uploads w×h ARGB ints (row stride w; the array may be larger) to the session input. */
 extern "C" JNIEXPORT void JNICALL
 Java_io_github_nielstron_brushkin_engine_NativeGegl_updateSession(JNIEnv *env,jobject,jlong handle,
     jint x,jint y,jint w,jint h,jintArray pixels) {
     std::lock_guard<std::mutex> lock(gate);
     auto *s=reinterpret_cast<EffectSession *>(handle);
-    if (w<=0 || h<=0 || x<0 || y<0 || x+w>s->extent.width || y+h>s->extent.height || int64_t(w)*h!=env->GetArrayLength(pixels)) {
-        fail(env,"Invalid GEGL update rectangle"); return;
-    }
-    std::vector<jint> data(w*h);
-    env->GetIntArrayRegion(pixels,0,w*h,data.data());
-    for (auto &c:data) c=static_cast<uint32_t>(c)>>24 ? swapChannels(c) : 0;
-    GeglRectangle rect{x,y,w,h};
+    if (!validRect(env,s->extent,x,y,w,h,pixels)) return;
     s->updated=true;
-    gegl_buffer_set(s->input,&rect,0,babl_format("R'G'B'A u8"),data.data(),GEGL_AUTO_ROWSTRIDE);
+    uploadArgb(env,pixels,s->input,GeglRectangle{x,y,w,h});
 }
+/** Renders what changed since the last render; returns that rectangle as {x, y, w, h}. Its pixels
+ * stay native until [readSession] fetches them. */
 extern "C" JNIEXPORT jintArray JNICALL
 Java_io_github_nielstron_brushkin_engine_NativeGegl_renderSession(JNIEnv *env,jobject,jlong handle) {
     std::lock_guard<std::mutex> lock(gate);
@@ -354,25 +478,107 @@ Java_io_github_nielstron_brushkin_engine_NativeGegl_renderSession(JNIEnv *env,jo
     }
     s->updated=false;
     const auto rect=s->dirty;
-    const int count=rect.width*rect.height;
-    std::vector<jint> data(count+4);
-    data[0]=rect.x; data[1]=rect.y; data[2]=rect.width; data[3]=rect.height;
+    const size_t count=size_t(rect.width)*rect.height;
     lastRenderUsedOpenCl = false;
     if (count) {
+        if (count>s->outCapacity) { s->out.reset(new uint32_t[count]); s->outCapacity=count; }
         operationKernelLaunches = 0;
-        gegl_node_blit(s->filter,1.0,&rect,babl_format("R'G'B'A u8"),data.data()+4,GEGL_AUTO_ROWSTRIDE,s->regional ? GEGL_BLIT_CACHE : GEGL_BLIT_DEFAULT);
+        gegl_node_blit(s->filter,1.0,&rect,rgbaU8(),s->out.get(),GEGL_AUTO_ROWSTRIDE,s->regional ? GEGL_BLIT_CACHE : GEGL_BLIT_DEFAULT);
         lastRenderUsedOpenCl = operationKernelLaunches > 0;
-        for (int i=4;i<count+4;i++) data[i]=swapChannels(data[i]);
     }
+    s->rendered=rect;
     s->dirty=GeglRectangle{0,0,0,0};
-    auto out=env->NewIntArray(count+4);
-    if(out) env->SetIntArrayRegion(out,0,count+4,data.data());
+    jint header[4]={rect.x,rect.y,rect.width,rect.height};
+    auto out=env->NewIntArray(4);
+    if(out) env->SetIntArrayRegion(out,0,4,header);
     return out;
+}
+/** Copies a w×h part of the last rendered rectangle into pixels as ARGB ints (row stride w). */
+extern "C" JNIEXPORT void JNICALL
+Java_io_github_nielstron_brushkin_engine_NativeGegl_readSession(JNIEnv *env,jobject,jlong handle,
+    jint x,jint y,jint w,jint h,jintArray pixels) {
+    std::lock_guard<std::mutex> lock(gate);
+    auto *s=reinterpret_cast<EffectSession *>(handle);
+    const auto &r=s->rendered;
+    if (!validRect(env,r,x,y,w,h,pixels)) return;
+    downloadArgb(env,s->out.get()+int64_t(y-r.y)*r.width+(x-r.x),r.width,w,h,pixels);
 }
 extern "C" JNIEXPORT void JNICALL
 Java_io_github_nielstron_brushkin_engine_NativeGegl_destroySession(JNIEnv *,jobject,jlong handle) {
     std::lock_guard<std::mutex> lock(gate);
     delete reinterpret_cast<EffectSession *>(handle);
+}
+
+// A layer's pixels kept as a GEGL buffer across destructive filter renders, so an apply only
+// uploads the tiles that changed since the last one (see LayerBuffers.kt).
+extern "C" JNIEXPORT jlong JNICALL
+Java_io_github_nielstron_brushkin_engine_NativeGegl_createBuffer(JNIEnv *env, jobject, jint w, jint h) {
+    std::lock_guard<std::mutex> lock(gate);
+    if (w<=0 || h<=0) { fail(env,"Invalid GEGL buffer size"); return 0; }
+    GeglRectangle extent{0,0,w,h};
+    return reinterpret_cast<jlong>(gegl_buffer_new(&extent,rgbaU8()));
+}
+/** Uploads w×h ARGB ints (row stride w; the array may be larger) to the buffer. */
+extern "C" JNIEXPORT void JNICALL
+Java_io_github_nielstron_brushkin_engine_NativeGegl_uploadBuffer(JNIEnv *env, jobject, jlong handle,
+    jint x, jint y, jint w, jint h, jintArray pixels) {
+    std::lock_guard<std::mutex> lock(gate);
+    auto *buffer=reinterpret_cast<GeglBuffer *>(handle);
+    if (!validRect(env,*gegl_buffer_get_extent(buffer),x,y,w,h,pixels)) return;
+    uploadArgb(env,pixels,buffer,GeglRectangle{x,y,w,h});
+}
+extern "C" JNIEXPORT void JNICALL
+Java_io_github_nielstron_brushkin_engine_NativeGegl_destroyBuffer(JNIEnv *, jobject, jlong handle) {
+    std::lock_guard<std::mutex> lock(gate);
+    g_object_unref(reinterpret_cast<GeglBuffer *>(handle));
+}
+struct Rendered {
+    std::unique_ptr<uint32_t[]> pixels; // RGBA
+    GeglRectangle extent;
+};
+/** Renders the operation over the whole buffer, like render() does for an array. The result stays
+ * native until [readRendered] fetches it tile by tile; free it with [destroyRendered]. */
+extern "C" JNIEXPORT jlong JNICALL
+Java_io_github_nielstron_brushkin_engine_NativeGegl_renderBuffer(JNIEnv *env, jobject, jlong handle,
+    jstring operation, jobjectArray keys, jdoubleArray values, jboolean useOpenCl, jboolean profile) {
+    std::lock_guard<std::mutex> lock(gate);
+    auto *buffer=reinterpret_cast<GeglBuffer *>(handle);
+    if (env->GetArrayLength(keys)!=env->GetArrayLength(values)) { fail(env,"Invalid GEGL parameters"); return 0; }
+    const long long t0=nowNs();
+    GeglNode *filter;
+    GeglNode *graph=createGraph(env,operation,keys,values,&filter,useOpenCl);
+    if (!graph) return 0;
+    // buffer-source marks its buffer as forked, so no operation processes it in place.
+    GeglNode *input=gegl_node_new_child(graph,"operation","gegl:buffer-source","buffer",buffer,nullptr);
+    if (gegl_node_has_pad(filter,"input")) gegl_node_link(input,filter);
+    const GeglRectangle extent=*gegl_buffer_get_extent(buffer);
+    auto *result=new Rendered{std::unique_ptr<uint32_t[]>(new uint32_t[size_t(extent.width)*extent.height]),extent};
+    operationKernelLaunches = 0;
+    clBlockedNs = 0;
+    const long long tGraph=nowNs();
+    gegl_node_blit(filter,1.0,&extent,rgbaU8(),result->pixels.get(),GEGL_AUTO_ROWSTRIDE,GEGL_BLIT_DEFAULT);
+    const long long tBlit=nowNs();
+    lastRenderUsedOpenCl = operationKernelLaunches > 0;
+    g_object_unref(graph);
+    if (profile) {
+        auto ms=[](long long ns) { return ns/1e6; };
+        __android_log_print(ANDROID_LOG_INFO,"BrushkinProfile","buffer %s %dx%d gpu=%d graph=%.2f blit=%.2f [clBlocked=%.2f launches=%d] teardown=%.2f",
+            utf(env,operation).c_str(),extent.width,extent.height,lastRenderUsedOpenCl ? 1 : 0,ms(tGraph-t0),ms(tBlit-tGraph),
+            ms(clBlockedNs),operationKernelLaunches.load(),ms(nowNs()-tBlit));
+    }
+    return reinterpret_cast<jlong>(result);
+}
+/** Copies a w×h part of a render into pixels as ARGB ints (row stride w). */
+extern "C" JNIEXPORT void JNICALL
+Java_io_github_nielstron_brushkin_engine_NativeGegl_readRendered(JNIEnv *env, jobject, jlong handle,
+    jint x, jint y, jint w, jint h, jintArray pixels) {
+    auto *r=reinterpret_cast<Rendered *>(handle);
+    if (!validRect(env,r->extent,x,y,w,h,pixels)) return;
+    downloadArgb(env,r->pixels.get()+int64_t(y)*r->extent.width+x,r->extent.width,w,h,pixels);
+}
+extern "C" JNIEXPORT void JNICALL
+Java_io_github_nielstron_brushkin_engine_NativeGegl_destroyRendered(JNIEnv *, jobject, jlong handle) {
+    delete reinterpret_cast<Rendered *>(handle);
 }
 
 extern "C" JNIEXPORT jboolean JNICALL

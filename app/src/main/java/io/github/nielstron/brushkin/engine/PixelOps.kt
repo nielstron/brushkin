@@ -73,6 +73,8 @@ sealed interface Filter {
     /** Needs the whole image at once (position-dependent or histogram-based filters). */
     val wholeImage: Boolean get() = false
     fun incremental(width: Int, height: Int): IncrementalFilter? = null
+    /** The GEGL operation this filter renders, if it is one (delegating filters forward it). */
+    val gegl: GeglFilter? get() = null
 }
 
 /** Per-channel LUT filter used by Curves, Brightness-Contrast, Invert, Threshold, Posterize. */
@@ -327,8 +329,11 @@ fun floodFill(px: IntArray, w: Int, h: Int, sx: Int, sy: Int, threshold: Int, co
 /**
  * Apply [f] to [target] in horizontal bands that overlap by the filter's reach, so even very
  * large images need only a few band-sized arrays on the Java heap. [sel] limits the effect.
+ * GEGL operations render tile by tile from a native buffer instead (see [LayerBuffers]); with
+ * [persistent] that buffer is kept for [target], so the next filter only uploads changed tiles.
  */
-fun applyFilterBanded(target: TiledBitmap, f: Filter, sel: android.graphics.Bitmap?, bandPixels: Int = 2_000_000): TiledBitmap {
+fun applyFilterBanded(target: TiledBitmap, f: Filter, sel: android.graphics.Bitmap?, bandPixels: Int = 2_000_000, persistent: Boolean = false): TiledBitmap {
+    f.gegl?.let { return LayerBuffers.apply(target, it, sel, persistent) }
     val w = target.width; val h = target.height
     val result = TiledBitmap(w, h, target.fill)
     val align = f.bandAlign
@@ -341,7 +346,9 @@ fun applyFilterBanded(target: TiledBitmap, f: Filter, sel: android.graphics.Bitm
         val res = f.apply(src, w, a1 - a0)
         val from = (y - a0) * w; val to = (y1 - a0) * w
         val maskBand = sel?.let { Selection.maskBytes(android.graphics.Bitmap.createBitmap(it, 0, y, w, y1 - y), w, y1 - y) }
-        result.writeRows(y, maskBlend(src.copyOfRange(from, to), res.copyOfRange(from, to), maskBand, w, y1 - y), y1 - y)
+        // Without a margin the band is the whole result: no copy needed.
+        val filtered = if (from == 0 && to == res.size) res else res.copyOfRange(from, to)
+        result.writeRows(y, if (maskBand == null) filtered else maskBlend(src.copyOfRange(from, to), filtered, maskBand, w, y1 - y), y1 - y)
         y = y1
     }
     result.dropEmpty()
