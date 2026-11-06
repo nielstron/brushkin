@@ -1,5 +1,6 @@
 package io.github.nielstron.brushkin.engine
 
+import android.content.ComponentCallbacks2
 import android.content.Context
 import android.system.Os
 import java.io.File
@@ -30,6 +31,15 @@ object NativeGegl {
         ready = true
     }
     private external fun initialize(operations: String, babl: String, swap: String)
+
+    /** Under memory pressure, and whenever the UI is hidden, GEGL keeps only a 32 MB tile cache
+     * (the rest moves to its swap file); [restoreTileCache] brings back the full size. */
+    fun trimMemory(level: Int) {
+        @Suppress("DEPRECATION") // RUNNING_LOW is no longer sent from API 34 on; UI_HIDDEN and up still are.
+        if (ready && level >= ComponentCallbacks2.TRIM_MEMORY_RUNNING_LOW) shrinkTileCache(true)
+    }
+    fun restoreTileCache() { if (ready) shrinkTileCache(false) }
+    private external fun shrinkTileCache(shrink: Boolean)
     external fun createSession(width: Int, height: Int, operation: String, keys: Array<String>, values: DoubleArray, regional: Boolean): Long
     external fun updateSession(handle: Long, x: Int, y: Int, width: Int, height: Int, pixels: IntArray)
     external fun renderSession(handle: Long): IntArray

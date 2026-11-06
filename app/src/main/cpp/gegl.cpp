@@ -10,6 +10,8 @@
 #include <dlfcn.h>
 #include <chrono>
 #include <android/log.h>
+#include <unistd.h>
+#include <algorithm>
 
 typedef int cl_int_t;
 
@@ -81,6 +83,8 @@ static std::string utf(JNIEnv *env, jstring value) {
     const char *p = env->GetStringUTFChars(value, nullptr);
     std::string s(p); env->ReleaseStringUTFChars(value, p); return s;
 }
+static constexpr guint64 minTileCacheSize = 32ull << 20;
+static guint64 fullTileCacheSize = 0;
 extern "C" JNIEXPORT void JNICALL
 Java_io_github_nielstron_brushkin_engine_NativeGegl_initialize(JNIEnv *env, jobject, jstring operations, jstring bablPath, jstring swapPath) {
     std::lock_guard<std::mutex> lock(gate);
@@ -94,7 +98,19 @@ Java_io_github_nielstron_brushkin_engine_NativeGegl_initialize(JNIEnv *env, jobj
     gegl_init(nullptr, nullptr);
     countOpenClLaunches();
     timeOpenClCalls();
-    g_object_set(gegl_config(), "threads", 2, "tile-cache-size", guint64(32*1024*1024), nullptr);
+    // A 32 MB tile cache makes GEGL swap (RLE-compressed) to disk from ~6 MP on, which doubled
+    // live-effect and filter latency there. Use 1/16 of RAM, 32..512 MB (512 MB on 8+ GB phones).
+    const long pages = sysconf(_SC_PHYS_PAGES), pageSize = sysconf(_SC_PAGESIZE);
+    const guint64 ram = pages > 0 && pageSize > 0 ? guint64(pages) * guint64(pageSize) : 0;
+    fullTileCacheSize = std::min<guint64>(512ull << 20, std::max<guint64>(minTileCacheSize, ram / 16));
+    g_object_set(gegl_config(), "threads", 2, "tile-cache-size", fullTileCacheSize, nullptr);
+}
+// Lowering tile-cache-size makes GEGL trim the cache to its swap file right away. Not under
+// `gate`: GEGL's cache has its own lock, and the main thread must not wait for a render.
+extern "C" JNIEXPORT void JNICALL
+Java_io_github_nielstron_brushkin_engine_NativeGegl_shrinkTileCache(JNIEnv *, jobject, jboolean shrink) {
+    if (!fullTileCacheSize) return;
+    g_object_set(gegl_config(), "tile-cache-size", shrink ? minTileCacheSize : fullTileCacheSize, nullptr);
 }
 static GeglNode *createGraph(JNIEnv *env, jstring operation, jobjectArray keys, jdoubleArray values, GeglNode **output, bool allowOpenCl = true, bool benchmarkOpenCl = false) {
     const auto op = utf(env, operation);

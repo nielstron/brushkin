@@ -20,6 +20,7 @@ import androidx.activity.viewModels
 import androidx.core.content.FileProvider
 import androidx.lifecycle.lifecycleScope
 import androidx.lifecycle.viewModelScope
+import io.github.nielstron.brushkin.engine.NativeGegl
 import io.github.nielstron.brushkin.engine.Ora
 import io.github.nielstron.brushkin.store.StoreIntegration
 import io.github.nielstron.brushkin.ui.BrushkinTheme
@@ -104,6 +105,12 @@ class MainActivity : ComponentActivity(), FileActions {
     }
 
     private fun prefs() = getSharedPreferences("brushkin", MODE_PRIVATE)
+
+    override fun onStart() {
+        super.onStart()
+        // The UI is back: undo the tile-cache trim from onTrimMemory (UI_HIDDEN and up).
+        NativeGegl.restoreTileCache()
+    }
 
     override fun onResume() {
         super.onResume()
