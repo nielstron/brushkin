@@ -1,0 +1,2 @@
+Filter panels are clearer: proper option names, units, help text, checkboxes and dropdowns, and only the settings that apply.
+New controls for filter colors, placing points on the image, linked X and Y sizes, and low/high ranges. The Filters menu is grouped by category.
