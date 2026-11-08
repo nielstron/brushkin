@@ -3,6 +3,7 @@ package io.github.nielstron.brushkin
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import io.github.nielstron.brushkin.engine.*
 import io.github.nielstron.brushkin.ui.geglSpecs
+import io.github.nielstron.brushkin.ui.sliderValue
 import org.junit.Assert.*
 import org.junit.Test
 import org.junit.runner.RunWith
@@ -71,6 +72,22 @@ class GeglTest {
         val black=spec.build(values).apply(src,64,64)[0]
         val red=spec.build(values,mapOf("color" to 0xffff0000.toInt())).apply(src,64,64)[0]
         assertNotEquals(black,red)
+    }
+
+    /** Float can't hold bounds like 0.1 exactly, and every slider can reach its ends. */
+    @Test fun everySliderEndIsAcceptedByGegl() {
+        for ((name,spec) in geglSpecs) {
+            val operation=GeglOperations.operation(name)!!
+            for (p in spec.params) {
+                val span=p.range.endInclusive-p.range.start
+                if (p.choices.isNotEmpty() || p.toggle || !span.isFinite() || span<=0 || span>10000f) continue
+                for (position in listOf(0f,1f)) {
+                    val value=p.sliderValue(position,if (p.integral) 0 else p.digits)
+                    try { NativeGegl.destroySession(NativeGegl.createSession(8,8,operation,arrayOf(p.key),doubleArrayOf(value.toDouble()),false)) }
+                    catch (e: Exception) { throw AssertionError("$name ${p.key} at $value",e) }
+                }
+            }
+        }
     }
 
     @Test fun everyGeglConditionEvaluates() {

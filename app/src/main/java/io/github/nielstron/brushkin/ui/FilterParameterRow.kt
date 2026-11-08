@@ -154,10 +154,12 @@ internal fun FilterRangeRow(low: Param, high: Param, lowValue: Float, highValue:
 }
 
 private fun Param.sliderPosition(value: Float) = ((value - range.start) / (range.endInclusive - range.start)).coerceIn(0f, 1f).pow(1f / gamma)
-private fun Param.sliderValue(position: Float, digits: Int): Float {
+internal fun Param.sliderValue(position: Float, digits: Int): Float {
     val number = range.start + position.pow(gamma) * (range.endInclusive - range.start)
-    return if (integral) number.roundToInt().toFloat() else roundFilterNumber(number, digits)
+    return if (integral) number.roundToInt().toFloat().coerceIn(allowedRange) else rounded(number, digits)
 }
+/** Rounding to the shown precision must not carry a value past what GEGL allows. */
+private fun Param.rounded(value: Float, digits: Int) = roundFilterNumber(value, digits).coerceIn(allowedRange)
 
 @Composable
 private fun NumberField(param: Param, value: Float, enabled: Boolean, error: MutableState<Boolean>, onChange: (Float) -> Unit) {
@@ -166,17 +168,17 @@ private fun NumberField(param: Param, value: Float, enabled: Boolean, error: Mut
     var text by remember(param) { mutableStateOf(formatFilterNumber(value, digits)) }
     var focused by remember { mutableStateOf(false) }
     LaunchedEffect(value, focused) {
-        if (!focused || text.replace(',', '.').toFloatOrNull()?.let { roundFilterNumber(it, digits) } != value) text = formatFilterNumber(value, digits)
+        if (!focused || text.replace(',', '.').toFloatOrNull()?.let { param.rounded(it, digits) } != value) text = formatFilterNumber(value, digits)
     }
     fun commit() {
         val number = text.replace(',', '.').toFloatOrNull()
         error.value = number == null || !number.isFinite() || number !in param.allowedRange || (param.integral && number % 1f != 0f)
-        if (!error.value) { val rounded = roundFilterNumber(number!!, digits); text = formatFilterNumber(rounded, digits); onChange(rounded) }
+        if (!error.value) { val rounded = param.rounded(number!!, digits); text = formatFilterNumber(rounded, digits); onChange(rounded) }
     }
     val shape = RoundedCornerShape(4.dp)
     BasicTextField(text, {
         text = it; error.value = false
-        it.replace(',', '.').toFloatOrNull()?.takeIf { n -> n.isFinite() && n in param.allowedRange && (!param.integral || n % 1f == 0f) }?.let { n -> onChange(roundFilterNumber(n, digits)) }
+        it.replace(',', '.').toFloatOrNull()?.takeIf { n -> n.isFinite() && n in param.allowedRange && (!param.integral || n % 1f == 0f) }?.let { n -> onChange(param.rounded(n, digits)) }
     },
         modifier = Modifier.width(numberFieldWidth(param, digits)).height(FIELD_HEIGHT).clip(shape)
             .border(1.dp, if (error.value) Ui.danger else if (focused) Ui.accent else if (enabled) Ui.muted else Ui.border, shape).onFocusChanged {

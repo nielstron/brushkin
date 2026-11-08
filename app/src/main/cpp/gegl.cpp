@@ -1,3 +1,4 @@
+#include <cmath>
 #include <jni.h>
 #include <gegl.h>
 #include <gegl-paramspecs.h>
@@ -162,7 +163,15 @@ static GeglNode *createGraph(JNIEnv *env, jstring operation, jobjectArray keys, 
         if (!spec) { g_object_unref(graph); fail(env, "Unknown GEGL parameter: " + name); return nullptr; }
         GValue value = G_VALUE_INIT;
         g_value_init(&value, spec->value_type);
-        if (G_IS_PARAM_SPEC_DOUBLE(spec)) g_value_set_double(&value, params[i]);
+        if (G_IS_PARAM_SPEC_DOUBLE(spec)) {
+            // Values pass through Float, so a bound like 0.1 can arrive a hair outside the range.
+            auto *range=G_PARAM_SPEC_DOUBLE(spec);
+            const double slack=1e-6*std::max(1.0,std::fabs(params[i]));
+            double number=params[i];
+            if (number<range->minimum && number>=range->minimum-slack) number=range->minimum;
+            if (number>range->maximum && number<=range->maximum+slack) number=range->maximum;
+            g_value_set_double(&value, number);
+        }
         else if (G_IS_PARAM_SPEC_INT(spec)) g_value_set_int(&value, (int)params[i]);
         else if (G_IS_PARAM_SPEC_UINT(spec)) g_value_set_uint(&value, (guint)params[i]);
         else if (G_IS_PARAM_SPEC_BOOLEAN(spec)) g_value_set_boolean(&value, params[i] != 0);
