@@ -695,13 +695,43 @@ class EditorViewModel(app: Application) : AndroidViewModel(app) {
         }
     }
 
+    private fun clipboardImage(): android.net.Uri? {
+        val clip = runCatching { clipboardManager.primaryClip }.getOrNull()
+        val uri = clip?.let { c -> (0 until c.itemCount).firstNotNullOfOrNull { c.getItemAt(it).uri } }
+        if (uri == null) messages.tryEmit("The clipboard has no image")
+        return uri
+    }
+
+    /** Opens the image on the system clipboard as a document of its own. */
+    fun pasteAsNewTab() {
+        if (importStatus != null) return
+        val uri = clipboardImage() ?: return
+        importStatus = "Opening image"
+        viewModelScope.launch {
+            try {
+                val resolver = getApplication<Application>().contentResolver
+                val result = withContext(Dispatchers.IO) {
+                    resolver.openInputStream(uri)!!.use { io.github.nielstron.brushkin.export.ImageImport.open(it.readBytes(), "Pasted image") }
+                }
+                if (result.originalWidth != result.stack.width || result.originalHeight != result.stack.height)
+                    messages.tryEmit("Scaled from ${result.originalWidth}×${result.originalHeight} to ${result.stack.width}×${result.stack.height} to fit in memory")
+                tabs.open(result.stack, "Pasted image.png").join()
+            } catch (t: Exception) {
+                if (t is kotlinx.coroutines.CancellationException) throw t
+                messages.tryEmit("Couldn't paste: ${t.message}")
+            } catch (t: OutOfMemoryError) {
+                messages.tryEmit("Couldn't paste: the image is too large")
+            } finally {
+                importStatus = null
+            }
+        }
+    }
+
     /** Paste an image from the system clipboard as a new layer (ours go back where they came from). */
     fun paste() {
         viewModelScope.launch {
             val app = getApplication<Application>()
-            val clip = runCatching { clipboardManager.primaryClip }.getOrNull()
-            val uri = clip?.let { c -> (0 until c.itemCount).firstNotNullOfOrNull { c.getItemAt(it).uri } }
-            if (uri == null) { messages.tryEmit("The clipboard has no image"); return@launch }
+            val uri = clipboardImage() ?: return@launch
             runCatching {
                 val bmp = withContext(Dispatchers.IO) {
                     android.graphics.ImageDecoder.decodeBitmap(android.graphics.ImageDecoder.createSource(app.contentResolver, uri)) { d, info, _ ->
