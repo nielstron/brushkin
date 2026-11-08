@@ -22,6 +22,23 @@ object GeglOperations {
     "Cubism" to "cubism", "Canvas Texture" to "texturize-canvas", "Photocopy" to "photocopy",
     "HSV Stretch Contrast" to "stretch-contrast-hsv", "Color Enhance" to "color-enhance",
     "Value Invert" to "value-invert", "Dither" to "dither", "RGB Clip" to "rgb-clip",
+        "Box Blur" to "box-blur", "Focus Blur" to "focus-blur", "Bilateral Filter" to "bilateral-filter",
+        "Denoise DCT" to "denoise-dct", "Domain Transform" to "domain-transform",
+        "Symmetric Nearest Neighbor" to "snn-mean", "Mirrors" to "mirrors", "Antialias" to "antialias",
+        "Edge Detection" to "edge", "Neon Edges" to "edge-neon", "Difference of Gaussians" to "difference-of-gaussians",
+        "Image Gradient" to "image-gradient", "Local Threshold" to "local-threshold", "Stretch Contrast" to "stretch-contrast",
+        "Color Temperature" to "color-temperature", "Vibrance" to "vibrance", "Saturation" to "saturation", "Sepia" to "sepia",
+        "Color Rotate" to "color-rotate", "Mono Mixer" to "mono-mixer",
+        "Extract Component" to "component-extract", "Absolute" to "absolute", "Clip Alpha" to "alpha-clip",
+        "Unpremultiply Alpha" to "unpremultiply", "Alien Map" to "alien-map", "Invert (Linear)" to "invert-linear",
+        "Invert (Perceptual)" to "invert-gamma", "Convolution Matrix" to "convolution-matrix",
+        "Fattal Tone Mapping" to "fattal02", "Mantiuk Tone Mapping" to "mantiuk06", "Reinhard Tone Mapping" to "reinhard05",
+        "Spherize" to "spherize", "Shift" to "shift", "Wind" to "wind", "Engrave" to "engrave",
+        "Value Propagate" to "value-propagate", "Video Degradation" to "video-degradation", "Fractal Trace" to "fractal-trace",
+        "Illusion" to "illusion", "Apply Lens" to "apply-lens", "Panorama Projection" to "panorama-projection",
+        "Little Planet" to "stereographic-projection", "Supernova" to "supernova", "Long Shadow" to "long-shadow",
+        "Bevel" to "bevel", "Tile Glass" to "tile-glass", "Paper Tile" to "tile-paper", "Make Seamless" to "tile-seamless",
+        "SLIC Segmentation" to "slic", "Waterpixels" to "waterpixels", "Color Assimilation Grid" to "color-assimilation-grid",
     )
 
     /** Filters that already have their own menu or tool entry. */

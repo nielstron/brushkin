@@ -17,7 +17,8 @@ import kotlin.math.roundToInt
  * layer offsets, opacity, visibility, modes, lock alpha, layer masks and layer groups (as
  * Brushkin groups). Writing produces version 11 files (8-bit sRGB, zlib) with masks and groups, or
  * version 22 when a layer has effects GIMP can run. Pixels are never baked: effects stay live, as
- * GIMP layer effects where GIMP can run the filter and otherwise in a "brushkin-effects" parasite.
+ * GIMP layer effects (mapped to GIMP's own filters where it has them) and otherwise in a
+ * "brushkin-effects" parasite.
  * Parasites also carry text layers and export metadata; GIMP keeps parasites it doesn't know.
  */
 object Xcf {
@@ -49,17 +50,107 @@ object Xcf {
     private const val ARG_BOOL = 2
     private const val ARG_FLOAT = 3
     private const val ARG_ENUM = 5
+    private const val ARG_CONFIG = 6
     private const val ARG_UINT = 7
     private const val EFFECTS_PARASITE = "brushkin-effects"
     private const val TEXT_PARASITE = "brushkin-text"
     private const val METADATA_PARASITE = "brushkin-export-metadata"
-    /** GIMP discards these from a file: it has its own versions and hides GEGL's. */
-    private val GIMP_HIDDEN = setOf("gegl:threshold", "gegl:posterize", "gegl:polar-coordinates")
+    /** GIMP refuses this as a live filter: its "transform" category is blocked. */
+    private const val GIMP_HIDDEN = "gegl:polar-coordinates"
     /** GIMP discards a filter saved with another version; every other listed operation is 0:0. */
     private val GIMP_VERSIONS = mapOf("gegl:exposure" to "1:0")
+    private const val GIMP_NON_LINEAR = 1f
 
-    private fun gimpOperation(e: LayerEffect): String? =
-        GeglOperations.operation(e.name)?.takeIf { e.paramsVersion >= 2 && it !in GIMP_HIDDEN }
+    private class GimpArg(val name: String, val type: Int, val value: Float, val text: String = "")
+    private class GimpFilter(val operation: String, val args: List<GimpArg>)
+    private fun floats(vararg args: Pair<String, Float>) = args.map { (k, v) -> GimpArg(k, ARG_FLOAT, v) }
+    private fun named(e: LayerEffect, operation: String) = GeglOperations.properties(operation).map { it.getString("key") }.zip(e.params).toMap()
+    private fun config(text: String) = listOf(GimpArg("config", ARG_CONFIG, 0f, "(time 0)\n$text"))
+    private fun num(v: Float) = java.math.BigDecimal(v.toString()).toPlainString()
+    /** GIMP's color adjustments keep every channel or hue range in one serialized "config" argument. */
+    private fun levelsConfig(p: List<Float>) = "(trc non-linear)\n(clamp-input no)\n(clamp-output no)\n(channel value)\n(low-input ${num(p[0] / 255f)})\n(high-input ${num(p[1] / 255f)})\n(gamma ${num(p[2])})\n(low-output ${num(p[3] / 255f)})\n(high-output ${num(p[4] / 255f)})\n" +
+        listOf("red", "green", "blue", "alpha").joinToString("") { "(channel $it)\n(low-input 0)\n(high-input 1)\n(gamma 1)\n(low-output 0)\n(high-output 1)\n" }
+    private fun hueSaturationConfig(p: List<Float>) = "(range all)\n(hue ${num(p[0] / 180f)})\n(saturation ${num(p[1])})\n(lightness ${num(p[2])})\n" +
+        listOf("red", "yellow", "green", "cyan", "blue", "magenta").joinToString("") { "(range $it)\n(hue 0)\n(saturation 0)\n(lightness 0)\n" } + "(overlap 0)\n"
+    private fun colorBalanceConfig(p: List<Float>) = "(range shadows)\n(cyan-red 0)\n(magenta-green 0)\n(yellow-blue 0)\n(range midtones)\n(cyan-red ${num(p[0])})\n(magenta-green ${num(p[1])})\n(yellow-blue ${num(p[2])})\n(range highlights)\n(cyan-red 0)\n(magenta-green 0)\n(yellow-blue 0)\n(preserve-luminosity no)\n"
+    /** A serialized config's numbers, by channel or range ("" before the first). */
+    private fun configSections(text: String): Map<String, Map<String, Float>> {
+        val sections = HashMap<String, HashMap<String, Float>>()
+        var section = ""
+        for (m in Regex("""\(([a-z-]+) ([^)\s]+)\)""").findAll(text)) {
+            val (key, value) = m.destructured
+            if (key == "channel" || key == "range") section = value else value.toFloatOrNull()?.let { sections.getOrPut(section) { HashMap() }[key] = it }
+        }
+        return sections
+    }
+    /** Whether the settings Brushkin can't hold ([others]) are all at their [defaults]. */
+    private fun allDefault(sections: Map<String, Map<String, Float>>, others: List<String>, defaults: Map<String, Float>) =
+        others.all { s -> sections[s].orEmpty().all { (k, v) -> v == (defaults[k] ?: return@all true) } }
+
+    /** Undoes the float error of scaling to GIMP's units and back. */
+    private fun tidy(v: Float) = (v * 1000f).roundToInt() / 1000f
+
+    /** The filter GIMP runs for [e]: its own where it has one, or null if it has none. */
+    private fun gimpFilter(e: LayerEffect): GimpFilter? {
+        val p = e.params
+        if (e.paramsVersion < 2) return when (e.name) {
+            "Levels" -> GimpFilter("gimp:levels", listOf(GimpArg("trc", ARG_ENUM, GIMP_NON_LINEAR)) + config(levelsConfig(p)))
+            "Brightness-Contrast" -> GimpFilter("gimp:brightness-contrast", config("(brightness ${num(p[0])})\n(contrast ${num(p[1])})\n"))
+            "Hue-Saturation" -> GimpFilter("gimp:hue-saturation", config(hueSaturationConfig(p)))
+            "Threshold" -> GimpFilter("gimp:threshold", floats("low" to p[0] / 255f, "high" to p[1] / 255f))
+            "Posterize" -> GimpFilter("gimp:posterize", listOf(GimpArg("levels", ARG_INT, p[0])))
+            else -> null
+        }
+        return when (e.name) {
+            "Colorize" -> GimpFilter("gimp:colorize", floats("hue" to p[0] / 360f, "saturation" to p[1], "lightness" to p[2]))
+            "Color Balance" -> GimpFilter("gimp:color-balance", config(colorBalanceConfig(p)))
+            "Threshold" -> named(e, "gegl:threshold").let { GimpFilter("gimp:threshold", floats("low" to it.getValue("value"), "high" to it.getValue("high"))) }
+            "Posterize" -> GimpFilter("gimp:posterize", listOf(GimpArg("levels", ARG_INT, named(e, "gegl:posterize").getValue("levels"))))
+            else -> {
+                val operation = GeglOperations.operation(e.name)?.takeIf { it != GIMP_HIDDEN } ?: return null
+                GimpFilter(operation, GeglOperations.properties(operation).zip(e.params).map { (p, value) ->
+                    GimpArg(p.getString("key"), when (p.getString("kind")) {
+                        "double" -> ARG_FLOAT; "int" -> ARG_INT; "uint" -> ARG_UINT; "boolean" -> ARG_BOOL; else -> ARG_ENUM
+                    }, value)
+                })
+            }
+        }
+    }
+
+    /** The effect for a filter in the file; null if Brushkin has no equivalent. */
+    private fun brushkinEffect(operation: String, args: Map<String, Float>, configText: String, visible: Boolean): LayerEffect? {
+        fun arg(key: String, default: Float) = args[key] ?: default
+        fun gegl(title: String, op: String, values: Map<String, Float>) = LayerEffect(title,
+            GeglOperations.properties(op).map { values[it.getString("key")] ?: it.getDouble("default").toFloat() }, visible = visible)
+        return when (operation) {
+            "gimp:threshold" -> if (arg("channel", 0f) != 0f) null else gegl("Threshold", "gegl:threshold", mapOf("value" to arg("low", 0.5f), "high" to arg("high", 1f)))
+            "gimp:posterize" -> gegl("Posterize", "gegl:posterize", mapOf("levels" to arg("levels", 3f)))
+            "gimp:colorize" -> LayerEffect("Colorize", listOf(tidy(arg("hue", 0.5f) * 360f), arg("saturation", 0.5f), arg("lightness", 0f)), visible = visible)
+            "gimp:color-balance" -> {
+                val c = configSections(configText)
+                if (!allDefault(c, listOf("shadows", "highlights"), mapOf("cyan-red" to 0f, "magenta-green" to 0f, "yellow-blue" to 0f))) return null
+                val m = c["midtones"].orEmpty()
+                LayerEffect("Color Balance", listOf(m["cyan-red"] ?: 0f, m["magenta-green"] ?: 0f, m["yellow-blue"] ?: 0f), visible = visible)
+            }
+            "gimp:levels" -> {
+                val c = configSections(configText)
+                if (!allDefault(c, listOf("red", "green", "blue", "alpha"), mapOf("low-input" to 0f, "high-input" to 1f, "gamma" to 1f, "low-output" to 0f, "high-output" to 1f))) return null
+                val v = c["value"].orEmpty()
+                LayerEffect("Levels", listOf(tidy((v["low-input"] ?: 0f) * 255f), tidy((v["high-input"] ?: 1f) * 255f), v["gamma"] ?: 1f,
+                    tidy((v["low-output"] ?: 0f) * 255f), tidy((v["high-output"] ?: 1f) * 255f)), visible = visible, paramsVersion = 1)
+            }
+            "gimp:brightness-contrast" -> configSections(configText)[""].orEmpty().let {
+                LayerEffect("Brightness-Contrast", listOf(it["brightness"] ?: 0f, it["contrast"] ?: 0f), visible = visible, paramsVersion = 1)
+            }
+            "gimp:hue-saturation" -> {
+                val c = configSections(configText)
+                if (!allDefault(c, listOf("red", "yellow", "green", "cyan", "blue", "magenta"), mapOf("hue" to 0f, "saturation" to 0f, "lightness" to 0f))) return null
+                val all = c["all"].orEmpty()
+                LayerEffect("Hue-Saturation", listOf(tidy((all["hue"] ?: 0f) * 180f), all["saturation"] ?: 0f, all["lightness"] ?: 0f), visible = visible, paramsVersion = 1)
+            }
+            else -> GeglOperations.title(operation)?.let { title -> gegl(title, operation, args) }
+        }
+    }
 
     private class Reader(val b: ByteBuffer, val version: Int) {
         val wide = version >= 11
@@ -120,6 +211,7 @@ object Xcf {
         if (version >= 22) r.str()
         var visible = true
         val args = HashMap<String, Float>()
+        var configText = ""
         while (true) {
             val type = r.u32(); val len = r.u32()
             val start = b.position()
@@ -132,14 +224,13 @@ object Xcf {
                         ARG_INT, ARG_BOOL, ARG_ENUM -> args[name] = r.u32().toFloat()
                         ARG_UINT -> args[name] = (r.u32().toLong() and 0xFFFFFFFFL).toFloat()
                         ARG_FLOAT -> args[name] = b.float
+                        ARG_CONFIG -> configText = r.str()
                     }
                 }
             }
             b.position(start + len)
         }
-        val title = GeglOperations.title(operation) ?: return null
-        val params = GeglOperations.properties(operation).map { args[it.getString("key")] ?: it.getDouble("default").toFloat() }
-        return LayerEffect(title, params, visible = visible)
+        return brushkinEffect(operation, args, configText, visible)
     }
 
     /** Effects in the order they apply; ones only Brushkin runs go back where they were. */
@@ -435,7 +526,7 @@ object Xcf {
     fun write(stack: Stack, os: OutputStream) {
         // Pointers are patched after the fact, so build into a growable byte buffer.
         val out = Bytes()
-        val liveEffects = stack.all.any { l -> l.effects.any { gimpOperation(it) != null } }
+        val liveEffects = stack.all.any { l -> l.effects.any { gimpFilter(it) != null } }
         out.str(if (liveEffects) "gimp xcf v022" else "gimp xcf v011"); out.u8(0)
         out.u32(stack.width); out.u32(stack.height); out.u32(0); out.u32(150)
         out.prop(PROP_COMPRESSION) { u8(2) }
@@ -520,9 +611,9 @@ object Xcf {
         out.prop(PROP_MODE) { u32(xcfMode(l.mode)) }
         if (l.children != null) out.prop(PROP_GROUP_ITEM) {}
         if (path.size > 1) out.prop(PROP_ITEM_PATH) { path.forEach { u32(it) } }
-        val live = l.effects.filter { gimpOperation(it) != null }
+        val live = l.effects.mapNotNull { e -> gimpFilter(e)?.let { e to it } }
         val own = org.json.JSONArray()
-        l.effects.forEachIndexed { i, e -> if (gimpOperation(e) == null) own.put(org.json.JSONObject().put("index", i).put("effect", e.toJson())) }
+        l.effects.forEachIndexed { i, e -> if (gimpFilter(e) == null) own.put(org.json.JSONObject().put("index", i).put("effect", e.toJson())) }
         if (own.length() > 0 || l.text != null) out.prop(PROP_PARASITES) {
             if (own.length() > 0) parasite(EFFECTS_PARASITE, own.toString())
             l.text?.let { parasite(TEXT_PARASITE, it.toJson()) }
@@ -538,9 +629,9 @@ object Xcf {
             else LayerExtent.render(l, reg).let { b -> IntArray(lw * lh).also { b.getPixels(it, 0, lw, 0, 0, lw, lh) } }
         writeHierarchy(out, px, lw, lh, 4)
         // GIMP lists the last-applied effect first.
-        live.asReversed().forEachIndexed { i, e ->
+        live.asReversed().forEachIndexed { i, (e, filter) ->
             out.patch64(effectPos + 8 * i, out.size.toLong())
-            writeEffect(out, e)
+            writeEffect(out, e, filter)
         }
         val m = l.mask ?: return
         out.patch64(maskPos, out.size.toLong())
@@ -559,25 +650,21 @@ object Xcf {
         writeHierarchy(out, mpx, lw, lh, 1)
     }
 
-    private fun writeEffect(out: Bytes, e: LayerEffect) {
-        val operation = gimpOperation(e)!!
-        out.xstr(""); out.xstr("gimp-image"); out.xstr(operation); out.xstr(GIMP_VERSIONS[operation] ?: "0:0")
+    private fun writeEffect(out: Bytes, e: LayerEffect, filter: GimpFilter) {
+        out.xstr(""); out.xstr("gimp-image"); out.xstr(filter.operation); out.xstr(GIMP_VERSIONS[filter.operation] ?: "0:0")
         out.prop(PROP_VISIBLE) { u32(if (e.visible) 1 else 0) }
         out.prop(PROP_FLOAT_OPACITY) { f32(1f) }
         out.prop(PROP_MODE) { u32(MODE_REPLACE) }
         out.prop(PROP_FILTER_CLIP) { u32(0) }
         out.prop(PROP_FILTER_REGION) { u32(1) } // the whole layer
-        GeglOperations.properties(operation).forEachIndexed { i, p ->
-            val value = e.params.getOrNull(i) ?: return@forEachIndexed
-            out.prop(PROP_FILTER_ARGUMENT) {
-                xstr(p.getString("key"))
-                when (p.getString("kind")) {
-                    "double" -> { u32(ARG_FLOAT); f32(value) }
-                    "int" -> { u32(ARG_INT); u32(value.toInt()) }
-                    "uint" -> { u32(ARG_UINT); u32(value.toLong().toInt()) }
-                    "boolean" -> { u32(ARG_BOOL); u32(if (value != 0f) 1 else 0) }
-                    else -> { u32(ARG_ENUM); u32(value.toInt()) }
-                }
+        for (a in filter.args) out.prop(PROP_FILTER_ARGUMENT) {
+            xstr(a.name); u32(a.type)
+            when (a.type) {
+                ARG_FLOAT -> f32(a.value)
+                ARG_BOOL -> u32(if (a.value != 0f) 1 else 0)
+                ARG_CONFIG -> xstr(a.text)
+                ARG_UINT -> u32(a.value.toLong().toInt())
+                else -> u32(a.value.toInt())
             }
         }
         out.u32(PROP_END); out.u32(0)

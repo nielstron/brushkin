@@ -8,13 +8,93 @@ import android.util.Xml
 import org.xmlpull.v1.XmlPullParser
 import java.io.ByteArrayOutputStream
 import java.io.InputStream
+import java.io.OutputStream
+import java.util.zip.CRC32
+import java.util.zip.ZipEntry
 import java.util.zip.ZipInputStream
+import java.util.zip.ZipOutputStream
 
 /**
- * Opens OpenRaster (.ora) files — a zip of PNG layers plus stack.xml. Brushkin saves XCF; this
- * remains for autosaves and projects from older versions, and for files from other apps.
+ * OpenRaster (.ora) — a zip of PNG layers plus stack.xml. It's the layered format GIMP, Krita and
+ * MyPaint all read and write, so projects move freely between Brushkin and desktop GIMP.
  */
 object Ora {
+    fun write(stack: Stack, out: OutputStream) {
+        ZipOutputStream(out).use { zip ->
+            // The mimetype entry must come first and be stored uncompressed.
+            val mime = "image/openraster".toByteArray()
+            zip.putNextEntry(ZipEntry("mimetype").apply {
+                method = ZipEntry.STORED; size = mime.size.toLong(); compressedSize = mime.size.toLong()
+                crc = CRC32().apply { update(mime) }.value
+            })
+            zip.write(mime); zip.closeEntry()
+
+            val xml = StringBuilder()
+            xml.append("<?xml version='1.0' encoding='UTF-8'?>\n")
+            // Guides as "v120 h80 …" in an extension attribute other apps ignore.
+            val guides = if (stack.guides.isEmpty()) "" else " brushkin-guides=\"${stack.guides.joinToString(" ") { (if (it.vertical) "v" else "h") + it.pos }}\""
+            xml.append("<image version=\"0.0.5\" w=\"${stack.width}\" h=\"${stack.height}\"$guides>\n<stack>\n")
+            var n = 0
+            // stack.xml lists items top-most first; groups are nested <stack> elements.
+            fun emit(list: List<Layer>) {
+                for (l in list.asReversed()) {
+                    val common = "name=\"${esc(l.name)}\" opacity=\"${l.opacity}\" visibility=\"${if (l.visible) "visible" else "hidden"}\" composite-op=\"${l.mode.oraName}\"" +
+                        (if (l.id == stack.activeId) " selected=\"true\"" else "")
+                    if (l.isGroup) {
+                        xml.append("<stack $common isolation=\"${if (l.mode == LayerMode.PASS_THROUGH) "auto" else "isolate"}\">\n")
+                        emit(l.children!!)
+                        xml.append("</stack>\n")
+                        continue
+                    }
+                    val i = n++
+                    val src = "data/layer$i.png"
+                    // Layers keep their own extent: a smaller boundary, or content past the canvas.
+                    val reg = LayerExtent.saveRegion(l, stack.width, stack.height)
+                    val whole = reg == android.graphics.Rect(0, 0, stack.width, stack.height) && l.outside.isEmpty()
+                    xml.append("<layer $common src=\"$src\" x=\"${reg.left}\" y=\"${reg.top}\"")
+                    if (l.lockPosition) xml.append(" brushkin-lock-position=\"true\"")
+                    if (l.linked) xml.append(" brushkin-linked=\"true\"")
+                    if (l.lockAlpha) xml.append(" alpha-preserve=\"true\"")
+                    l.text?.let { xml.append(" brushkin-text=\"${esc(it.toJson())}\"") }
+                    // Masks aren't part of the OpenRaster spec; other apps ignore these attributes.
+                    val m = l.mask
+                    if (m != null) xml.append(" brushkin-mask=\"data/layer${i}_mask.png\" brushkin-mask-enabled=\"${l.maskEnabled}\"")
+                    if (l.effects.isEmpty()) xml.append("/>\n") else {
+                        xml.append(">\n")
+                        l.effects.asReversed().forEach { xml.append(filterXml(it)) } // top-most (last applied) first, like layers
+                        xml.append("</layer>\n")
+                    }
+                    zip.putNextEntry(ZipEntry(src))
+                    (if (whole) l.pixels.toBitmap() else LayerExtent.render(l, reg)).compress(Bitmap.CompressFormat.PNG, 100, zip)
+                    zip.closeEntry()
+                    if (m != null) {
+                        zip.putNextEntry(ZipEntry("data/layer${i}_mask.png"))
+                        m.toBitmap().compress(Bitmap.CompressFormat.PNG, 100, zip)
+                        zip.closeEntry()
+                    }
+                }
+            }
+            emit(stack.layers)
+            xml.append("</stack>\n")
+            // Saved channels (an extension other OpenRaster apps skip).
+            for ((k, ch) in stack.channels.withIndex()) {
+                val src = "data/channel$k.png"
+                xml.append("<brushkin-channel name=\"${esc(ch.name)}\" src=\"$src\" color=\"#%08X\" opacity=\"${ch.opacity}\" visible=\"${ch.visible}\"/>\n".format(ch.color))
+                zip.putNextEntry(ZipEntry(src)); ch.mask.toBitmap().compress(Bitmap.CompressFormat.PNG, 100, zip); zip.closeEntry()
+            }
+            xml.append("</image>\n")
+            zip.putNextEntry(ZipEntry("stack.xml")); zip.write(xml.toString().toByteArray()); zip.closeEntry()
+
+            zip.putNextEntry(ZipEntry("brushkin/export-metadata.json")); zip.write(stack.exportMetadata.toJson().toByteArray()); zip.closeEntry()
+
+            val merged = Compositor.flatten(stack)
+            zip.putNextEntry(ZipEntry("mergedimage.png")); merged.compress(Bitmap.CompressFormat.PNG, 100, zip); zip.closeEntry()
+            val ts = minOf(256f / stack.width, 256f / stack.height, 1f)
+            val thumb = Bitmap.createScaledBitmap(merged, (stack.width * ts).toInt().coerceAtLeast(1), (stack.height * ts).toInt().coerceAtLeast(1), true)
+            zip.putNextEntry(ZipEntry("Thumbnails/thumbnail.png")); thumb.compress(Bitmap.CompressFormat.PNG, 100, zip); zip.closeEntry()
+        }
+    }
+
     fun read(input: InputStream): Stack {
         val files = HashMap<String, ByteArray>()
         ZipInputStream(input).use { zip ->
@@ -34,11 +114,17 @@ object Ora {
         // Each open <stack> collects its items (top-most first, as in the file).
         val open = ArrayList<Pair<Map<String, String>, ArrayList<Layer>>>()
         var root: ArrayList<Layer>? = null
+        // The layer whose <filter> children are being read, and the filter under way.
+        var layer: Layer? = null
+        var filterAttrs: Map<String, String>? = null
+        val filterParams = ArrayList<Pair<String, String>>()
         fun attrs(): Map<String, String> = (0 until parser.attributeCount).associate { parser.getAttributeName(it) to parser.getAttributeValue(it) }
         fun common(a: Map<String, String>) = Triple(a["visibility"] != "hidden", a["opacity"]?.toFloatOrNull() ?: 1f, LayerMode.fromOra(a["composite-op"]))
         while (parser.next() != XmlPullParser.END_DOCUMENT) {
             when (parser.eventType) {
                 XmlPullParser.START_TAG -> when (parser.name) {
+                    "filter" -> if (layer != null) { filterAttrs = attrs(); filterParams.clear() }
+                    "param" -> if (filterAttrs != null) { val name = attrs()["name"]; val value = parser.nextText(); if (name != null) filterParams.add(name to value) }
                     "brushkin-channel" -> {
                         val a = attrs()
                         val bytes = a["src"]?.let { files[it] } ?: continue
@@ -79,9 +165,21 @@ object Ora {
                         )
                         if (a["selected"] == "true") activeId = l.id
                         open.lastOrNull()?.second?.add(l)
+                        layer = l
                     }
                 }
-                XmlPullParser.END_TAG -> if (parser.name == "stack") {
+                XmlPullParser.END_TAG -> if (parser.name == "layer") layer = null
+                else if (parser.name == "filter" && filterAttrs != null) {
+                    val a = filterAttrs!!; filterAttrs = null
+                    val effect = a["type"]?.takeIf { it.startsWith("application:") }
+                        ?.let { EffectState(it.removePrefix("application:"), filterParams.toList(), a["visibility"] != "hidden").toEffect() }
+                    val items = open.lastOrNull()?.second
+                    if (effect != null && items != null && layer != null) {
+                        // Listed top-most first; effects are kept in the order they apply.
+                        val updated = layer!!.copy(effects = listOf(effect) + layer!!.effects)
+                        items[items.size - 1] = updated; layer = updated
+                    }
+                } else if (parser.name == "stack") {
                     val (a, items) = open.removeAt(open.size - 1)
                     val children = items.asReversed().toList() // bottom-most first
                     if (open.isEmpty()) root = ArrayList(children)
@@ -101,6 +199,19 @@ object Ora {
             exportMetadata = files["brushkin/export-metadata.json"]?.let { io.github.nielstron.brushkin.export.ExportMetadata.fromJson(it.toString(Charsets.UTF_8)) } ?: io.github.nielstron.brushkin.export.ExportMetadata())
         return if (st.find(activeId) != null) st else st.copy(activeId = st.all.last { !it.isGroup }.id)
     }
+
+    /**
+     * The syntax of OpenRaster's draft filter extension, inside the layer it applies to: other
+     * apps then skip it and show the layer's own pixels. Krita's loader would fail on a filter
+     * directly in a stack whose type isn't one of Krita's.
+     */
+    private fun filterXml(e: LayerEffect): String {
+        val state = EffectState.of(e)
+        val params = state.params.joinToString("") { (k, v) -> "<param name=\"${esc(k)}\">${esc(v)}</param>" }
+        return "<filter name=\"${esc(state.type.substringAfter(':'))}\" type=\"application:${esc(state.type)}\" visibility=\"${if (state.visible) "visible" else "hidden"}\"><params>$params</params></filter>\n"
+    }
+
+    private fun esc(s: String) = s.replace("&", "&amp;").replace("\"", "&quot;").replace("<", "&lt;").replace(">", "&gt;")
 
     fun encode(bmp: Bitmap, format: String, quality: Int = 92, lossless: Boolean = true): ByteArray {
         val out = ByteArrayOutputStream()

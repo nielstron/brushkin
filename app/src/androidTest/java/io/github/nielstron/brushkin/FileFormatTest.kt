@@ -52,10 +52,10 @@ class FileFormatTest {
         assertTrue("$name differs from GIMP by $d: $probe", d <= 6)
 
         // Round-trips through our own writers.
-        for (fmt in listOf("xcf")) {
+        for (fmt in listOf("xcf", "ora")) {
             val out = ByteArrayOutputStream()
-            Xcf.write(stack, out)
-            val back: Stack = Xcf.read(out.toByteArray())
+            if (fmt == "xcf") Xcf.write(stack, out) else Ora.write(stack, out)
+            val back: Stack = if (fmt == "xcf") Xcf.read(out.toByteArray()) else Ora.read(out.toByteArray().inputStream())
             assertEquals(stack.all.map { it.name }, back.all.map { it.name })
             assertTrue(back.all.first { it.name == "Red multiply" }.mask != null)
             val d2 = maxDiff(Compositor.flatten(back, Color.WHITE), ours)
@@ -65,10 +65,10 @@ class FileFormatTest {
 
     @Test fun guidesRoundTrip() {
         val stack = Xcf.read(assets.open("test8.xcf").readBytes()).copy(guides = listOf(io.github.nielstron.brushkin.engine.Guide(true, 120), io.github.nielstron.brushkin.engine.Guide(false, 77)))
-        for (fmt in listOf("xcf")) {
+        for (fmt in listOf("xcf", "ora")) {
             val out = ByteArrayOutputStream()
-            Xcf.write(stack, out)
-            val back: Stack = Xcf.read(out.toByteArray())
+            if (fmt == "xcf") Xcf.write(stack, out) else Ora.write(stack, out)
+            val back: Stack = if (fmt == "xcf") Xcf.read(out.toByteArray()) else Ora.read(out.toByteArray().inputStream())
             assertEquals(fmt, stack.guides, back.guides)
         }
     }
@@ -85,10 +85,10 @@ class FileFormatTest {
         val px = IntArray(base.width * base.height) { i -> if (i % base.width < 200) Color.WHITE else Color.BLACK }
         val ch = io.github.nielstron.brushkin.engine.SavedChannel(name = "Left half", mask = io.github.nielstron.brushkin.engine.TiledBitmap.fromPixels(px, base.width, base.height, io.github.nielstron.brushkin.engine.MASK_BLACK), color = 0xFF3366CC.toInt(), opacity = 0.4f, visible = true)
         val stack = base.copy(selection = sel, channels = listOf(ch))
-        for (fmt in listOf("xcf")) {
+        for (fmt in listOf("xcf", "ora")) {
             val out = ByteArrayOutputStream()
-            Xcf.write(stack, out)
-            val back: Stack = Xcf.read(out.toByteArray())
+            if (fmt == "xcf") Xcf.write(stack, out) else Ora.write(stack, out)
+            val back: Stack = if (fmt == "xcf") Xcf.read(out.toByteArray()) else Ora.read(out.toByteArray().inputStream())
             val c = back.channels.single()
             assertEquals(fmt, "Left half", c.name); assertEquals(fmt, 0xFF3366CC.toInt(), c.color); assertTrue(fmt, c.visible)
             assertEquals(fmt, Color.WHITE, c.mask.toPixels()[50 * base.width + 100]); assertEquals(fmt, Color.BLACK, c.mask.toPixels()[50 * base.width + 300])

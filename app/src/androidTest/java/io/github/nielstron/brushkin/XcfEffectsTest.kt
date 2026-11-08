@@ -30,21 +30,34 @@ class XcfEffectsTest {
         assertEquals(listOf(blur), back.effects)
     }
 
-    @Test fun effectsGimpCannotRunKeepTheirPlaceInTheOrder() {
+    @Test fun effectsKeepTheirOrderAcrossGimpAndBrushkinOnlyOnes() {
         val first = LayerEffect("Exposure", defaults("Exposure"))
-        val posterize = LayerEffect("Posterize", defaults("Posterize"))
-        val colorize = LayerEffect("Colorize", listOf(200f, 0.5f, 0f), visible = false)
+        val polar = LayerEffect("Polar Coordinates", defaults("Polar Coordinates"))
         val old = LayerEffect("Gaussian Blur", listOf(4f), paramsVersion = 1)
-        val last = LayerEffect("Unsharp Mask", defaults("Unsharp Mask"))
-        val effects = listOf(first, posterize, colorize, old, last)
+        val last = LayerEffect("Unsharp Mask", defaults("Unsharp Mask"), visible = false)
+        val effects = listOf(first, polar, old, last)
         assertEquals(effects, roundTrip(layer(effects)).second.effects)
     }
 
+    @Test fun filtersGimpReplacesAreSavedAsItsOwn() {
+        val effects = listOf(
+            LayerEffect("Threshold", defaults("Threshold")), LayerEffect("Posterize", defaults("Posterize")),
+            LayerEffect("Colorize", listOf(200f, 0.5f, -0.25f)), LayerEffect("Color Balance", listOf(0.1f, -0.2f, 0.3f)),
+            LayerEffect("Levels", listOf(10f, 240f, 1.5f, 5f, 250f), paramsVersion = 1),
+            LayerEffect("Brightness-Contrast", listOf(0.1f, -0.3f), paramsVersion = 1),
+            LayerEffect("Hue-Saturation", listOf(30f, 0.2f, -0.1f), paramsVersion = 1),
+        )
+        val (bytes, back) = roundTrip(layer(effects))
+        val text = String(bytes, Charsets.ISO_8859_1)
+        for (op in listOf("threshold", "posterize", "colorize", "color-balance", "levels", "brightness-contrast", "hue-saturation")) assertTrue(op, text.contains("gimp:$op"))
+        assertEquals(effects, back.effects)
+    }
+
     @Test fun onlyBrushkinEffectsStayReadableByOlderGimp() {
-        val colorize = LayerEffect("Colorize", listOf(200f, 0.5f, 0f))
-        val (bytes, back) = roundTrip(layer(listOf(colorize)))
+        val polar = LayerEffect("Polar Coordinates", defaults("Polar Coordinates"))
+        val (bytes, back) = roundTrip(layer(listOf(polar)))
         assertEquals("gimp xcf v011", String(bytes, 0, 13))
-        assertEquals(listOf(colorize), back.effects)
+        assertEquals(listOf(polar), back.effects)
     }
 
     @Test fun textLayersSurvive() {
@@ -53,8 +66,28 @@ class XcfEffectsTest {
         assertEquals(text, back.text)
     }
 
-    /** Autosaves from before XCF must still open. */
-    @Test fun oldOraFilesOpen() {
+    @Test fun oraKeepsEveryEffectAsFilterElementsWithoutBaking() {
+        val effects = listOf(
+            LayerEffect("Gaussian Blur", defaults("Gaussian Blur").toMutableList().also { it[0] = 7.5f }, visible = false),
+            LayerEffect("Colorize", listOf(200f, 0.5f, -0.25f)), LayerEffect("Color Balance", listOf(0.1f, -0.2f, 0.3f)),
+            LayerEffect("Color to Alpha", emptyList(), bg = 0xFF123456.toInt()),
+            LayerEffect("Levels", listOf(10f, 240f, 1.5f, 5f, 250f), fg = 1, bg = 2, paramsVersion = 1),
+        )
+        val out = ByteArrayOutputStream(); val l = layer(effects)
+        Ora.write(Stack(w, h, listOf(l), l.id), out)
+        val stack = java.util.zip.ZipInputStream(out.toByteArray().inputStream()).use { z ->
+            generateSequence { z.nextEntry }.first { it.name == "stack.xml" }; z.readBytes().decodeToString()
+        }
+        assertTrue(stack, stack.contains("type=\"application:gegl:gaussian-blur\""))
+        assertTrue(stack, stack.contains("<param name=\"std-dev-x\">7.5</param>"))
+        assertFalse(stack, stack.contains("brushkin-effects"))
+        val back = Ora.read(out.toByteArray().inputStream()).all.single()
+        assertEquals(effects, back.effects)
+        assertArrayEquals(px, back.pixels.toPixels())
+    }
+
+    /** Files saved before effects were stored as filter elements. */
+    @Test fun oldOraEffectAttributesStillLoad() {
         val png = Ora.encode(Bitmap.createBitmap(px, w, h, Bitmap.Config.ARGB_8888), "png")
         val zip = ByteArrayOutputStream()
         ZipOutputStream(zip).use {
@@ -65,6 +98,5 @@ class XcfEffectsTest {
         val l = Ora.read(zip.toByteArray().inputStream()).all.single()
         assertEquals("Old", l.name)
         assertEquals(1, l.effects.single().paramsVersion)
-        assertArrayEquals(px, l.pixels.toPixels())
     }
 }

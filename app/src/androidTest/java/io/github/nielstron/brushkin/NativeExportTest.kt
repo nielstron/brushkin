@@ -126,8 +126,8 @@ class NativeExportTest {
         val source=image();val layer=io.github.nielstron.brushkin.engine.Layer(name="Layer",pixels=io.github.nielstron.brushkin.engine.TiledBitmap.fromBitmap(source))
         val meta=ExportMetadata(xmp="<test/>".toByteArray(),comment="Project Ω",resolution=300)
         val stack=io.github.nielstron.brushkin.engine.Stack(64,32,listOf(layer),layer.id,exportMetadata=meta)
-        val out=java.io.ByteArrayOutputStream();io.github.nielstron.brushkin.engine.Xcf.write(stack,out)
-        val restored=io.github.nielstron.brushkin.engine.Xcf.read(out.toByteArray()).exportMetadata
+        val out=java.io.ByteArrayOutputStream();io.github.nielstron.brushkin.engine.Ora.write(stack,out)
+        val restored=io.github.nielstron.brushkin.engine.Ora.read(out.toByteArray().inputStream()).exportMetadata
         assertArrayEquals(meta.xmp,restored.xmp);assertEquals("Project Ω",restored.comment);assertEquals(300,restored.resolution);source.recycle()
     }
 

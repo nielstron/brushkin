@@ -88,6 +88,7 @@ interface FileActions {
     fun openImage()
     fun openProject()
     fun saveProject()
+    fun saveXcf()
     suspend fun exportPreview(options: io.github.nielstron.brushkin.export.ImageExportOptions): android.graphics.Bitmap
     fun export(options: io.github.nielstron.brushkin.export.ImageExportOptions)
     suspend fun stickerPacks(): List<io.github.nielstron.brushkin.export.StickerPack>
@@ -130,7 +131,7 @@ fun Dialogs(vm: EditorViewModel, info: DocInfo, files: FileActions) {
         d == "stroke-selection" || d == "fill-selection-outline" -> SelectionOutlineDialog(vm, d == "stroke-selection", close)
         d == "save" -> SaveMenuDialog(close) { vm.dialog = it }
         d == "export-image" -> ImageExportDialog(info, files, close) { options -> close(); files.export(options) }
-        d == "save-project" -> androidx.compose.runtime.LaunchedEffect(Unit) { close(); files.saveProject() }
+        d == "save-project" -> SaveProjectDialog(close) { xcf -> close(); if (xcf) files.saveXcf() else files.saveProject() }
         d == "export-sticker" -> StickerExportDialog(info, files, close)
         d == "new" -> NewImageDialog(vm, close)
         d == "emoji" -> EmojiDialog(vm, close)

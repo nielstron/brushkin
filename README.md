@@ -17,7 +17,7 @@ A layered image editor for Android, inspired by GIMP and designed for fingers an
 - Transform with move, scale, rotate, perspective, warp, cage and more, snapping to guides and a grid.
 - Color adjustments and filters with live preview, including GIMP’s upstream GEGL operations: curves, levels, blur, noise, edge detection, lighting, distortions and artistic effects.
 - Work with layers, groups, blend modes, masks and editable text; import GIMP brushes, gradients, palettes and patterns. Use **Effect** mode for editable, non-destructive filters.
-- Share images, save projects as GIMP `.xcf` with live effects, and export PNG, JPEG, WebP or GIF, and send custom stickers to WhatsApp or Telegram.
+- Share images, save projects as GIMP `.xcf` or OpenRaster `.ora`, and export PNG, JPEG, WebP or GIF, and send custom stickers to WhatsApp or Telegram.
 
 
 ## Screenshots

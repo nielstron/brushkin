@@ -40,6 +40,7 @@ class MainActivity : ComponentActivity(), FileActions {
     private val pickLayerFile = registerForActivityResult(ActivityResultContracts.OpenDocument()) { uri -> uri?.let { insertImage(it) } }
     private val pickOpen = registerForActivityResult(ActivityResultContracts.PickVisualMedia()) { uri -> uri?.let { open(it) } }
     private val pickProject = registerForActivityResult(ActivityResultContracts.OpenDocument()) { uri -> uri?.let { open(it) } }
+    private val createProject = registerForActivityResult(ActivityResultContracts.CreateDocument("image/openraster")) { uri -> uri?.let { saveOra(it) } }
     private val pickResources = registerForActivityResult(ActivityResultContracts.OpenMultipleDocuments()) { uris ->
         for (u in uris) lifecycleScope.launch {
             val bytes = withContext(Dispatchers.IO) { runCatching { contentResolver.openInputStream(u)?.use { it.readBytes() } }.getOrNull() } ?: return@launch
@@ -141,7 +142,8 @@ class MainActivity : ComponentActivity(), FileActions {
     override fun openImage() = pickOpen.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly))
     override fun openProject() = pickProject.launch(arrayOf("image/openraster", "image/x-xcf", "application/zip", "application/octet-stream", "image/*"))
     override fun importResources() = pickResources.launch(arrayOf("*/*"))
-    override fun saveProject() = createXcf.launch("${vm.engine.docName.substringBeforeLast('.')}.xcf")
+    override fun saveXcf() = createXcf.launch("${vm.engine.docName.substringBeforeLast('.')}.xcf")
+    override fun saveProject() = createProject.launch("${vm.engine.docName.substringBeforeLast('.')}.ora")
 
     override suspend fun exportPreview(options: ImageExportOptions): Bitmap {
         val source = vm.engine.flattened()
@@ -335,6 +337,19 @@ class MainActivity : ComponentActivity(), FileActions {
             try {
                 val snap = vm.engine.snapshot()
                 withContext(Dispatchers.IO) { contentResolver.openOutputStream(uri, "wt")!!.use { io.github.nielstron.brushkin.engine.Xcf.write(snap, it) } }
+                nameAfter(uri)
+                vm.messages.tryEmit("Saved for GIMP")
+            } catch (t: Throwable) {
+                vm.messages.tryEmit("Save failed: ${t.message}")
+            }
+        }
+    }
+
+    private fun saveOra(uri: Uri) {
+        lifecycleScope.launch {
+            try {
+                val snap = vm.engine.snapshot()
+                withContext(Dispatchers.IO) { contentResolver.openOutputStream(uri, "wt")!!.use { Ora.write(snap, it) } }
                 nameAfter(uri)
                 vm.messages.tryEmit("Project saved")
             } catch (t: Throwable) {

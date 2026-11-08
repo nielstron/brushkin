@@ -3,7 +3,7 @@ package io.github.nielstron.brushkin
 import android.util.Log
 import androidx.test.platform.app.InstrumentationRegistry
 import io.github.nielstron.brushkin.engine.NativeGegl
-import org.junit.Assert.assertTrue
+import org.junit.Assume.assumeTrue
 import org.junit.Test
 import kotlin.math.abs
 
@@ -11,7 +11,7 @@ import kotlin.math.abs
 class OpenClSurveyTest {
     @Test fun compareCandidates() {
         val args=InstrumentationRegistry.getArguments()
-        assertTrue("Requires an actual OpenCL GPU", NativeGegl.isOpenClActive())
+        assumeTrue("Requires an actual OpenCL GPU", NativeGegl.isOpenClActive())
         val w=args.getString("width", "1024").toInt()
         val h=args.getString("height", "768").toInt()
         val rounds=args.getString("rounds", "2").toInt()
