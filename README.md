@@ -23,6 +23,10 @@ A layered image editor for Android, inspired by GIMP and designed for fingers an
 ## Screenshots
 
 <div align="center">
+  <img src="docs/demo.gif" width="300" alt="Drawing a scene: a sailboat emoji, a blurred sun, filled water and brush waves">
+</div>
+
+<div align="center">
   <img src="fastlane/metadata/android/en-US/images/phoneScreenshots/1.png" width="200" alt="Drawing with the brush tool">
   <img src="fastlane/metadata/android/en-US/images/phoneScreenshots/2.png" width="200" alt="Tab grid with a drawing and a photo open side by side">
   <img src="fastlane/metadata/android/en-US/images/phoneScreenshots/3.png" width="200" alt="Tool palette">
