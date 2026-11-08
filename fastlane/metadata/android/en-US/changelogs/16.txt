@@ -1,0 +1,2 @@
+Filters now use GEGL's recommended ranges and defaults, and there are 51 new ones.
+Saving for GIMP keeps effects live instead of baking them into the pixels. Most appear as editable filters there. Use .ora to keep your whole project exactly.
