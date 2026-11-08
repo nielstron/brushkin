@@ -51,7 +51,7 @@ import io.github.nielstron.brushkin.engine.DesaturateFilter
 import io.github.nielstron.brushkin.engine.DocInfo
 import io.github.nielstron.brushkin.engine.LutFilter
 
-data class Cmd(val section: String, val label: String, val hint: String = "", val run: () -> Unit, val searchOnly: Boolean = false)
+data class Cmd(val section: String, val label: String, val hint: String = "", val run: () -> Unit)
 
 /** Plain-language descriptions so search finds commands by what people want to do. */
 val KEYWORDS = mapOf(
@@ -177,7 +177,7 @@ fun commands(vm: EditorViewModel, info: DocInfo, files: FileActions, view: () ->
         Cmd("Edit", "Copy", "Ctrl+C", run = { vm.copy() }),
         Cmd("Edit", "Copy visible", run = { vm.copy(merged = true) }),
         Cmd("Edit", "Paste as new layer", "Ctrl+V", run = { vm.paste() }),
-        Cmd("Edit", "Paste as new tab", "clipboard image as its own image", searchOnly = true, run = { vm.pasteAsNewTab() }),
+        Cmd("Edit", "Paste as new tab", "clipboard image as its own image", run = { vm.pasteAsNewTab() }),
         Cmd("Edit", "Clear", "erase selection", run = { e.clearSelection() }),
         Cmd("Edit", "Fill with FG color", run = { e.fillSelection(vm.fg, "Fill with FG Color") }),
         Cmd("Edit", "Fill with BG color", run = { e.fillSelection(vm.bg, "Fill with BG Color") }),
@@ -296,8 +296,7 @@ fun MenuScreen(vm: EditorViewModel, info: DocInfo, files: FileActions, holder: C
     BackHandler { vm.showMenu = false }
     val focus = remember { androidx.compose.ui.focus.FocusRequester() }
     androidx.compose.runtime.LaunchedEffect(Unit) { focus.requestFocus() }
-    fun run(c: Cmd) { if (!c.searchOnly) vm.recentCommands.record(c); vm.showMenu = false; c.run() }
-    val browsable = all.filter { !it.searchOnly }
+    fun run(c: Cmd) { vm.recentCommands.record(c); vm.showMenu = false; c.run() }
 
     Column(Modifier.fillMaxSize().background(Ui.panel).safeDrawingPadding().imePadding().clickable(enabled = false) {}) {
         Row(Modifier.padding(12.dp), verticalAlignment = Alignment.CenterVertically) {
@@ -332,7 +331,7 @@ fun MenuScreen(vm: EditorViewModel, info: DocInfo, files: FileActions, holder: C
                     items(recent, key = { "recent/${it.section}/${it.label}" }) { c -> CmdRow(c, showSection = true) { run(c) } }
                     item(key = "recent-divider") { Box(Modifier.fillMaxWidth().height(1.dp).background(Ui.border)) }
                 }
-                for (section in browsable.map { it.section }.distinct()) {
+                for (section in all.map { it.section }.distinct()) {
                     val expanded = section in open
                     item(key = "h$section") {
                         Row(
@@ -343,7 +342,7 @@ fun MenuScreen(vm: EditorViewModel, info: DocInfo, files: FileActions, holder: C
                             Icon(if (expanded) Icons.Rounded.ExpandLess else Icons.Rounded.ExpandMore, null, tint = Ui.muted)
                         }
                     }
-                    if (expanded) items(browsable.filter { it.section == section }, key = { "${it.section}/${it.label}" }) { c -> CmdRow(c, false) { run(c) } }
+                    if (expanded) items(all.filter { it.section == section }, key = { "${it.section}/${it.label}" }) { c -> CmdRow(c, false) { run(c) } }
                     item(key = "d$section") { Box(Modifier.fillMaxWidth().height(1.dp).background(Ui.border)) }
                 }
             }
