@@ -296,7 +296,7 @@ fun MenuScreen(vm: EditorViewModel, info: DocInfo, files: FileActions, holder: C
     BackHandler { vm.showMenu = false }
     val focus = remember { androidx.compose.ui.focus.FocusRequester() }
     androidx.compose.runtime.LaunchedEffect(Unit) { focus.requestFocus() }
-    fun run(c: Cmd) { if (!c.searchOnly) vm.recentCommands.record(c); vm.showMenu = false; c.run() }
+    fun run(c: Cmd) { vm.recentCommands.record(c); vm.showMenu = false; c.run() }
     val browsable = all.filter { !it.searchOnly }
 
     Column(Modifier.fillMaxSize().background(Ui.panel).safeDrawingPadding().imePadding().clickable(enabled = false) {}) {
