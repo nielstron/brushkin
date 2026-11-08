@@ -827,6 +827,13 @@ class Engine {
         record(if (delta > 0) "Raise Layer" else "Lower Layer", s)
     }
 
+    /** Drag and drop in the layer list: see [Stack.moved]. */
+    fun moveLayerTo(id: Long, parentId: Long?, belowId: Long?, onTop: Boolean = false) = post {
+        val s = stack
+        stack = s.moved(id, parentId, belowId, onTop) ?: return@post
+        record("Move Layer", s)
+    }
+
     private var propsBefore: Stack? = null
 
     /** Change layer properties. With [commit] = false (e.g. while dragging a slider) no history entry is created yet. */

@@ -133,6 +133,28 @@ data class Stack(
 
     fun remove(id: Long): Stack = copy(layers = removeTree(layers, id))
 
+    /**
+     * This stack with [id] moved into [parentId] (null = top level), directly above the sibling
+     * [belowId]: at the bottom without one, or on top with [onTop]. A target group opens. Null
+     * when the move is impossible or changes nothing.
+     */
+    fun moved(id: Long, parentId: Long?, belowId: Long?, onTop: Boolean = false): Stack? {
+        val layer = find(id) ?: return null
+        if (belowId == id || flatten(listOf(layer)).any { it.id == parentId }) return null
+        val (oldParent, oldList) = siblingsOf(id) ?: return null
+        val without = remove(id)
+        val parent = parentId?.let { p -> without.find(p)?.takeIf { it.isGroup } ?: return null }
+        val list = parent?.children ?: without.layers
+        val at = when {
+            onTop -> list.size
+            belowId == null -> 0
+            else -> list.indexOfFirst { it.id == belowId }.also { if (it < 0) return null } + 1
+        }
+        if (oldParent?.id == parentId && oldList.indexOfFirst { it.id == id } == at) return null
+        val moved = list.toMutableList().apply { add(at, layer) }
+        return if (parent == null) without.copy(layers = moved) else without.replace(parent.copy(children = moved, expanded = true))
+    }
+
     /** Replace the child list of [parent] (null = top level). */
     fun withSiblings(parent: Layer?, list: List<Layer>): Stack =
         if (parent == null) copy(layers = list) else replace(find(parent.id)!!.copy(children = list))

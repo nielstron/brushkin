@@ -23,6 +23,19 @@ object ToolIcons {
             ).build()
     }
 
+    /** A checkerboard, the usual picture of transparency, for locking a layer's alpha. */
+    val alphaLock: ImageVector by lazy {
+        ImageVector.Builder(defaultWidth = 24.dp, defaultHeight = 24.dp, viewportWidth = 24f, viewportHeight = 24f)
+            .addPath(
+                pathData = PathParser().parsePathString("M2 2h5v5H2zM12 2h5v5h-5zM7 7h5v5H7zM17 7h5v5h-5zM2 12h5v5H2zM12 12h5v5h-5zM7 17h5v5H7zM17 17h5v5h-5z").toNodes(),
+                fill = SolidColor(Color.White),
+            )
+            .addPath(
+                pathData = PathParser().parsePathString("M2 2h20v20H2z").toNodes(),
+                stroke = SolidColor(Color.White), strokeLineWidth = 1.2f,
+            ).build()
+    }
+
     val brush get() = Icons.Rounded.Brush
     val pencil get() = Icons.Rounded.Edit
     val airbrush get() = Icons.Rounded.Air

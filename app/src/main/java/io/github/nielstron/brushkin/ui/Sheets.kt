@@ -43,8 +43,6 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.rounded.ArrowDownward
-import androidx.compose.material.icons.rounded.ArrowUpward
 import androidx.compose.material.icons.rounded.ContentCopy
 import androidx.compose.material.icons.rounded.CreateNewFolder
 import androidx.compose.material.icons.rounded.Delete
@@ -54,8 +52,8 @@ import androidx.compose.material.icons.rounded.ChevronRight
 import androidx.compose.material.icons.rounded.FolderOpen
 import androidx.compose.material.icons.rounded.ContentPaste
 import androidx.compose.material.icons.rounded.Image
+import androidx.compose.material.icons.rounded.Link
 import androidx.compose.material.icons.rounded.Lock
-import androidx.compose.material.icons.rounded.LockOpen
 import androidx.compose.material.icons.rounded.SwapHoriz
 import androidx.compose.material.icons.rounded.VerticalAlignBottom
 import androidx.compose.material.icons.rounded.Visibility
@@ -72,6 +70,7 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
@@ -79,6 +78,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.asImageBitmap
@@ -497,8 +497,14 @@ private fun LayersSheet(vm: EditorViewModel, info: DocInfo) {
                 color = Ui.accent, trackColor = Ui.panel2,
             )
         }
-        LazyColumn(Modifier.heightIn(max = 460.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
-            items(info.layers, key = { it.id }) { l -> LayerRow(vm, l, l.id == info.activeId, info) }
+        val screen = LocalConfiguration.current.screenHeightDp
+        val active = info.layers.firstOrNull { it.id == info.activeId }
+        if (screen < 560) Row(Modifier.heightIn(max = (screen - 170).coerceAtLeast(120).dp), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+            LayerList(vm, info, Modifier.weight(1f))
+            if (active != null) key(active.id) { ActiveLayerPanel(vm, active, info, Modifier.weight(1f)) }
+        } else {
+            LayerList(vm, info, Modifier.heightIn(max = (screen * 0.42f).dp))
+            if (active != null) key(active.id) { ActiveLayerPanel(vm, active, info, Modifier.padding(top = 8.dp).heightIn(max = (screen * 0.33f).dp)) }
         }
         Row(Modifier.fillMaxWidth().padding(vertical = 12.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             Row(
@@ -542,101 +548,55 @@ private fun SquareAction(icon: androidx.compose.ui.graphics.vector.ImageVector, 
     }
 }
 
+/** Everything about the active layer, below the list so that the rows stay put. */
+@OptIn(ExperimentalLayoutApi::class)
 @Composable
-private fun LayerRow(vm: EditorViewModel, l: LayerInfo, active: Boolean, info: DocInfo) {
+private fun ActiveLayerPanel(vm: EditorViewModel, l: LayerInfo, info: DocInfo, modifier: Modifier) {
     val e = vm.engine
     var opacity by remember(l.id, l.opacity) { mutableStateOf(l.opacity) }
     var renaming by remember { mutableStateOf(false) }
     Column(
-        Modifier.fillMaxWidth().clip(RoundedCornerShape(14.dp))
-            .background(if (active) Color(0xFF2A2822) else Color.Transparent)
-            .border(1.dp, if (active) Color(0xFF4A4232) else Color.Transparent, RoundedCornerShape(14.dp))
+        modifier.fillMaxWidth().clip(RoundedCornerShape(14.dp)).background(Color(0xFF2A2822))
+            .border(1.dp, Color(0xFF4A4232), RoundedCornerShape(14.dp))
+            .verticalScroll(rememberScrollState()).padding(start = 12.dp, end = 12.dp, top = 2.dp, bottom = 10.dp),
     ) {
-        Row(Modifier.fillMaxWidth().height(60.dp).clickable { e.setActive(l.id) }.padding(start = (l.depth * 18).dp), verticalAlignment = Alignment.CenterVertically) {
-            if (l.isGroup) IconButton(onClick = { e.toggleExpanded(l.id) }, modifier = Modifier.size(32.dp, 48.dp)) {
-                Icon(if (l.expanded) Icons.Rounded.ExpandMore else Icons.Rounded.ChevronRight, if (l.expanded) "Collapse group" else "Expand group", tint = Ui.muted)
-            }
-            IconButton(onClick = { e.setLayer(l.id, if (l.visible) "Hide Layer" else "Show Layer") { it.copy(visible = !it.visible) } }) {
-                Icon(if (l.visible) Icons.Rounded.Visibility else Icons.Rounded.VisibilityOff, if (l.visible) "Hide ${l.name}" else "Show ${l.name}", tint = if (l.visible) Ui.text else Ui.muted)
-            }
-            // Tap the layer or mask thumbnail to choose what tools edit (like GIMP).
-            val editingPixels = active && !l.editMask
-            Box(
-                Modifier.size(52.dp, 42.dp).clip(RoundedCornerShape(6.dp)).background(Color(0xFF3A3A40))
-                    .border(2.dp, if (l.hasMask && editingPixels) Ui.accent else Color.Transparent, RoundedCornerShape(6.dp))
-                    .clickable(onClickLabel = "Edit layer pixels") { e.setEditMask(l.id, false) },
-                contentAlignment = Alignment.Center,
-            ) {
-                l.thumb?.let { Image(it.asImageBitmap(), null, Modifier.fillMaxWidth().aspectRatio(it.width.toFloat() / it.height)) }
-            }
-            if (l.hasMask) {
-                Spacer(Modifier.width(4.dp))
-                Box(
-                    Modifier.size(34.dp, 42.dp).clip(RoundedCornerShape(6.dp)).background(Color.White)
-                        .border(2.dp, if (active && l.editMask) Ui.accent else Color.Transparent, RoundedCornerShape(6.dp))
-                        .clickable(onClickLabel = "Edit layer mask") { e.setEditMask(l.id, true) },
-                    contentAlignment = Alignment.Center,
-                ) {
-                    l.maskThumb?.let { Image(it.asImageBitmap(), "Layer mask", Modifier.fillMaxWidth().aspectRatio(it.width.toFloat() / it.height), alpha = if (l.maskEnabled) 1f else 0.35f) }
-                }
-            }
-            Column(Modifier.weight(1f).padding(start = 10.dp)) {
-                Text(l.name, color = if (l.visible) Ui.text else Ui.muted, fontSize = 14.sp, fontWeight = if (active) FontWeight.SemiBold else FontWeight.Normal, maxLines = 1)
-                val sub = buildList {
-                    if (l.isGroup) add("Group"); if (l.isText) add("Text"); add(l.mode.label); if (l.opacity < 1f) add("${(l.opacity * 100).roundToInt()}%"); if (l.lockAlpha) add("alpha locked")
-                    if (l.effects.isNotEmpty()) add("${l.effects.size} effect" + if (l.effects.size > 1) "s" else "")
-                    if (l.lockPosition) add("position locked"); if (l.linked) add("linked"); if (l.bounds != null) add("${l.bounds.width()}×${l.bounds.height()}")
-                    if (active && l.editMask) add("editing mask") else if (l.hasMask && !l.maskEnabled) add("mask off")
-                }.joinToString(" · ")
-                Text(sub, color = Ui.muted, fontSize = 12.sp, maxLines = 1)
-            }
-            if (l.lockAlpha) Icon(Icons.Rounded.Lock, null, tint = Ui.muted, modifier = Modifier.size(16.dp).padding(end = 4.dp))
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Text(l.name, color = Ui.text, fontSize = 14.sp, fontWeight = FontWeight.SemiBold, maxLines = 1, modifier = Modifier.weight(1f))
+            IconButton(onClick = { renaming = true }) { Icon(Icons.Rounded.Edit, "Rename layer", tint = Ui.text) }
         }
-        if (active) Column(Modifier.padding(horizontal = 12.dp).padding(bottom = 10.dp)) {
-            ModePicker(l.mode, group = l.isGroup) { m -> e.setLayer(l.id, "Layer Mode") { it.copy(mode = m) } }
-            LabeledSlider("Opacity", opacity, 0f..1f, "${(opacity * 100).roundToInt()}", {
-                opacity = it; e.setLayer(l.id, "Layer Opacity", commit = false) { x -> x.copy(opacity = it) }
-            }, onDone = { e.setLayer(l.id, "Layer Opacity", commit = true) { x -> x.copy(opacity = opacity) } })
-            Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(6.dp), verticalAlignment = Alignment.CenterVertically) {
-                Chip("Lock alpha", l.lockAlpha, if (l.lockAlpha) Icons.Rounded.Lock else Icons.Rounded.LockOpen) { e.setLayer(l.id, "Lock Alpha") { it.copy(lockAlpha = !it.lockAlpha) } }
-                Chip("Lock position", l.lockPosition) { e.setLayer(l.id, "Lock Position") { it.copy(lockPosition = !it.lockPosition) } }
-                Chip("Link", l.linked) { e.setLayer(l.id, "Link Layer") { it.copy(linked = !it.linked) } }
-                IconButton(onClick = { e.moveLayer(l.id, +1) }) { Icon(Icons.Rounded.ArrowUpward, "Raise layer", tint = Ui.text) }
-                IconButton(onClick = { e.moveLayer(l.id, -1) }) { Icon(Icons.Rounded.ArrowDownward, "Lower layer", tint = Ui.text) }
-                IconButton(onClick = { renaming = true }) { Icon(Icons.Rounded.Edit, "Rename layer", tint = Ui.text) }
-            }
-            if (l.effects.isNotEmpty()) {
-                LayerEffects(l.effects,
-                    onToggle = { i -> e.setEffects(l.id, "Toggle Effect") { list -> list.mapIndexed { k, x -> if (k == i) x.copy(visible = !x.visible) else x } } },
-                    onRemove = { i -> e.setEffects(l.id, "Remove Effect") { list -> list.filterIndexed { k, _ -> k != i } } },
-                    onMerge = { e.mergeEffects(l.id) })
-            }
-            Spacer(Modifier.height(6.dp))
-            Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                if (l.isText) Chip("Edit text", false, ToolIcons.text) { vm.sheet = Sheet.NONE; vm.dialog = "text-edit:${l.id}" }
-                if (l.depth > 0) Chip("Move out of group", false) { e.moveOutOfGroup(l.id) }
-                Chip("Into group above", false) { e.moveIntoGroupAbove(l.id) }
-                if (!l.isGroup) Chip("Put in new group", false) { e.groupActive() }
-            }
-            Spacer(Modifier.height(6.dp))
-            Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                if (!l.hasMask) {
-                    var open by remember { mutableStateOf(false) }
-                    Box {
-                        Chip("Add mask", false) { open = true }
-                        DropdownMenu(open, { open = false }) {
-                            for (m in io.github.nielstron.brushkin.engine.Engine.MaskInit.entries) {
-                                if (m == io.github.nielstron.brushkin.engine.Engine.MaskInit.SELECTION && !info.hasSelection) continue
-                                DropdownMenuItem(text = { Text(m.label) }, onClick = { open = false; e.addMask(m) })
-                            }
+        ModePicker(l.mode, group = l.isGroup) { m -> e.setLayer(l.id, "Layer Mode") { it.copy(mode = m) } }
+        LabeledSlider("Opacity", opacity, 0f..1f, "${(opacity * 100).roundToInt()}", {
+            opacity = it; e.setLayer(l.id, "Layer Opacity", commit = false) { x -> x.copy(opacity = it) }
+        }, onDone = { e.setLayer(l.id, "Layer Opacity", commit = true) { x -> x.copy(opacity = opacity) } })
+        if (l.effects.isNotEmpty()) {
+            LayerEffects(l.effects,
+                onToggle = { i -> e.setEffects(l.id, "Toggle Effect") { list -> list.mapIndexed { k, x -> if (k == i) x.copy(visible = !x.visible) else x } } },
+                onRemove = { i -> e.setEffects(l.id, "Remove Effect") { list -> list.filterIndexed { k, _ -> k != i } } },
+                onMerge = { e.mergeEffects(l.id) })
+        }
+        Spacer(Modifier.height(6.dp))
+        FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+            Chip("Lock alpha", l.lockAlpha, ToolIcons.alphaLock) { e.setLayer(l.id, "Lock Alpha") { it.copy(lockAlpha = !it.lockAlpha) } }
+            Chip("Lock position", l.lockPosition, Icons.Rounded.Lock) { e.setLayer(l.id, "Lock Position") { it.copy(lockPosition = !it.lockPosition) } }
+            Chip("Link", l.linked, Icons.Rounded.Link) { e.setLayer(l.id, "Link Layer") { it.copy(linked = !it.linked) } }
+            if (l.isText) Chip("Edit text", false, ToolIcons.text) { vm.sheet = Sheet.NONE; vm.dialog = "text-edit:${l.id}" }
+            if (!l.isGroup) Chip("Put in new group", false) { e.groupActive() }
+            if (!l.hasMask) {
+                var open by remember { mutableStateOf(false) }
+                Box {
+                    Chip("Add mask", false) { open = true }
+                    DropdownMenu(open, { open = false }) {
+                        for (m in io.github.nielstron.brushkin.engine.Engine.MaskInit.entries) {
+                            if (m == io.github.nielstron.brushkin.engine.Engine.MaskInit.SELECTION && !info.hasSelection) continue
+                            DropdownMenuItem(text = { Text(m.label) }, onClick = { open = false; e.addMask(m) })
                         }
                     }
-                } else {
-                    Chip(if (l.maskEnabled) "Disable mask" else "Enable mask", !l.maskEnabled) { e.setLayer(l.id, "Toggle Mask") { it.copy(maskEnabled = !it.maskEnabled) } }
-                    Chip("Apply mask", false) { e.applyMask() }
-                    Chip("Delete mask", false) { e.deleteMask() }
-                    Chip("Mask to selection", false) { e.maskToSelection() }
                 }
+            } else {
+                Chip(if (l.maskEnabled) "Disable mask" else "Enable mask", !l.maskEnabled) { e.setLayer(l.id, "Toggle Mask") { it.copy(maskEnabled = !it.maskEnabled) } }
+                Chip("Apply mask", false) { e.applyMask() }
+                Chip("Delete mask", false) { e.deleteMask() }
+                Chip("Mask to selection", false) { e.maskToSelection() }
             }
         }
     }
