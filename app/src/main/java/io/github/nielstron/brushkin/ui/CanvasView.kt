@@ -700,7 +700,7 @@ class CanvasView(context: Context, private val vm: EditorViewModel) : View(conte
 
     // ------------------------------------------------------------------ input
 
-    private enum class Mode { NONE, STROKE, VIEW, PAN, SHAPE, PICK, FLOAT_MOVE, FLOAT_SCALE, FLOAT_ROTATE, CROP, IGNORE, PATH_POINT, PATH_HANDLE, PATH_NEW,
+    private enum class Mode { FILTER_POINT, NONE, STROKE, VIEW, PAN, SHAPE, PICK, FLOAT_MOVE, FLOAT_SCALE, FLOAT_ROTATE, CROP, IGNORE, PATH_POINT, PATH_HANDLE, PATH_NEW,
         FLOAT_SHEAR, FLOAT_CORNER, FLOAT_3D, FLOAT_HANDLE, WARP_PUSH, CAGE_DRAG, GUIDE, PLANE_CORNER, FOCUS }
 
     private var mode = Mode.NONE
@@ -750,7 +750,7 @@ class CanvasView(context: Context, private val vm: EditorViewModel) : View(conte
         when (e.actionMasked) {
             MotionEvent.ACTION_DOWN -> {
                 effectGesture = vm.dialog?.startsWith("filter:") == true
-                navigationOnly = effectGesture && vm.filterPicking == null
+                navigationOnly = effectGesture && vm.filterPicking == null && vm.filterPoint == null
                 maxPointers = 1; moved = false
                 downTime = e.eventTime
                 down = PointF(e.x, e.y); downDoc = docPoint(e.x, e.y)
@@ -857,6 +857,7 @@ class CanvasView(context: Context, private val vm: EditorViewModel) : View(conte
             return
         }
         if (vm.pipette) { mode = Mode.PICK; pick(e.x, e.y); return }
+        vm.filterPoint?.let { place -> mode = Mode.FILTER_POINT; place(downDoc.x, downDoc.y); return }
         // A filter panel is picking a color from the image.
         vm.filterPicking?.let { cb ->
             mode = Mode.IGNORE
@@ -958,6 +959,7 @@ class CanvasView(context: Context, private val vm: EditorViewModel) : View(conte
             }
             Mode.PICK -> pick(e.x, e.y)
             Mode.FOCUS -> { vm.dofFocus = PointF(d.x, d.y); invalidate() }
+            Mode.FILTER_POINT -> vm.filterPoint?.invoke(d.x, d.y)
             Mode.CROP -> {
                 var w = d.x - downDoc.x; var h = d.y - downDoc.y
                 vm.aspect?.let { r -> val m = max(abs(w), abs(h) * r); w = Math.copySign(m, w); h = Math.copySign(m / r, h) }

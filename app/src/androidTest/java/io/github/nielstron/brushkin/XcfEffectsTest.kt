@@ -60,6 +60,14 @@ class XcfEffectsTest {
         assertEquals(listOf(polar), back.effects)
     }
 
+    @Test fun colorsSurviveEveryFormat() {
+        val shadow = LayerEffect("Drop Shadow", defaults("Drop Shadow"), colors = mapOf("color" to 0xFF336699.toInt()))
+        assertEquals(listOf(shadow), roundTrip(layer(listOf(shadow))).second.effects)
+        val out = ByteArrayOutputStream(); val l = layer(listOf(shadow))
+        Ora.write(Stack(w, h, listOf(l), l.id), out)
+        assertEquals(listOf(shadow), Ora.read(out.toByteArray().inputStream()).all.single().effects)
+    }
+
     @Test fun textLayersSurvive() {
         val text = TextSpec("Hi", 48f)
         val back = roundTrip(layer(emptyList()).copy(text = text)).second

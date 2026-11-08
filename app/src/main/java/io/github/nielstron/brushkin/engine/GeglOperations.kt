@@ -53,12 +53,31 @@ object GeglOperations {
 
     val all: Map<String, String> = menu + listed
     private val titles = all.entries.associate { (title, id) -> "gegl:$id" to title }
-    private val properties = ConcurrentHashMap<String, List<JSONObject>>()
+    private val described = ConcurrentHashMap<String, List<JSONObject>>()
+    private val infos = ConcurrentHashMap<String, JSONObject>()
+    @Volatile private var menuSections: Map<String, String> = emptyMap()
 
+    private fun described(operation: String) = described.getOrPut(operation) {
+        JSONArray(NativeGegl.describe(operation)).let { a -> List(a.length()) { a.getJSONObject(it) } }
+    }
     fun operation(title: String): String? = all[title]?.let { "gegl:$it" }
     fun title(operation: String): String? = titles[operation]
-    /** In the order a [LayerEffect]'s parameters use. */
-    fun properties(operation: String): List<JSONObject> = properties.getOrPut(operation) {
-        JSONArray(NativeGegl.describe(operation)).let { a -> List(a.length()) { a.getJSONObject(it) } }
+    /** Numeric and choice properties, in the order a [LayerEffect]'s parameters use. */
+    fun properties(operation: String): List<JSONObject> = described(operation).filter { it.getString("kind") != "color" }
+    fun colorProperties(operation: String): List<JSONObject> = described(operation).filter { it.getString("kind") == "color" }
+    fun description(operation: String): String = info(operation).getString("description")
+    private fun info(operation: String) = infos.getOrPut(operation) { JSONObject(NativeGegl.operationInfo(operation)) }
+
+    /** The menu section for a [menu] filter; plain "Filters" until [loadMenuSections] has run. */
+    fun menuSection(title: String): String = menuSections[title] ?: "Filters"
+
+    /** Groups [menu] by GEGL's first category; a category with one filter goes in "More". */
+    fun loadMenuSections() {
+        val category = menu.mapValues { (_, id) -> info("gegl:$id").getString("categories").substringBefore(':').ifBlank { "more" } }
+        val counts = category.values.groupingBy { it }.eachCount()
+        menuSections = category.mapValues { (_, c) ->
+            val name = when { counts.getValue(c) < 2 -> "More"; c == "tonemapping" -> "Tone mapping"; else -> c.replace('-', ' ').replaceFirstChar { it.uppercase() } }
+            "Filters: $name"
+        }
     }
 }

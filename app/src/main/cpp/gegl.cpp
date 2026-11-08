@@ -390,31 +390,59 @@ Java_io_github_nielstron_brushkin_engine_NativeGegl_describe(JNIEnv *env, jobjec
         else if (G_IS_PARAM_SPEC_UINT(p)) { auto *s=G_PARAM_SPEC_UINT(p); low=s->minimum; high=s->maximum; def=s->default_value; kind="uint"; }
         else if (G_IS_PARAM_SPEC_BOOLEAN(p)) { def=G_PARAM_SPEC_BOOLEAN(p)->default_value; kind="boolean"; }
         else if (G_IS_PARAM_SPEC_ENUM(p)) { auto *s=G_PARAM_SPEC_ENUM(p); low=s->enum_class->minimum; high=s->enum_class->maximum; def=s->default_value; kind="enum"; }
-        else continue; // Color and object inputs need dedicated controls, not numeric sliders.
+        else if (GEGL_IS_PARAM_SPEC_COLOR(p)) {
+            guint8 rgba[4] = {0,0,0,0};
+            if (GeglColor *color = gegl_param_spec_color_get_default(p)) gegl_color_get_pixel(color, babl_format("R'G'B'A u8"), rgba);
+            def = (uint32_t(rgba[3])<<24) | (uint32_t(rgba[0])<<16) | (uint32_t(rgba[1])<<8) | rgba[2]; kind="color";
+        }
+        else continue; // Object inputs need dedicated controls.
+        if (GEGL_IS_PARAM_SPEC_SEED(p)) kind="seed";
         const double allowedLow=low, allowedHigh=high;
-        double gamma=1.0;
+        double gamma=1.0, digits=0;
         if (GEGL_IS_PARAM_SPEC_DOUBLE(p)) {
-            auto *s=GEGL_PARAM_SPEC_DOUBLE(p); low=s->ui_minimum; high=s->ui_maximum; gamma=s->ui_gamma;
+            auto *s=GEGL_PARAM_SPEC_DOUBLE(p); low=s->ui_minimum; high=s->ui_maximum; gamma=s->ui_gamma; digits=s->ui_digits;
         } else if (GEGL_IS_PARAM_SPEC_INT(p)) {
             auto *s=GEGL_PARAM_SPEC_INT(p); low=s->ui_minimum; high=s->ui_maximum; gamma=s->ui_gamma;
         }
         json_builder_begin_object(json);
         text("key",p->name); text("label",g_param_spec_get_nick(p)); text("kind",kind);
         number("min",low); number("max",high); number("default",def);
-        number("allowedMin",allowedLow); number("allowedMax",allowedHigh); number("gamma",gamma);
+        number("allowedMin",allowedLow); number("allowedMax",allowedHigh); number("gamma",gamma); number("digits",digits);
+        const char *blurb=g_param_spec_get_blurb(p); text("description",blurb ? blurb : "");
         const char *unit=gegl_param_spec_get_property_key(p,"unit"); text("unit",unit ? unit : "");
-        for (const char *key : {"visible","sensitive"}) { const char *condition=gegl_param_spec_get_property_key(p,key); text(key,condition ? condition : ""); }
+        for (const char *key : {"visible","sensitive","axis","direction","role"}) { const char *value=gegl_param_spec_get_property_key(p,key); text(key,value ? value : ""); }
+        json_builder_set_member_name(json,"meta"); json_builder_begin_object(json);
+        for (const char *key : {"label","description","range-label","range-sorted","rgb-label","cmyk-label","hsl-label","bw-label","polar-label","polar-description","cartesian-label","cartesian-description","non-independent-label","alt-label"})
+            if (const char *value=gegl_param_spec_get_property_key(p,key)) text(key,value);
+        json_builder_end_object(json);
         if (G_IS_PARAM_SPEC_ENUM(p)) {
             json_builder_set_member_name(json,"choices"); json_builder_begin_array(json);
             auto *ec=G_PARAM_SPEC_ENUM(p)->enum_class;
             for (guint j=0;j<ec->n_values;j++) {
-                json_builder_begin_object(json); number("value",ec->values[j].value); text("label",ec->values[j].value_nick); json_builder_end_object(json);
+                json_builder_begin_object(json); number("value",ec->values[j].value); text("label",ec->values[j].value_name); text("nick",ec->values[j].value_nick); json_builder_end_object(json);
             }
             json_builder_end_array(json);
         }
         json_builder_end_object(json);
     }
     g_free(props); json_builder_end_array(json);
+    JsonNode *root=json_builder_get_root(json); char *encoded=json_to_string(root,FALSE);
+    jstring result=env->NewStringUTF(encoded);
+    g_free(encoded); json_node_free(root); g_object_unref(json); return result;
+}
+
+extern "C" JNIEXPORT jstring JNICALL
+Java_io_github_nielstron_brushkin_engine_NativeGegl_operationInfo(JNIEnv *env, jobject, jstring operation) {
+    std::lock_guard<std::mutex> lock(gate);
+    auto op = utf(env, operation);
+    if (!gegl_has_operation(op.c_str())) { fail(env, "Unavailable GEGL operation: " + op); return nullptr; }
+    JsonBuilder *json = json_builder_new();
+    json_builder_begin_object(json);
+    for (const char *key : {"description","categories"}) {
+        const char *value = gegl_operation_get_key(op.c_str(), key);
+        json_builder_set_member_name(json,key); json_builder_add_string_value(json,value ? value : "");
+    }
+    json_builder_end_object(json);
     JsonNode *root=json_builder_get_root(json); char *encoded=json_to_string(root,FALSE);
     jstring result=env->NewStringUTF(encoded);
     g_free(encoded); json_node_free(root); g_object_unref(json); return result;

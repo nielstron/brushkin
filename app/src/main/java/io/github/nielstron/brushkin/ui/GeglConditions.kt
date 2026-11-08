@@ -58,19 +58,60 @@ private class ConditionParser(val text: String, val key: String, val self: Param
         var match = false
         while (!accept('}')) {
             val nick = name()
-            val choice = p.choices.firstOrNull { it.second == nick } ?: throw ConditionError("unknown value '$nick' of '$name'")
-            if (choice.first == value) match = true
+            val index = p.choices.indices.firstOrNull { (p.nicks.getOrNull(it) ?: p.choices[it].second) == nick } ?: throw ConditionError("unknown value '$nick' of '$name'")
+            if (p.choices[index].first == value) match = true
             if (!accept(',') && peek() != '}') throw ConditionError("expected ',' in '$text'")
         }
         return match
     }
+    /** A quoted string, a key holding the text, `$key`, or `[condition : value, ...]`. Null if no condition held. */
+    fun parseString(): String? {
+        val result = string()
+        if (peek() != null) throw ConditionError("trailing tokens in '$text'")
+        return result
+    }
+    private fun string(): String? = when (peek()) {
+        '\'' -> quoted()
+        '[' -> selection()
+        '$' -> { at++; val first = name(); val (target, field) = if (accept('.')) property(first) to name() else self to first
+            target.meta[field]?.let { ConditionParser(it, field, target, params, current, depth + 1).parseStringChecked() } }
+        else -> name().let { self.meta[it] ?: throw ConditionError("key '$it' not found") }
+    }
+    private fun parseStringChecked(): String? { if (depth > MAX_DEPTH) throw ConditionError("maximal nesting level exceeded"); return parseString() }
+    private fun quoted(): String {
+        expect('\'')
+        val out = StringBuilder()
+        while (true) {
+            val c = text.getOrNull(at++) ?: throw ConditionError("unterminated string in '$text'")
+            if (c == '\'') return out.toString()
+            out.append(if (c == '\\') text.getOrNull(at++) ?: throw ConditionError("unterminated string in '$text'") else c)
+        }
+    }
+    private fun selection(): String? {
+        expect('[')
+        var result: String? = null
+        var found = false
+        while (!accept(']')) {
+            val holds = or()
+            expect(':')
+            val value = string()
+            if (holds && !found) { result = value; found = true }
+            if (!accept(',') && peek() != ']') throw ConditionError("expected ',' in '$text'")
+        }
+        return result
+    }
+
     private fun reference(): Boolean {
         val first = name()
         val (target, field) = if (accept('.')) property(first) to name() else self to first
-        val expression = when (field) { "visible" -> target.visibleWhen; "sensitive" -> target.enabledWhen; else -> throw ConditionError("key '$field' not found") }
+        val expression = when (field) { "visible" -> target.visibleWhen; "sensitive" -> target.enabledWhen; else -> target.meta[field] ?: throw ConditionError("key '$field' not found") }
         return evaluateCondition(expression, field, target, params, current, depth + 1)
     }
 }
+
+/** Throws [ConditionError] if [expression] isn't valid; null if no selection branch held. */
+internal fun evaluateString(expression: String, key: String, self: Param, params: List<Param>, current: Map<String, Float>): String? =
+    ConditionParser(expression, key, self, params, current, 0).parseString()
 
 /** A condition that can't be evaluated counts as true, as in GIMP. */
 private fun holds(expression: String, key: String, p: Param, params: List<Param>, current: Map<String, Float>) =
@@ -78,3 +119,25 @@ private fun holds(expression: String, key: String, p: Param, params: List<Param>
 
 internal fun Param.isVisible(params: List<Param>, current: Map<String, Float>) = holds(visibleWhen, "visible", this, params, current)
 internal fun Param.isEnabled(params: List<Param>, current: Map<String, Float>) = holds(enabledWhen, "sensitive", this, params, current)
+private fun Param.text(key: String, fallback: String, params: List<Param>, current: Map<String, Float>) =
+    meta[key]?.let { try { evaluateString(it, key, this, params, current) } catch (e: ConditionError) { null } } ?: fallback
+internal fun Param.displayLabel(params: List<Param>, current: Map<String, Float>) = text("label", label, params, current)
+/** Blank when GEGL's description only repeats the label. */
+internal fun Param.displayDescription(params: List<Param>, current: Map<String, Float>) =
+    text("description", description, params, current).takeIf { addsInformation(displayLabel(params, current), it) }.orEmpty()
+
+private val FILLER_WORDS = ("a an the of to for in on at by be is are as and or if it its this that with from should use used using value values amount " +
+    "set sets adjust adjusts adjustment apply applies applied control controls specify specifies define defines determine determines number when will which into " +
+    "per create creates effect image buffer filter operation result make makes change changes input output").split(' ').toSet()
+
+private fun meaningfulWords(text: String) = Regex("[a-z0-9]+").findAll(text.lowercase()).map { it.value }.filter { it !in FILLER_WORDS }.toList()
+private fun sameWord(a: String, b: String) = a == b || (a.length >= 4 && b.length >= 4 && a.take(4) == b.take(4))
+
+/** False when at least 70% of [text]'s meaningful words are already in [label]. */
+internal fun addsInformation(label: String, text: String): Boolean {
+    val words = meaningfulWords(text)
+    if (words.isEmpty()) return false
+    val named = meaningfulWords(label)
+    val joined = named.joinToString("")
+    return words.count { w -> named.any { sameWord(w, it) } || (w.length > 4 && w in joined) } < words.size * 0.7
+}

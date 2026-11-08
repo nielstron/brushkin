@@ -21,7 +21,7 @@ internal class EffectState(val type: String, val params: List<Pair<String, Strin
                 val title = GeglOperations.title(type) ?: return null
                 LayerEffect(title, GeglOperations.properties(type).map { p ->
                     named[p.getString("key")]?.toFloatOrNull() ?: p.getDouble("default").toFloat()
-                }, visible = visible)
+                }, visible = visible, colors = GeglOperations.colorProperties(type).map { it.getString("key") }.filter { it in named }.associateWith { color(named[it]) })
             }
         }
     }
@@ -40,7 +40,7 @@ internal class EffectState(val type: String, val params: List<Pair<String, Strin
         fun of(e: LayerEffect): EffectState {
             val operation = if (e.paramsVersion >= 2) GeglOperations.operation(e.name) else null
             return when {
-                operation != null -> EffectState(operation, numbers(GeglOperations.properties(operation).map { it.getString("key") }, e.params), e.visible)
+                operation != null -> EffectState(operation, numbers(GeglOperations.properties(operation).map { it.getString("key") }, e.params) + e.colors.map { (k, v) -> k to hex(v) }, e.visible)
                 e.paramsVersion >= 2 && e.name == "Colorize" -> EffectState(COLORIZE, numbers(listOf("hue", "saturation", "lightness"), e.params), e.visible)
                 e.paramsVersion >= 2 && e.name == "Color Balance" -> EffectState(COLOR_BALANCE, numbers(listOf("cyan-red", "magenta-green", "yellow-blue"), e.params), e.visible)
                 e.paramsVersion >= 2 && e.name == "Color to Alpha" -> EffectState(COLOR_TO_ALPHA, listOf("color" to hex(e.bg)), e.visible)

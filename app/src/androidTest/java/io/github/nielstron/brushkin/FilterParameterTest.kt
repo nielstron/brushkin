@@ -34,6 +34,21 @@ class FilterParameterTest {
         org.junit.Assert.assertEquals(1f,value,0f)
     }
 
+    @Test fun rangeRowShowsOneLabelTwoNumbersAndBothHandles() {
+        val low=Param("Low",0f..1f,0.2f,key="low",role="range-start"); val high=Param("High",0f..1f,0.8f,key="high",role="range-end")
+        var lowValue by mutableFloatStateOf(0.2f); var highValue by mutableFloatStateOf(0.8f)
+        compose.setContent { io.github.nielstron.brushkin.ui.FilterRangeRow(low,high,lowValue,highValue,label="Threshold",onLow={ lowValue=it },onHigh={ highValue=it }) }
+        compose.onNodeWithText("Threshold").assertExists()
+        compose.onNodeWithText("Low").assertDoesNotExist()
+        compose.onAllNodes(hasSetTextAction()).assertCountEquals(2)
+        val handles=compose.onAllNodes(SemanticsMatcher.keyIsDefined(SemanticsActions.SetProgress))
+        handles.assertCountEquals(2)
+        handles[0].performSemanticsAction(SemanticsActions.SetProgress) { it(0.5f) }
+        compose.waitForIdle()
+        org.junit.Assert.assertEquals(0.5f,lowValue,0.01f)
+        org.junit.Assert.assertEquals(0.8f,highValue,0.01f)
+    }
+
     @Test fun typedDecimalsAndSliderShareTheSameValue() {
         compose.setContent {
             var value by remember { mutableFloatStateOf(3f) }

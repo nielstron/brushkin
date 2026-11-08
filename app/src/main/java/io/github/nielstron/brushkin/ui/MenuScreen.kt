@@ -278,7 +278,7 @@ fun commands(vm: EditorViewModel, info: DocInfo, files: FileActions, view: () ->
         Cmd("Filters", "Unsharp Mask…", run = dlg("filter:Unsharp Mask")),
         Cmd("Filters", "Pixelize…", run = dlg("filter:Pixelize")),
         Cmd("Filters", "RGB Noise…", run = dlg("filter:RGB Noise")),
-    ) + GEGL_ACTIONS.keys.map { name -> Cmd("Filters", "$name…", run = dlg("filter:$name")) } + panelCommands(vm, info, files, view) + Tool.entries.filter { !it.isAction }.map { t -> Cmd("Tools", t.label, t.group.label, run = { vm.selectTool(t) }) }
+    ) + GEGL_ACTIONS.keys.map { name -> Cmd(io.github.nielstron.brushkin.engine.GeglOperations.menuSection(name), "$name…", run = dlg("filter:$name")) } + panelCommands(vm, info, files, view) + Tool.entries.filter { !it.isAction }.map { t -> Cmd("Tools", t.label, t.group.label, run = { vm.selectTool(t) }) }
 }
 
 @Composable

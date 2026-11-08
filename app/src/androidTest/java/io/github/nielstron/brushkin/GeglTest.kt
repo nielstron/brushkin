@@ -38,6 +38,41 @@ class GeglTest {
         assertEquals(255,out[1] ushr 24)
     }
 
+    @Test fun metadataReachesTheSettings() {
+        val vignette=geglSpecs.getValue("Vignette").params
+        assertEquals("Circle",vignette.first { it.key=="shape" }.choices.first().second)
+        assertEquals("circle",vignette.first { it.key=="shape" }.nicks.first())
+        val exposure=geglSpecs.getValue("Exposure").params.first { it.key=="black-level" }
+        assertTrue("Black level needs more than 2 decimals: ${exposure.digits}",exposure.digits>2)
+        assertTrue(geglSpecs.getValue("RGB Noise").params.first { it.key=="seed" }.seed)
+        val blur=geglSpecs.getValue("Gaussian Blur").params
+        assertEquals(mapOf(0 to 1),io.github.nielstron.brushkin.ui.axisPairs(blur))
+        assertEquals("pixel-distance",blur[0].unit)
+        assertFalse(blur[0].description.isBlank())
+        assertFalse(geglSpecs.getValue("Gaussian Blur").description.isBlank())
+        val lens=geglSpecs.getValue("Lens Blur").params
+        val start=lens.indexOfFirst { it.role=="range-start" }
+        assertTrue(io.github.nielstron.brushkin.ui.rangeEndAfter(lens,start))
+        assertEquals("Highlight threshold",lens[start].meta["range-label"])
+        val shadow=geglSpecs.getValue("Drop Shadow").colors.single { it.key=="color" }
+        assertEquals(0xFF000000.toInt(),shadow.color)
+    }
+
+    @Test fun categoriesGroupTheMenu() {
+        GeglOperations.loadMenuSections()
+        assertEquals("Filters: Blur",GeglOperations.menuSection("Box Blur"))
+        assertEquals("Filters: Tone mapping",GeglOperations.menuSection("Fattal Tone Mapping"))
+    }
+
+    @Test fun pickedColorReachesTheFilter() {
+        val src=IntArray(64*64) { 0xffffffff.toInt() }
+        val spec=geglSpecs.getValue("Vignette")
+        val values=spec.params.map { it.default }
+        val black=spec.build(values).apply(src,64,64)[0]
+        val red=spec.build(values,mapOf("color" to 0xffff0000.toInt())).apply(src,64,64)[0]
+        assertNotEquals(black,red)
+    }
+
     @Test fun everyGeglConditionEvaluates() {
         for ((name,spec) in geglSpecs) for (p in spec.params) {
             val current=spec.params.associate { it.key to it.default }

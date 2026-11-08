@@ -52,6 +52,7 @@ object Xcf {
     private const val ARG_ENUM = 5
     private const val ARG_CONFIG = 6
     private const val ARG_UINT = 7
+    private const val ARG_COLOR = 8
     private const val EFFECTS_PARASITE = "brushkin-effects"
     private const val TEXT_PARASITE = "brushkin-text"
     private const val METADATA_PARASITE = "brushkin-export-metadata"
@@ -60,8 +61,9 @@ object Xcf {
     /** GIMP discards a filter saved with another version; every other listed operation is 0:0. */
     private val GIMP_VERSIONS = mapOf("gegl:exposure" to "1:0")
     private const val GIMP_NON_LINEAR = 1f
+    private const val COLOR_FORMAT = "R'G'B'A float"
 
-    private class GimpArg(val name: String, val type: Int, val value: Float, val text: String = "")
+    private class GimpArg(val name: String, val type: Int, val value: Float, val text: String = "", val color: Int = 0)
     private class GimpFilter(val operation: String, val args: List<GimpArg>)
     private fun floats(vararg args: Pair<String, Float>) = args.map { (k, v) -> GimpArg(k, ARG_FLOAT, v) }
     private fun named(e: LayerEffect, operation: String) = GeglOperations.properties(operation).map { it.getString("key") }.zip(e.params).toMap()
@@ -110,15 +112,15 @@ object Xcf {
                 val operation = GeglOperations.operation(e.name)?.takeIf { it != GIMP_HIDDEN } ?: return null
                 GimpFilter(operation, GeglOperations.properties(operation).zip(e.params).map { (p, value) ->
                     GimpArg(p.getString("key"), when (p.getString("kind")) {
-                        "double" -> ARG_FLOAT; "int" -> ARG_INT; "uint" -> ARG_UINT; "boolean" -> ARG_BOOL; else -> ARG_ENUM
+                        "double" -> ARG_FLOAT; "int" -> ARG_INT; "uint", "seed" -> ARG_UINT; "boolean" -> ARG_BOOL; else -> ARG_ENUM
                     }, value)
-                })
+                } + e.colors.map { (key, color) -> GimpArg(key, ARG_COLOR, 0f, color = color) })
             }
         }
     }
 
     /** The effect for a filter in the file; null if Brushkin has no equivalent. */
-    private fun brushkinEffect(operation: String, args: Map<String, Float>, configText: String, visible: Boolean): LayerEffect? {
+    private fun brushkinEffect(operation: String, args: Map<String, Float>, configText: String, colors: Map<String, Int>, visible: Boolean): LayerEffect? {
         fun arg(key: String, default: Float) = args[key] ?: default
         fun gegl(title: String, op: String, values: Map<String, Float>) = LayerEffect(title,
             GeglOperations.properties(op).map { values[it.getString("key")] ?: it.getDouble("default").toFloat() }, visible = visible)
@@ -148,7 +150,10 @@ object Xcf {
                 val all = c["all"].orEmpty()
                 LayerEffect("Hue-Saturation", listOf(tidy((all["hue"] ?: 0f) * 180f), all["saturation"] ?: 0f, all["lightness"] ?: 0f), visible = visible, paramsVersion = 1)
             }
-            else -> GeglOperations.title(operation)?.let { title -> gegl(title, operation, args) }
+            else -> GeglOperations.title(operation)?.let { title ->
+                val known = GeglOperations.colorProperties(operation).map { it.getString("key") }
+                gegl(title, operation, args).copy(colors = colors.filterKeys { it in known })
+            }
         }
     }
 
@@ -212,6 +217,7 @@ object Xcf {
         var visible = true
         val args = HashMap<String, Float>()
         var configText = ""
+        val colors = HashMap<String, Int>()
         while (true) {
             val type = r.u32(); val len = r.u32()
             val start = b.position()
@@ -225,12 +231,26 @@ object Xcf {
                         ARG_UINT -> args[name] = (r.u32().toLong() and 0xFFFFFFFFL).toFloat()
                         ARG_FLOAT -> args[name] = b.float
                         ARG_CONFIG -> configText = r.str()
+                        ARG_COLOR -> readColor(r, b)?.let { colors[name] = it }
                     }
                 }
             }
             b.position(start + len)
         }
-        return brushkinEffect(operation, args, configText, visible)
+        return brushkinEffect(operation, args, configText, colors, visible)
+    }
+
+    /** GIMP's stored color: a babl format, its pixel bytes and a profile. Null for other formats. */
+    private fun readColor(r: Reader, b: ByteBuffer): Int? {
+        val format = r.str()
+        val data = ByteArray(r.u32()); b.get(data)
+        fun channel(v: Float) = (v.coerceIn(0f, 1f) * 255f).roundToInt()
+        val c = when {
+            format == COLOR_FORMAT && data.size == 16 -> ByteBuffer.wrap(data).order(java.nio.ByteOrder.LITTLE_ENDIAN).let { p -> IntArray(4) { channel(p.float) } }
+            format == "R'G'B'A u8" && data.size == 4 -> IntArray(4) { data[it].toInt() and 0xFF }
+            else -> return null
+        }
+        return (c[3] shl 24) or (c[0] shl 16) or (c[1] shl 8) or c[2]
     }
 
     /** Effects in the order they apply; ones only Brushkin runs go back where they were. */
@@ -663,6 +683,11 @@ object Xcf {
                 ARG_FLOAT -> f32(a.value)
                 ARG_BOOL -> u32(if (a.value != 0f) 1 else 0)
                 ARG_CONFIG -> xstr(a.text)
+                ARG_COLOR -> {
+                    xstr(COLOR_FORMAT); u32(16)
+                    for (shift in intArrayOf(16, 8, 0, 24)) u32(Integer.reverseBytes(java.lang.Float.floatToIntBits(((a.color ushr shift) and 0xFF) / 255f)))
+                    u32(0) // no profile
+                }
                 ARG_UINT -> u32(a.value.toLong().toInt())
                 else -> u32(a.value.toInt())
             }

@@ -756,6 +756,8 @@ class EditorViewModel(app: Application) : AndroidViewModel(app) {
 
     /** While set, a touch on the canvas picks the color under it for an open filter panel. */
     var filterPicking by mutableStateOf<((Int) -> Unit)?>(null)
+    /** A filter panel is placing a point: receives image coordinates as the finger moves. */
+    var filterPoint by mutableStateOf<((Float, Float) -> Unit)?>(null)
 
     /** Picks [t] from the tool list: a tool becomes current, an action runs. */
     fun pickTool(t: Tool) {

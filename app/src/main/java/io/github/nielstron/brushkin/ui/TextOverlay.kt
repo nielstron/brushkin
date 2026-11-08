@@ -329,7 +329,7 @@ private fun FontPicker(family: String, onPick: (String) -> Unit) {
  * outline) with a menu of colors: foreground, background, black, white and recent ones.
  */
 @Composable
-private fun ColorPicker(vm: EditorViewModel, label: String, color: Int?, outline: Boolean, onPick: (Int?) -> Unit) {
+internal fun ColorPicker(vm: EditorViewModel, label: String, color: Int?, outline: Boolean, onPick: (Int?) -> Unit) {
     var open by remember { mutableStateOf(false) }
     Box {
         Box(

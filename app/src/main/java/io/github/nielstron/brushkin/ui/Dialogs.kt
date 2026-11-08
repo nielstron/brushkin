@@ -299,9 +299,14 @@ val FONTS = listOf("Sans" to "sans-serif", "Serif" to "serif", "Mono" to "monosp
 // ---------------------------------------------------------------------------- filters
 
 /** A filter parameter; [default] is what the panel opens with and Reset goes back to. */
-internal data class Param(val label: String, val range: ClosedFloatingPointRange<Float>, val default: Float, val choices: List<Pair<Float, String>> = emptyList(), val integral: Boolean = false, val allowedRange: ClosedFloatingPointRange<Float> = range, val gamma: Float = 1f, val toggle: Boolean = false, val key: String = "", val visibleWhen: String = "", val enabledWhen: String = "", val fmt: (Float) -> String = { "%.2f".format(it) })
+internal data class Param(val label: String, val range: ClosedFloatingPointRange<Float>, val default: Float, val choices: List<Pair<Float, String>> = emptyList(), val integral: Boolean = false, val allowedRange: ClosedFloatingPointRange<Float> = range, val gamma: Float = 1f, val toggle: Boolean = false, val key: String = "", val visibleWhen: String = "", val enabledWhen: String = "",
+    val nicks: List<String> = emptyList(), val seed: Boolean = false, val digits: Int = 2, val unit: String = "", val axis: String = "", val direction: String = "", val role: String = "",
+    val description: String = "", val meta: Map<String, String> = emptyMap(), val color: Int? = null, val fmt: (Float) -> String = { "%.2f".format(it) })
 
-internal class FilterSpec(val params: List<Param>, val build: (List<Float>) -> Filter)
+internal class FilterSpec(val params: List<Param>, val colors: List<Param>, val description: String, private val render: (List<Float>, Map<String, Int>) -> Filter) {
+    constructor(params: List<Param>, build: (List<Float>) -> Filter) : this(params, emptyList(), "", { values, _ -> build(values) })
+    fun build(values: List<Float>, colors: Map<String, Int> = emptyMap()): Filter = render(values, colors)
+}
 
 /** The filters GEGL has no operation for; every other filter's controls are generated from GEGL. */
 private fun specs(fg: Int, bg: Int): Map<String, FilterSpec> = geglSpecs + mapOf(
@@ -343,12 +348,18 @@ private fun FilterPanel(vm: EditorViewModel, name: String, close: () -> Unit) {
     val e = vm.engine
     val spec = specs(vm.fg, vm.bg)[name]
     val values = remember { mutableStateMapOf<Int, Float>() }
+    val pickedColors = remember { mutableStateMapOf<String, Int>() }
+    // What Reset returns to: GEGL's defaults, except what follows the image or the current colors.
+    val initial = remember(spec, e.info.value.width, e.info.value.height) { spec?.params?.map { it.initialValue(e.info.value.width, e.info.value.height) }.orEmpty() }
+    val initialColors = remember(spec, vm.fg, vm.bg) { spec?.colors?.associate { it.key to it.initialColor(vm.fg, vm.bg) }.orEmpty() }
+    fun numbers() = initial.indices.map { values[it] ?: initial[it] }
+    fun colors() = initialColors + pickedColors
     var curves by remember { mutableStateOf(mapOf<Channel, Curve>()) }
     val toAlpha = name == "Color to Alpha"
     var color by remember { mutableStateOf(android.graphics.Color.WHITE) }
     fun build(): Filter = when {
         toAlpha -> io.github.nielstron.brushkin.engine.ColorToAlphaFilter(color)
-        spec != null -> spec.build(spec.params.indices.map { values[it] ?: spec.params[it].default })
+        spec != null -> spec.build(numbers(), colors())
         else -> LutFilter.curves(curves)
     }
     // Bake into pixels by default. Live layer effects are an explicit, per-filter choice.
@@ -362,24 +373,24 @@ private fun FilterPanel(vm: EditorViewModel, name: String, close: () -> Unit) {
     val canBeEffect = spec != null && !toAlpha && !e.info.value.hasSelection && afterEffects
     val asEffect = liveEffect && canBeEffect
     LaunchedEffect(allLayers, afterEffects) { e.filterBegin(allLayers, afterEffects) }
-    LaunchedEffect(values.toMap(), curves, color, allLayers, asEffect) { e.filterPreview(build()) }
+    LaunchedEffect(values.toMap(), pickedColors.toMap(), curves, color, allLayers, asEffect) { e.filterPreview(build()) }
     fun finish() {
         if (finished) return; finished = true
-        val effect = spec?.let { io.github.nielstron.brushkin.engine.LayerEffect(name, it.params.indices.map { i -> values[i] ?: it.params[i].default }, vm.fg, vm.bg) }
+        val effect = spec?.let { io.github.nielstron.brushkin.engine.LayerEffect(name, numbers(), vm.fg, vm.bg, colors = colors()) }
         when {
             unchanged() -> e.filterCancel()
             allLayers && asEffect && effect != null -> { e.filterCancel(); e.addEffectToAll(effect) }
             allLayers -> e.filterApplyAll(build(), afterEffects = true)
             asEffect -> {
                 e.filterCancel()
-                e.filterAsEffect(io.github.nielstron.brushkin.engine.LayerEffect(name, spec.params.indices.map { values[it] ?: spec.params[it].default }, vm.fg, vm.bg))
+                e.filterAsEffect(io.github.nielstron.brushkin.engine.LayerEffect(name, numbers(), vm.fg, vm.bg, colors = colors()))
             }
             else -> e.filterApply(build(), afterEffects = afterEffects)
         }
     }
-    fun reset() { values.clear(); curves = emptyMap(); color = android.graphics.Color.WHITE; vm.filterPicking = null }
+    fun reset() { values.clear(); pickedColors.clear(); curves = emptyMap(); color = android.graphics.Color.WHITE; vm.filterPicking = null; vm.filterPoint = null }
     val finishLatest by androidx.compose.runtime.rememberUpdatedState { finish() }
-    androidx.compose.runtime.DisposableEffect(Unit) { onDispose { vm.filterPicking = null; finishLatest() } }
+    androidx.compose.runtime.DisposableEffect(Unit) { onDispose { vm.filterPicking = null; vm.filterPoint = null; finishLatest() } }
     BackHandler { finish(); close() }
 
     Box(Modifier.fillMaxSize()) {
@@ -398,6 +409,7 @@ private fun FilterPanel(vm: EditorViewModel, name: String, close: () -> Unit) {
                 Chip("All layers", allLayers) { allLayers = !allLayers }
                 if (canBeEffect) EffectChip(liveEffect, effectPrefs) { liveEffect = it }
             }
+            if (!spec?.description.isNullOrBlank()) Text(spec!!.description, color = Ui.muted, fontSize = 12.sp, modifier = Modifier.padding(top = 8.dp, start = 4.dp))
             Spacer(Modifier.height(8.dp))
             if (toAlpha) {
                 // The color to make transparent: presets or one picked from the image.
@@ -412,17 +424,7 @@ private fun FilterPanel(vm: EditorViewModel, name: String, close: () -> Unit) {
                 if (vm.filterPicking != null) Text("Touch the image to pick the color to remove", color = Ui.muted, fontSize = 13.sp, modifier = Modifier.padding(top = 8.dp))
             } else if (spec != null) {
                 Column(Modifier.heightIn(max = 320.dp).verticalScroll(rememberScrollState())) {
-                    val current = spec.params.mapIndexed { i, p -> p.key to (values[i] ?: p.default) }.toMap()
-                    spec.params.forEachIndexed { i, p ->
-                        if (!p.isVisible(spec.params, current)) return@forEachIndexed
-                        val enabled = p.isEnabled(spec.params, current)
-                        val v = values[i] ?: p.default
-                        when {
-                            p.toggle -> FilterToggleRow(p, v, enabled) { values[i] = it }
-                            p.choices.isNotEmpty() -> FilterChoiceRow(p, v, enabled) { values[i] = it }
-                            else -> FilterParameterRow(p, v, enabled) { values[i] = it }
-                        }
-                    }
+                    FilterSettings(vm, spec, initial, values, initialColors, pickedColors)
                 }
             } else CurvesEditor(curves) { curves = it }
         }
@@ -558,7 +560,7 @@ fun GradientEditor(vm: EditorViewModel, close: () -> Unit) {
 /** Rebuilds a layer effect's filter (non-destructive filters store only name and parameters). */
 fun buildEffect(e: io.github.nielstron.brushkin.engine.LayerEffect): Filter? =
     (if (e.paramsVersion < 2) filterSavedBeforeGegl(e.name, e.params) else null) ?: specs(e.fg, e.bg)[e.name]?.let { sp ->
-        sp.build(sp.params.indices.map { e.params.getOrNull(it) ?: sp.params[it].default })
+        sp.build(sp.params.indices.map { e.params.getOrNull(it) ?: sp.params[it].default }, e.colors)
     }
 
 /**

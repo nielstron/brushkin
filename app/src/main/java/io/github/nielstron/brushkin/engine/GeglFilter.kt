@@ -34,7 +34,7 @@ object NativeGegl {
         val swap = File(context.cacheDir, "gegl-swap").apply { mkdirs() }
         initialize(operations.absolutePath, babl.absolutePath, swap.absolutePath)
         ready = true
-        Thread({ try { startOpenCl(context) } finally { openClSettled.countDown() } }, "gegl-opencl")
+        Thread({ try { startOpenCl(context); runCatching { GeglOperations.loadMenuSections() } } finally { openClSettled.countDown() } }, "gegl-opencl")
             .apply { isDaemon = true }.start()
     }
     private external fun initialize(operations: String, babl: String, swap: String)
@@ -109,6 +109,8 @@ object NativeGegl {
     /** Diagnostic for serial hardware tests: at least one prototype kernel completed its GPU path. */
     external fun lastRenderUsedOpenCl(): Boolean
     external fun describe(operation: String): String
+    /** The operation's description and categories, as JSON. */
+    external fun operationInfo(operation: String): String
     external fun render(pixels: IntArray, width: Int, height: Int, operation: String,
         keys: Array<String>, values: DoubleArray, useOpenCl: Boolean = true, benchmarkOpenCl: Boolean = false): IntArray
     /** Brushkin 0.6.3's [render] with its whole-image copies; only the equivalence test uses it. */
