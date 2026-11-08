@@ -40,8 +40,10 @@ internal val geglSpecs: Map<String, FilterSpec> by lazy {
 
 private fun metadata(p: JSONObject, param: Param): Param {
     val meta = p.getJSONObject("meta").let { m -> m.keys().asSequence().associateWith { m.getString(it) } }
+    val withMeta = param.copy(meta = meta)
+    val description = p.getString("description").takeIf { withMeta.hasDynamicText || addsInformation(param.label, it) }.orEmpty()
     return param.copy(key = p.getString("key"), visibleWhen = p.getString("visible"), enabledWhen = p.getString("sensitive"), unit = p.getString("unit"),
-        axis = p.getString("axis"), direction = p.getString("direction"), role = p.getString("role"), description = p.getString("description"), meta = meta)
+        axis = p.getString("axis"), direction = p.getString("direction"), role = p.getString("role"), description = description, meta = meta)
 }
 
 private fun representableUpper(n: Double): Float = n.coerceIn(-Float.MAX_VALUE.toDouble(), Float.MAX_VALUE.toDouble()).toFloat().let { if (it.toDouble() > n) Math.nextDown(it) else it }

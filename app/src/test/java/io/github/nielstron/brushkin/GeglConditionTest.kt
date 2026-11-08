@@ -3,6 +3,7 @@ package io.github.nielstron.brushkin
 import io.github.nielstron.brushkin.ui.ConditionError
 import io.github.nielstron.brushkin.ui.Param
 import io.github.nielstron.brushkin.ui.addsInformation
+import io.github.nielstron.brushkin.ui.displayDescription
 import io.github.nielstron.brushkin.ui.displayLabel
 import io.github.nielstron.brushkin.ui.initialColor
 import io.github.nielstron.brushkin.ui.initialValue
@@ -76,6 +77,14 @@ class GeglConditionTest {
         assertFalse(addsInformation("Anything", "   "))
         assertTrue(addsInformation("Size X", "Standard deviation for the horizontal axis"))
         assertTrue(addsInformation("Tile size", "Average diameter of each tile (in pixels)"))
+    }
+
+    @Test fun onlyDynamicDescriptionsAreCheckedWhenShown() {
+        // Fixed text is filtered when the catalog loads, so what's stored is shown as is.
+        val fixed = Param("Mirrors", 0f..1f, 0f, description = "Number of mirrors to use")
+        assertEquals("Number of mirrors to use", fixed.displayDescription(listOf(fixed), emptyMap()))
+        val dynamic = Param("Mirrors", 0f..1f, 0f, description = "Number of mirrors to use", meta = mapOf("label" to "'Mirrors'"))
+        assertEquals("", dynamic.displayDescription(listOf(dynamic), emptyMap()))
     }
 
     @Test fun circularReferencesFail() {

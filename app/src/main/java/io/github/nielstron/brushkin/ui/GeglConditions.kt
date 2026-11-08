@@ -122,9 +122,13 @@ internal fun Param.isEnabled(params: List<Param>, current: Map<String, Float>) =
 private fun Param.text(key: String, fallback: String, params: List<Param>, current: Map<String, Float>) =
     meta[key]?.let { try { evaluateString(it, key, this, params, current) } catch (e: ConditionError) { null } } ?: fallback
 internal fun Param.displayLabel(params: List<Param>, current: Map<String, Float>) = text("label", label, params, current)
-/** Blank when GEGL's description only repeats the label. */
-internal fun Param.displayDescription(params: List<Param>, current: Map<String, Float>) =
-    text("description", description, params, current).takeIf { addsInformation(displayLabel(params, current), it) }.orEmpty()
+/** A label or description that depends on other settings can only be checked as it's shown. */
+internal val Param.hasDynamicText get() = "label" in meta || "description" in meta
+
+/** Blank when GEGL's description only repeats the label; fixed text was already checked on loading. */
+internal fun Param.displayDescription(params: List<Param>, current: Map<String, Float>): String =
+    if (!hasDynamicText) description
+    else text("description", description, params, current).takeIf { addsInformation(displayLabel(params, current), it) }.orEmpty()
 
 private val FILLER_WORDS = ("a an the of to for in on at by be is are as and or if it its this that with from should use used using value values amount " +
     "set sets adjust adjusts adjustment apply applies applied control controls specify specifies define defines determine determines number when will which into " +
