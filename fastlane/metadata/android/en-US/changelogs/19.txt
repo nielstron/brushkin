@@ -1,0 +1,1 @@
+Filter settings that can't be used no longer close the app. You'll see a message instead, and your image stays as it was.
