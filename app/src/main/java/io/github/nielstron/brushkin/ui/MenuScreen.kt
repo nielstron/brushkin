@@ -17,6 +17,7 @@ import androidx.compose.foundation.layout.safeDrawingPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -162,6 +163,7 @@ fun commands(vm: EditorViewModel, info: DocInfo, files: FileActions, view: () ->
         Cmd("File", "New image…", run = dlg("new")),
         Cmd("File", "Open image…", run = { files.openImage() }),
         Cmd("File", "Open project (.ora / .xcf)…", run = { files.openProject() }),
+        Cmd("File", "Rename image…", run = dlg("rename-tab:${vm.tabs.active.id}")),
         Cmd("File", "Save as…", "project with layers", run = dlg("save-project")),
         Cmd("File", "Import brushes, gradients, palettes…", ".gbr .gih .ggr .gpl .pat .myb", run = { files.importResources() }),
         Cmd("File", "Export image…", "PNG, JPEG, WebP or GIF", run = dlg("export-image")),
@@ -355,6 +357,7 @@ private fun CmdRow(c: Cmd, showSection: Boolean, onClick: () -> Unit) {
     ) {
         if (showSection) { Text(c.section, color = Ui.muted, fontSize = 12.sp, modifier = Modifier.width(64.dp)); Spacer(Modifier.width(4.dp)) }
         Text(c.label, color = Ui.text.copy(alpha = 0.9f), fontSize = 14.sp, modifier = Modifier.weight(1f))
-        if (c.hint.isNotEmpty()) Text(c.hint, color = Ui.muted, fontSize = 12.sp)
+        if (c.hint.isNotEmpty()) Text(c.hint, color = Ui.muted, fontSize = 12.sp, maxLines = 1, overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis,
+            modifier = Modifier.padding(start = 8.dp).widthIn(max = 140.dp))
     }
 }

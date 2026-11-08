@@ -14,7 +14,6 @@ import io.github.nielstron.brushkin.engine.GradientShape
 import io.github.nielstron.brushkin.engine.PaintTool
 import io.github.nielstron.brushkin.engine.SelectMode
 import androidx.lifecycle.viewModelScope
-import io.github.nielstron.brushkin.engine.Ora
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.debounce
@@ -22,8 +21,6 @@ import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.drop
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.launch
-import kotlinx.coroutines.sync.Mutex
-import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 import java.io.File
 import kotlin.math.roundToInt
@@ -443,6 +440,33 @@ class EditorViewModel(app: Application) : AndroidViewModel(app) {
         engine.strokeEnd()
     }
 
+    /** The canvas on screen, while there is one (its zoom and position are kept per tab). */
+    var canvas: CanvasHolder? = null
+
+    val tabs = DocumentTabs(engine, app.filesDir, app.getSharedPreferences("brushkin", 0), viewModelScope, object : DocumentTabs.Host {
+        override fun canSwitch() = importStatus == null && exportStatus == null && mlBusy == null && modelProgress == null && engine.busy.value == null
+        override fun status(label: String?) { importStatus = label }
+        override fun message(text: String) { messages.tryEmit(text) }
+        override fun leaving(tab: DocumentTab?) {
+            finishText()
+            // Like switching tools: an unapplied transform is discarded.
+            if (tool.liftsLayer) engine.cancelFloating()
+            tab?.edit = TabEdit(cloneSource, cloneOffset, perspPlane, perspOffset, path.anchors.toList(), path.closed, canvas?.view?.saveView())
+        }
+        override fun arrived(tab: DocumentTab) {
+            val e = tab.edit
+            cloneSource = e?.cloneSource; cloneOffset = e?.cloneOffset
+            perspPlane = e?.perspPlane; perspOffset = e?.perspOffset; perspEditing = false
+            path.anchors.clear(); e?.pathAnchors?.let { path.anchors.addAll(it) }
+            path.closed = e?.pathClosed ?: false
+            pathVersion++
+            cropRect = null; textAt = null; depthMap = null
+            handles.clear(); objectNew(); scissorsClear()
+            selectTool(tool) // Lifts the new image for transform tools and asks for what the tool still needs.
+            canvas?.view?.restoreView(e?.view)
+        }
+    })
+
     init {
         engine.onMessage = { messages.tryEmit(it) }
         runCatching {
@@ -693,43 +717,13 @@ class EditorViewModel(app: Application) : AndroidViewModel(app) {
 
     fun restoreAtStartup() = viewModelScope.launch {
         try {
-            if (autosaveFile.exists()) {
-                val saved = withContext(Dispatchers.IO) { autosaveFile.inputStream().use { Ora.read(it) } }
-                val name = getApplication<Application>().getSharedPreferences("brushkin", 0).getString("name", "Untitled") ?: "Untitled"
-                engine.openStack(saved, name).join()
-            } else {
-                // Wait for the initial document queued by init before exposing the canvas.
-                engine.post {}.join()
-            }
-        } catch (e: kotlinx.coroutines.CancellationException) {
-            throw e
-        } catch (e: Exception) {
-            messages.emit("Couldn't restore image: ${e.message}")
+            tabs.restore()
         } finally {
             startupLoading = false
         }
     }
 
-    private val saveLock = Mutex()
-    private var savedVersion = -1L
-    val autosaveFile get() = File(getApplication<Application>().filesDir, "autosave.ora")
-
-    suspend fun autosave() = saveLock.withLock {
-        if (startupLoading) return@withLock
-        val v = engine.info.value.version
-        if (v == savedVersion) return@withLock
-        runCatching {
-            val snap = engine.snapshot()
-            withContext(Dispatchers.IO) {
-                val dir = getApplication<Application>().filesDir
-                val tmp = File(dir, "autosave.tmp")
-                tmp.outputStream().use { Ora.write(snap, it) }
-                tmp.renameTo(autosaveFile)
-                getApplication<Application>().getSharedPreferences("brushkin", 0).edit().putString("name", engine.docName).apply()
-            }
-            savedVersion = v
-        }.onFailure { android.util.Log.w("Brushkin", "autosave failed", it) }
-    }
+    suspend fun autosave() { if (!startupLoading) tabs.autosave() }
 
     // Favorite tools (shown in the toolbar strip and first in the tool list) and how often each tool
     // is picked (the tool list shows the most used ones per section first). Both persist.

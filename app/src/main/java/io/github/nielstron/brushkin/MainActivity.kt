@@ -122,6 +122,13 @@ class MainActivity : ComponentActivity(), FileActions {
         super.onDestroy()
     }
 
+    override fun onTrimMemory(level: Int) {
+        super.onTrimMemory(level)
+        // Background tabs are saved; only their undo history is lost by letting them go.
+        @Suppress("DEPRECATION")
+        if (level == TRIM_MEMORY_RUNNING_CRITICAL || level >= TRIM_MEMORY_MODERATE) vm.tabs.releaseBackgroundTabs()
+    }
+
     override fun onStop() {
         super.onStop()
         // Autosave off the main thread so leaving the app never stalls.
@@ -303,15 +310,15 @@ class MainActivity : ComponentActivity(), FileActions {
             try {
                 if (name.endsWith(".xcf", ignoreCase = true)) {
                     val stack = withContext(Dispatchers.IO) { io.github.nielstron.brushkin.engine.Xcf.read(contentResolver.openInputStream(uri)!!.use { it.readBytes() }) }
-                    vm.engine.openStack(stack, name).join()
+                    vm.tabs.open(stack, name).join()
                 } else if (name.endsWith(".ora", ignoreCase = true) || withContext(Dispatchers.IO) { contentResolver.getType(uri) } == "image/openraster") {
                     val stack = withContext(Dispatchers.IO) { contentResolver.openInputStream(uri)!!.use { Ora.read(it) } }
-                    vm.engine.openStack(stack, name).join()
+                    vm.tabs.open(stack, name).join()
                 } else {
                     val result = withContext(Dispatchers.IO) { contentResolver.openInputStream(uri)!!.use { ImageImport.open(it.readBytes(),name) } }
                     if(result.originalWidth!=result.stack.width || result.originalHeight!=result.stack.height)
                         vm.messages.tryEmit("Scaled from ${result.originalWidth}×${result.originalHeight} to ${result.stack.width}×${result.stack.height} to fit in memory")
-                    vm.engine.openStack(result.stack,name).join()
+                    vm.tabs.open(result.stack, name).join()
                 }
             } catch (t: Throwable) {
                 vm.messages.tryEmit("Couldn't open $name: ${t.message}")
@@ -319,11 +326,18 @@ class MainActivity : ComponentActivity(), FileActions {
         }
     }
 
+    /** The image takes the name of the file it was saved as. */
+    private suspend fun nameAfter(uri: Uri) {
+        val name = withContext(Dispatchers.IO) { runCatching { contentResolver.query(uri, arrayOf(OpenableColumns.DISPLAY_NAME), null, null, null)?.use { c -> if (c.moveToFirst()) c.getString(0) else null } }.getOrNull() }
+        if (name != null) vm.tabs.rename(vm.tabs.active, name)
+    }
+
     private fun saveXcf(uri: Uri) {
         lifecycleScope.launch {
             try {
                 val snap = vm.engine.snapshot()
                 withContext(Dispatchers.IO) { contentResolver.openOutputStream(uri, "wt")!!.use { io.github.nielstron.brushkin.engine.Xcf.write(snap, it) } }
+                nameAfter(uri)
                 vm.messages.tryEmit("Saved for GIMP")
             } catch (t: Throwable) {
                 vm.messages.tryEmit("Save failed: ${t.message}")
@@ -336,6 +350,7 @@ class MainActivity : ComponentActivity(), FileActions {
             try {
                 val snap = vm.engine.snapshot()
                 withContext(Dispatchers.IO) { contentResolver.openOutputStream(uri, "wt")!!.use { Ora.write(snap, it) } }
+                nameAfter(uri)
                 vm.messages.tryEmit("Project saved")
             } catch (t: Throwable) {
                 vm.messages.tryEmit("Save failed: ${t.message}")

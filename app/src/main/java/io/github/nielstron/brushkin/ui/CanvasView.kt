@@ -109,6 +109,21 @@ class CanvasView(context: Context, private val vm: EditorViewModel) : View(conte
         changed()
     }
 
+    /** Where the view was on a document, for coming back to it. */
+    class SavedView(val matrix: Matrix, val flipped: Boolean, val width: Int, val height: Int)
+
+    fun saveView() = SavedView(Matrix(viewMatrix), flipped, width, height)
+
+    /** Returns to [saved] (fits the image when there's none or the screen has changed since). */
+    fun restoreView(saved: SavedView?) {
+        val s = engine.stack
+        fittedFor = (s.width.toLong() shl 32) or s.height.toLong()
+        if (saved == null || saved.width != width || saved.height != height) { fit(); return }
+        viewMatrix.set(saved.matrix)
+        flipped = saved.flipped
+        changed()
+    }
+
     fun zoomTo(z: Float) {
         val cx = width / 2f; val cy = height / 2f
         val f = z / scale

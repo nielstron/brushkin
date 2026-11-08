@@ -58,6 +58,22 @@ data class DocInfo(
 
 enum class GradientShape { LINEAR, RADIAL }
 
+/** A document set aside while another tab shows: its pixels and undo history, ready to come back as they were. */
+class ParkedDocument internal constructor(internal val stack: Stack, var name: String, internal val history: History, val version: Long) {
+    constructor(stack: Stack, name: String) : this(stack, name, History(), 0)
+    val edited get() = history.canUndo || history.canRedo
+}
+
+/** A one-layer document, filled with [background] or transparent. */
+fun blankStack(w: Int, h: Int, background: Int?): Stack {
+    val bg = TiledBitmap(w, h)
+    if (background != null) {
+        for (i in bg.tiles.indices) bg.tiles[i] = TiledBitmap.newTile().apply { eraseColor(background) }
+    }
+    val layer = Layer(name = if (background != null) "Background" else "Layer", pixels = bg)
+    return Stack(w, h, listOf(layer), layer.id)
+}
+
 /**
  * Owns the document and performs every mutation on a single dedicated thread, so the UI thread
  * only ever posts requests and draws immutable snapshots. Heavy pixel work (filters, flood fill)
@@ -79,7 +95,7 @@ class Engine {
         set(v) { field = v; invalidate() }
     var docName = "Untitled"; private set
 
-    private val history = History()
+    private var history = History()
     @Volatile private var version = 0L
     private val _info = MutableStateFlow(DocInfo())
     val info: StateFlow<DocInfo> = _info
@@ -125,12 +141,7 @@ class Engine {
     // ---------------------------------------------------------------- document
 
     fun newDocument(w: Int, h: Int, background: Int?, name: String = "Untitled") = post {
-        val bg = TiledBitmap(w, h)
-        if (background != null) {
-            for (i in bg.tiles.indices) bg.tiles[i] = TiledBitmap.newTile().apply { eraseColor(background) }
-        }
-        val layer = Layer(name = if (background != null) "Background" else "Layer", pixels = bg)
-        replaceDocument(Stack(w, h, listOf(layer), layer.id), name)
+        replaceDocument(blankStack(w, h, background), name)
     }
 
     fun openImage(bmp: Bitmap, name: String, metadata: io.github.nielstron.brushkin.export.ExportMetadata = io.github.nielstron.brushkin.export.ExportMetadata()) = post {
@@ -141,6 +152,8 @@ class Engine {
 
     fun openStack(s: Stack, name: String) = post { replaceDocument(s, name) }
 
+    fun renameDocument(name: String) = post { docName = name; publish() }
+
     private fun replaceDocument(s: Stack, name: String) {
         history.clear()
         LayerBuffers.clear()
@@ -150,6 +163,29 @@ class Engine {
         thumbs.clear()
         publish()
         invalidate()
+    }
+
+    /**
+     * Shows [next] and hands back the document it replaces, with its undo history. An image still
+     * waiting to be placed is placed first; a stroke in progress is dropped. Each document keeps its
+     * own version numbers, so "already saved" stays meaningful across swaps.
+     */
+    suspend fun exchangeDocument(next: ParkedDocument): ParkedDocument = withContext(dispatcher) {
+        stroke?.cancel(); stroke = null
+        commitFloatingNow()
+        val out = ParkedDocument(stack, docName, history, version)
+        LayerBuffers.clear()
+        floating = null; preview = null; session = null
+        mesh = null; cageRest = emptyList(); cageNow = emptyList()
+        mergedCache = null; maskSession = null
+        history = next.history
+        version = next.version
+        stack = next.stack
+        docName = next.name
+        thumbs.clear(); maskThumbs.clear()
+        publish()
+        invalidate()
+        out
     }
 
     // ---------------------------------------------------------------- state publishing
@@ -1700,11 +1736,14 @@ class Engine {
         out
     }
 
-    suspend fun snapshot(): Stack = withContext(dispatcher) {
+    suspend fun snapshot(parked: ParkedDocument? = null): Stack = withContext(dispatcher) {
         // Tiles are copy-on-write, so a shallow copy of each layer's tile array is a consistent snapshot.
-        val s = stack
+        val s = parked?.stack ?: stack
         s.copy(layers = Stack.mapTree(s.layers) { it.copy(pixels = it.pixels.copy(), mask = it.mask?.copy()) })
     }
+
+    /** A small picture of the current document, or of [parked], at most [maxDim] pixels across. */
+    suspend fun thumbnail(maxDim: Int, parked: ParkedDocument? = null): Bitmap = withContext(dispatcher) { Compositor.thumbnail(parked?.stack ?: stack, maxDim) }
 
     fun shutdown() { scope.coroutineContext[Job]?.cancel(); executor.shutdown() }
 }

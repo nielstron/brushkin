@@ -175,7 +175,25 @@ object Compositor {
         return out
     }
 
-    private fun drawLinear(canvas: Canvas, stack: Stack, list: List<Layer>, visible: RectF) {
+    /** The whole image scaled down to at most [maxDim] pixels across, without compositing at full size first. */
+    fun thumbnail(stack: Stack, maxDim: Int): Bitmap {
+        val k = minOf(1f, maxDim.toFloat() / maxOf(stack.width, stack.height))
+        val w = (stack.width * k).toInt().coerceAtLeast(1); val h = (stack.height * k).toInt().coerceAtLeast(1)
+        // Composited at twice the size and averaged down, so thin lines stay smooth.
+        val zoom = if (k <= 0.5f) 2 else 1
+        val lin = Bitmap.createBitmap(w * zoom, h * zoom, Bitmap.Config.RGBA_F16, true, android.graphics.ColorSpace.get(android.graphics.ColorSpace.Named.LINEAR_EXTENDED_SRGB))
+        val c = Canvas(lin)
+        c.scale(w.toFloat() * zoom / stack.width, h.toFloat() * zoom / stack.height)
+        // Tiles overlap by a pixel so their scaled edges leave no seams.
+        drawLinear(c, stack, stack.layers, RectF(0f, 0f, stack.width.toFloat(), stack.height.toFloat()), tilePad = stack.width.toFloat() / (w * zoom))
+        val srgb = Bitmap.createBitmap(w * zoom, h * zoom, Bitmap.Config.ARGB_8888)
+        Canvas(srgb).drawBitmap(lin, 0f, 0f, null)
+        lin.recycle()
+        if (zoom == 1) return srgb
+        return Bitmap.createScaledBitmap(srgb, w, h, true).also { srgb.recycle() }
+    }
+
+    private fun drawLinear(canvas: Canvas, stack: Stack, list: List<Layer>, visible: RectF, tilePad: Float = 0f) {
         val w = stack.width.toFloat(); val h = stack.height.toFloat()
         val tp = Paint().apply { isFilterBitmap = false }
         for (layer in Stack.expandPassThrough(list)) {
@@ -188,8 +206,8 @@ object Compositor {
                 layer.mode.blend?.let { lp.blendMode = it }
                 canvas.saveLayer(0f, 0f, w, h, lp)
             }
-            if (layer.isGroup) drawLinear(canvas, stack, layer.children!!, visible)
-            else drawTiles(canvas, Effects.pixelsSync(layer), visible, tp)
+            if (layer.isGroup) drawLinear(canvas, stack, layer.children!!, visible, tilePad)
+            else drawTiles(canvas, Effects.pixelsSync(layer), visible, tp, tilePad)
             if (mask != null) {
                 // Mask values are coverage, not color: turn each tile into an alpha mask first so
                 // no color conversion touches them.

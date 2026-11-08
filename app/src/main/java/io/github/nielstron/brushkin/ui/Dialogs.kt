@@ -137,6 +137,11 @@ fun Dialogs(vm: EditorViewModel, info: DocInfo, files: FileActions) {
         d == "emoji" -> EmojiDialog(vm, close)
         d == "text" -> { close(); vm.selectTool(Tool.TEXT); vm.messages.tryEmit("Tap where the text should go") }
         d.startsWith("text-edit:") -> { close(); vm.selectTool(Tool.TEXT); vm.editTextLayer(d.removePrefix("text-edit:").toLong()) }
+        d.startsWith("rename-tab:") -> {
+            val tab = vm.tabs.items.firstOrNull { it.id == d.removePrefix("rename-tab:").toLong() }
+            if (tab == null) close()
+            else TextPrompt("Rename image", tabTitle(tab.name), onDismiss = close) { name -> close(); vm.tabs.renameTitle(tab, name) }
+        }
         d.startsWith("rename-layer:") -> {
             val id = d.removePrefix("rename-layer:").toLong()
             val layer = info.layers.first { it.id == id }
@@ -255,7 +260,7 @@ private fun NewImageDialog(vm: EditorViewModel, close: () -> Unit) {
         confirmButton = {
             TextButton(onClick = {
                 val ww = w.toIntOrNull()?.coerceIn(1, 8192); val hh = h.toIntOrNull()?.coerceIn(1, 8192)
-                if (ww != null && hh != null) { vm.engine.newDocument(ww, hh, if (transparent) null else vm.bg); close() }
+                if (ww != null && hh != null) { vm.tabs.newTab(ww, hh, if (transparent) null else vm.bg); close() }
             }) { Text("Create") }
         },
         dismissButton = { TextButton(onClick = close) { Text("Cancel") } },

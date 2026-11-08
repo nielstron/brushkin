@@ -90,6 +90,7 @@ fun EditorScreen(vm: EditorViewModel, files: FileActions, store: StoreIntegratio
     val info by vm.engine.info.collectAsState()
     val busy by vm.engine.busy.collectAsState()
     val holder = remember { CanvasHolder() }
+    androidx.compose.runtime.DisposableEffect(holder) { vm.canvas = holder; onDispose { vm.canvas = null } }
     var adSpace by remember { androidx.compose.runtime.mutableIntStateOf(0) }
     var viewVersion by remember { androidx.compose.runtime.mutableIntStateOf(0) }
     val snack = remember { SnackbarHostState() }
@@ -132,6 +133,9 @@ fun EditorScreen(vm: EditorViewModel, files: FileActions, store: StoreIntegratio
 
     BoxWithConstraints(Modifier.fillMaxSize().background(Ui.ground)) {
         val landscape = maxWidth > maxHeight
+        val roomy = maxWidth >= 600.dp
+        val narrowBar = maxWidth < 420.dp
+        val nameFits = maxWidth >= 380.dp
         val density = LocalDensity.current
         val safeInsets = WindowInsets.safeDrawing
         val safeTop = with(density) { safeInsets.getTop(this).toDp() }
@@ -191,28 +195,39 @@ fun EditorScreen(vm: EditorViewModel, files: FileActions, store: StoreIntegratio
         )
 
         store.Banner(Modifier.align(Alignment.TopCenter).statusBarsPadding().padding(top = 76.dp),
-            covered = vm.showMenu || vm.dialog != null || vm.sheet != Sheet.NONE) { adSpace = it }
+            covered = vm.showMenu || vm.dialog != null || vm.sheet != Sheet.NONE || vm.tabs.switcherOpen) { adSpace = it }
 
         // Top bar
         Row(
-            Modifier.windowInsetsPadding(safeInsets.only(WindowInsetsSides.Top + WindowInsetsSides.Horizontal)).padding(12.dp).fillMaxWidth().height(52.dp)
-                .clip(RoundedCornerShape(16.dp)).background(Ui.panel.copy(alpha = 0.94f))
-                .border(1.dp, Ui.border, RoundedCornerShape(16.dp)).padding(horizontal = 4.dp),
-            verticalAlignment = Alignment.CenterVertically,
+            Modifier.windowInsetsPadding(safeInsets.only(WindowInsetsSides.Top + WindowInsetsSides.Horizontal)).padding(12.dp).fillMaxWidth().height(52.dp),
+            horizontalArrangement = Arrangement.spacedBy(6.dp),
         ) {
-            IconButton(onClick = { vm.showMenu = true }) { Icon(Icons.Rounded.Menu, "Menus and commands", tint = Ui.text) }
-            Text(
-                info.name, color = Ui.text, fontWeight = FontWeight.SemiBold, fontSize = 15.sp, maxLines = 1,
-                modifier = Modifier.weight(1f).padding(start = 2.dp).clickable { holder.view?.fit() },
-            )
-            IconButton(onClick = { vm.engine.undo() }, enabled = info.canUndo) {
-                Icon(Icons.AutoMirrored.Rounded.Undo, "Undo", tint = if (info.canUndo) Ui.text else Ui.muted.copy(alpha = 0.5f))
+            // Narrow phones need the room for the name.
+            val barButton = if (narrowBar) Modifier.size(44.dp, 48.dp) else Modifier
+            val barGroup = Modifier.clip(RoundedCornerShape(16.dp)).background(Ui.panel.copy(alpha = 0.94f)).border(1.dp, Ui.border, RoundedCornerShape(16.dp))
+            Row(Modifier.weight(1f).fillMaxHeight().then(barGroup).padding(horizontal = 4.dp), verticalAlignment = Alignment.CenterVertically) {
+                IconButton(onClick = { vm.showMenu = true }, modifier = barButton) { Icon(Icons.Rounded.Menu, "Menus and commands", tint = Ui.text) }
+                // Large screens show every tab here; phones show the current image's name, and swiping it changes tabs.
+                if (roomy) TabStrip(vm.tabs, Modifier.weight(1f)) { vm.dialog = "rename-tab:${it.id}" }
+                // Without room for a useful part of the name it stays blank, still there to tap and swipe.
+                else Text(
+                    if (nameFits) tabTitle(info.name) else "", color = Ui.text, fontWeight = FontWeight.SemiBold, fontSize = 15.sp, maxLines = 1,
+                    overflow = androidx.compose.ui.text.style.TextOverflow.MiddleEllipsis,
+                    modifier = Modifier.weight(1f).padding(start = 2.dp).swipeBetweenTabs(vm.tabs).clickable(onClickLabel = "Rename image") { vm.dialog = "rename-tab:${vm.tabs.active.id}" },
+                )
             }
-            IconButton(onClick = { vm.engine.redo() }, enabled = info.canRedo) {
-                Icon(Icons.AutoMirrored.Rounded.Redo, "Redo", tint = if (info.canRedo) Ui.text else Ui.muted.copy(alpha = 0.5f))
+            Row(Modifier.fillMaxHeight().then(barGroup).padding(horizontal = 4.dp), verticalAlignment = Alignment.CenterVertically) {
+                IconButton(onClick = { vm.engine.undo() }, enabled = info.canUndo, modifier = barButton) {
+                    Icon(Icons.AutoMirrored.Rounded.Undo, "Undo", tint = if (info.canUndo) Ui.text else Ui.muted.copy(alpha = 0.5f))
+                }
+                IconButton(onClick = { vm.engine.redo() }, enabled = info.canRedo, modifier = barButton) {
+                    Icon(Icons.AutoMirrored.Rounded.Redo, "Redo", tint = if (info.canRedo) Ui.text else Ui.muted.copy(alpha = 0.5f))
+                }
+                IconButton(onClick = { files.share() }, modifier = barButton) { Icon(Icons.Rounded.IosShare, "Share", tint = Ui.text) }
+                IconButton(onClick = { vm.dialog = "save" }, modifier = barButton) { Icon(Icons.Rounded.Save, "Save", tint = Ui.text) }
             }
-            IconButton(onClick = { files.share() }) { Icon(Icons.Rounded.IosShare, "Share", tint = Ui.text) }
-            IconButton(onClick = { vm.dialog = "save" }) { Icon(Icons.Rounded.Save, "Save", tint = Ui.text) }
+            // Its own tile, so it stays readable over the image.
+            TabCountButton(vm.tabs, Modifier.size(48.dp, 52.dp).then(barGroup))
         }
 
         // Selection and clipboard: × to deselect (any tool) and a chevron with the rest.
@@ -324,6 +339,8 @@ fun EditorScreen(vm: EditorViewModel, files: FileActions, store: StoreIntegratio
             }
         }
 
+        TabSwitcher(vm.tabs) { vm.dialog = "rename-tab:${it.id}" }
+
         val effectsComputing by io.github.nielstron.brushkin.engine.Effects.computing.collectAsState()
         val anyBusy = vm.importStatus ?: vm.exportStatus ?: busy ?: vm.mlBusy ?: if (effectsComputing) "Computing effects" else null
         val progress by vm.engine.progress.collectAsState()
@@ -348,6 +365,7 @@ fun EditorScreen(vm: EditorViewModel, files: FileActions, store: StoreIntegratio
         }
 
         SnackbarHost(snack, Modifier.align(Alignment.BottomCenter).navigationBarsPadding().padding(bottom = 150.dp))
+        TabUndoBar(vm.tabs, Modifier.align(Alignment.BottomCenter).navigationBarsPadding().padding(bottom = if (vm.tabs.switcherOpen) 16.dp else 150.dp))
 
         TextOverlay(vm, holder, viewVersion)
         Sheets(vm, info, files)
