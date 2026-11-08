@@ -90,6 +90,40 @@ class HistoryPatchTest {
         assertArrayEquals(raw(before), raw(back.stack.layers[0].pixels.tiles[0]))
     }
 
+    @Test fun anUndoneStepRestoresAndRedoes() {
+        val target = TiledBitmap(TILE, TILE)
+        val s = stack(target)
+        val before = noisy(1); val after = painted(before, 30, 40, 16, 16, (90 shl 24) or 0x336699)
+        target.tiles[0] = after
+        val history = History(); history.push(HistoryEntry("s", s, s, listOf(TileDiff(target, mapOf(0 to (before to after))))))
+        history.undo()
+        val file = File(InstrumentationRegistry.getInstrumentation().targetContext.cacheDir, "patch-redo.history")
+        HistoryStore.write(HistoryStore.capture(s, history, 4)!!, file, 1, 2)
+        val back = HistoryStore.read(file, 1, 2, "D")!!
+        file.delete()
+        assertArrayEquals(raw(before), raw(back.stack.layers[0].pixels.tiles[0]))
+        back.history.redo()
+        assertArrayEquals(raw(after), raw(back.stack.layers[0].pixels.tiles[0]))
+    }
+
+    /** The file is written in the background while the user may already be undoing. */
+    @Test fun aCaptureIsUnaffectedByLaterUndos() {
+        val target = TiledBitmap(TILE, TILE)
+        val s = stack(target)
+        val before = noisy(1); val after = painted(before, 30, 40, 16, 16, (90 shl 24) or 0x336699)
+        target.tiles[0] = after
+        val history = History(); history.push(HistoryEntry("s", s, s, listOf(TileDiff(target, mapOf(0 to (before to after))))))
+        val captured = HistoryStore.capture(s, history, 4)!!
+        history.undo()
+        val file = File(InstrumentationRegistry.getInstrumentation().targetContext.cacheDir, "patch-capture.history")
+        HistoryStore.write(captured, file, 1, 2)
+        val back = HistoryStore.read(file, 1, 2, "D")!!
+        file.delete()
+        assertArrayEquals(raw(after), raw(back.stack.layers[0].pixels.tiles[0]))
+        back.history.undo()
+        assertArrayEquals(raw(before), raw(back.stack.layers[0].pixels.tiles[0]))
+    }
+
     /** Runs on the engine thread after each edit, so it has to be quick. */
     @Test fun compactingIsFastEnoughForAnEdit() {
         val target = TiledBitmap(TILE, TILE)

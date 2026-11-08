@@ -22,6 +22,8 @@ internal class HistorySnapshot(
     val redo: List<HistoryEntry>,
     /** Tile arrays change as edits are undone, so they're copied; the tiles themselves never change. */
     val tiles: IdentityHashMap<TiledBitmap, Array<Bitmap?>>,
+    /** Patches swap their pixels on undo, so these are copied too. */
+    val patchPixels: IdentityHashMap<TilePatch, Bitmap>,
     val version: Long,
 )
 
@@ -31,7 +33,7 @@ internal class HistorySnapshot(
  * counts while the autosaved image it was written with is unchanged.
  */
 internal object HistoryStore {
-    private const val MAGIC = 0x424B4831 // "BKH1"
+    private const val MAGIC = 0x424B4832 // "BKH2"
     /** Tile data kept on disk, newest steps first; older steps only live in memory. */
     const val MAX_BYTES = 128L * 1024 * 1024
 
@@ -49,7 +51,9 @@ internal object HistoryStore {
         fun add(t: TiledBitmap?) { if (t != null && t !in tiles) tiles[t] = t.tiles.copyOf() }
         for (s in listOf(stack) + (undo + redo).flatMap { listOf(it.before, it.after) }) tiledBitmaps(s).forEach(::add)
         (undo + redo).forEach { e -> e.diffs.forEach { add(it.target) } }
-        return HistorySnapshot(stack, undo, redo, tiles, version)
+        val patchPixels = IdentityHashMap<TilePatch, Bitmap>()
+        (undo + redo).forEach { e -> e.diffs.forEach { d -> d.patches.values.forEach { p -> p.pixels?.let { patchPixels[p] = it.copy(Bitmap.Config.ARGB_8888, false) } } } }
+        return HistorySnapshot(stack, undo, redo, tiles, patchPixels, version)
     }
 
     private fun tiledBitmaps(s: Stack): List<TiledBitmap> =
@@ -166,7 +170,10 @@ internal object HistoryStore {
                 d.patches.forEach { (i, p) ->
                     out.writeInt(i); out.writeInt(p.x); out.writeInt(p.y); out.writeInt(p.w); out.writeInt(p.h)
                     out.writeBoolean(p.beforeMissing); out.writeBoolean(p.afterMissing)
-                    p.before.forEach(out::writeInt); p.after.forEach(out::writeInt)
+                    s.patchPixels[p]?.let { held ->
+                        val raw = IntArray(p.w * p.h).also { held.copyPixelsToBuffer(java.nio.IntBuffer.wrap(it)) }
+                        raw.forEach(out::writeInt)
+                    }
                 }
             }
         }
@@ -229,7 +236,7 @@ internal object HistoryStore {
                 repeat(input.readInt()) {
                     val i = input.readInt(); val x = input.readInt(); val y = input.readInt(); val w = input.readInt(); val h = input.readInt()
                     val beforeMissing = input.readBoolean(); val afterMissing = input.readBoolean()
-                    patches[i] = TilePatch(x, y, w, h, IntArray(w * h) { input.readInt() }, IntArray(w * h) { input.readInt() }, beforeMissing, afterMissing)
+                    patches[i] = TilePatch(x, y, w, h, if (w == 0) null else TilePatch.rawBitmap(w, h, IntArray(w * h) { input.readInt() }), beforeMissing, afterMissing)
                 }
                 TileDiff(target, changes, patches)
             }
