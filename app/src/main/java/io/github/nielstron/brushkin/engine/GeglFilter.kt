@@ -1,8 +1,12 @@
 package io.github.nielstron.brushkin.engine
 
+import android.app.ActivityManager
+import android.app.ApplicationExitInfo
 import android.content.ComponentCallbacks2
 import android.content.Context
+import android.os.Build
 import android.system.Os
+import io.github.nielstron.brushkin.BuildConfig
 import java.io.File
 
 /** GEGL modules remain in Android's installed native-library directory. Private symlinks give
@@ -29,10 +33,44 @@ object NativeGegl {
         }
         val swap = File(context.cacheDir, "gegl-swap").apply { mkdirs() }
         initialize(operations.absolutePath, babl.absolutePath, swap.absolutePath)
-        android.util.Log.i("Brushkin", "GEGL OpenCL GPU available: ${isOpenClActive()}")
         ready = true
+        Thread({ try { startOpenCl(context) } finally { openClSettled.countDown() } }, "gegl-opencl")
+            .apply { isDaemon = true }.start()
     }
     private external fun initialize(operations: String, babl: String, swap: String)
+
+    /** Runs the vendor's OpenCL driver, which can take seconds and whose crashes cannot be caught.
+     * A marker that outlives [enableOpenCl] after a crash exit means the driver killed the app, so
+     * this app + OS build stays on the CPU; an update to either tries the GPU again. */
+    private fun startOpenCl(context: Context) {
+        val attempt = File(context.noBackupFilesDir, "gegl-opencl-attempt")
+        val blocked = File(context.noBackupFilesDir, "gegl-opencl-blocked")
+        val build = "${BuildConfig.VERSION_CODE} ${Build.FINGERPRINT}"
+        runCatching {
+            if (attempt.exists()) {
+                if (attempt.readText() == build && lastExitWasCrash(context)) blocked.writeText(build)
+                attempt.delete()
+            }
+        }
+        if (runCatching { blocked.readText() == build }.getOrDefault(false)) {
+            android.util.Log.w("Brushkin", "GEGL OpenCL disabled: its setup crashed an earlier launch")
+            return
+        }
+        runCatching { attempt.writeText(build) }
+        enableOpenCl()
+        attempt.delete()
+        android.util.Log.i("Brushkin", "GEGL OpenCL GPU available: ${openClActive()}")
+    }
+    /** Being swiped away or killed for memory during setup says nothing about the driver. */
+    private fun lastExitWasCrash(context: Context): Boolean {
+        if (Build.VERSION.SDK_INT < 30) return true
+        val last = context.getSystemService(ActivityManager::class.java)
+            .getHistoricalProcessExitReasons(null, 0, 1).firstOrNull() ?: return true
+        return last.reason == ApplicationExitInfo.REASON_CRASH_NATIVE ||
+            last.reason == ApplicationExitInfo.REASON_CRASH || last.reason == ApplicationExitInfo.REASON_SIGNALED
+    }
+    private val openClSettled = java.util.concurrent.CountDownLatch(1)
+    private external fun enableOpenCl()
 
     /** Under memory pressure, and whenever the UI is hidden, GEGL keeps only a 32 MB tile cache
      * (the rest moves to its swap file); [restoreTileCache] brings back the full size.
@@ -65,7 +103,9 @@ object NativeGegl {
     /** Copies part of a [renderBuffer] result into [pixels] as ARGB ints (row stride width). */
     external fun readRendered(handle: Long, x: Int, y: Int, width: Int, height: Int, pixels: IntArray)
     external fun destroyRendered(handle: Long)
-    external fun isOpenClActive(): Boolean
+    private external fun openClActive(): Boolean
+    /** Waits for the background OpenCL setup started by [prepare]. */
+    fun isOpenClActive(): Boolean { openClSettled.await(); return openClActive() }
     /** Diagnostic for serial hardware tests: at least one prototype kernel completed its GPU path. */
     external fun lastRenderUsedOpenCl(): Boolean
     external fun describe(operation: String): String

@@ -135,6 +135,24 @@ main.write_text(s)
 ops = source/'operations/meson.build'
 assert ops.read_text().count("subdir('external')") == 1, ops
 ops.write_text(ops.read_text().replace("subdir('external')", '# Brushkin owns file I/O'))
+# A driver that rejects this query (or lists more versions than fit) left ret_size unset or too
+# large, and GEGL then read past the array during startup.
+cl_init = source/'gegl/opencl/gegl-cl-init.c'
+s = cl_init.read_text()
+for old, new in [
+    ('size_t          ret_size;', 'size_t          ret_size = 0;'),
+    ('''      gegl_clGetDeviceInfo (device, CL_DEVICE_OPENCL_C_ALL_VERSIONS,
+                            sizeof(cl_c_versions), cl_c_versions, &ret_size);
+      num_items = ret_size / sizeof(cl_name_version);
+''', '''      if (gegl_clGetDeviceInfo (device, CL_DEVICE_OPENCL_C_ALL_VERSIONS,
+                                sizeof(cl_c_versions), cl_c_versions, &ret_size) != CL_SUCCESS)
+        ret_size = 0;
+      num_items = MIN (ret_size / sizeof(cl_name_version), G_N_ELEMENTS (cl_c_versions));
+'''),
+]:
+    assert s.count(old) == 1, old
+    s = s.replace(old, new)
+cl_init.write_text(s)
 build('gegl', 'gegl', ['-Ddocs=false','-Dintrospection=false','-Dvapigen=disabled','-Dworkshop=false'])
 # Package only the main filter modules and their recursive Android dependency closure.
 libs = {p.name:p for p in (prefix/'lib').rglob('*.so') if not p.is_symlink()}

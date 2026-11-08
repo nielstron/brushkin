@@ -91,20 +91,26 @@ Java_io_github_nielstron_brushkin_engine_NativeGegl_initialize(JNIEnv *env, jobj
     std::lock_guard<std::mutex> lock(gate);
     g_setenv("GEGL_PATH", utf(env, operations).c_str(), TRUE);
     g_setenv("BABL_PATH", utf(env, bablPath).c_str(), TRUE);
-    g_setenv("GEGL_USE_OPENCL", "gpu", TRUE);
     g_setenv("GEGL_SWAP", utf(env, swapPath).c_str(), TRUE);
     // Set the license before gegl_init: changing it afterwards makes GEGL rescan
     // GEGL_PATH and register every operation module a second time.
     g_object_set(gegl_config(), "application-license", "GPL3", nullptr);
     gegl_init(nullptr, nullptr);
-    countOpenClLaunches();
-    timeOpenClCalls();
     // A 32 MB tile cache makes GEGL swap (RLE-compressed) to disk from ~6 MP on, which doubled
     // live-effect and filter latency there. Use 1/16 of RAM, 32..512 MB (512 MB on 8+ GB phones).
     const long pages = sysconf(_SC_PHYS_PAGES), pageSize = sysconf(_SC_PAGESIZE);
     const guint64 ram = pages > 0 && pageSize > 0 ? guint64(pages) * guint64(pageSize) : 0;
     fullTileCacheSize = std::min<guint64>(512ull << 20, std::max<guint64>(minTileCacheSize, ram / 16));
     g_object_set(gegl_config(), "threads", 2, "tile-cache-size", fullTileCacheSize, nullptr);
+}
+// Loads the vendor's OpenCL driver and compiles GEGL's color kernels, so it must stay off the main
+// thread. Holding `gate` keeps renders from seeing OpenCL half set up; they wait, then use the GPU.
+extern "C" JNIEXPORT void JNICALL
+Java_io_github_nielstron_brushkin_engine_NativeGegl_enableOpenCl(JNIEnv *, jobject) {
+    std::lock_guard<std::mutex> lock(gate);
+    g_object_set(gegl_config(), "use-opencl", TRUE, nullptr);
+    countOpenClLaunches();
+    timeOpenClCalls();
 }
 // Lowering tile-cache-size makes GEGL trim the cache to its swap file right away. Not under
 // `gate`: GEGL's cache has its own lock, and the main thread must not wait for a render.
@@ -582,7 +588,7 @@ Java_io_github_nielstron_brushkin_engine_NativeGegl_destroyRendered(JNIEnv *, jo
 }
 
 extern "C" JNIEXPORT jboolean JNICALL
-Java_io_github_nielstron_brushkin_engine_NativeGegl_isOpenClActive(JNIEnv *, jobject) {
+Java_io_github_nielstron_brushkin_engine_NativeGegl_openClActive(JNIEnv *, jobject) {
     std::lock_guard<std::mutex> lock(gate);
     gboolean active = FALSE;
     g_object_get(gegl_config(), "use-opencl", &active, nullptr);
