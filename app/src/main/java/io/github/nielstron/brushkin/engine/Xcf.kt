@@ -15,7 +15,10 @@ import kotlin.math.roundToInt
  * Reading supports versions 0–22: RGB / grayscale / indexed images, 8/16/32-bit integer and
  * 16/32/64-bit float precision (linear data is converted to sRGB), uncompressed, RLE and zlib tiles,
  * layer offsets, opacity, visibility, modes, lock alpha, layer masks and layer groups (as
- * Brushkin groups). Writing produces version 11 files (8-bit sRGB, zlib) with masks and groups.
+ * Brushkin groups). Writing produces version 11 files (8-bit sRGB, zlib) with masks and groups, or
+ * version 22 when a layer has effects GIMP can run. Pixels are never baked: effects stay live, as
+ * GIMP layer effects where GIMP can run the filter and otherwise in a "brushkin-effects" parasite.
+ * Parasites also carry text layers and export metadata; GIMP keeps parasites it doesn't know.
  */
 object Xcf {
     private const val PROP_END = 0
@@ -37,6 +40,26 @@ object Xcf {
     private const val PROP_ITEM_PATH = 30
     private const val PROP_FLOAT_OPACITY = 33
     private const val PROP_LOCK_CONTENT = 28
+    private const val PROP_PARASITES = 21
+    private const val PROP_FILTER_REGION = 44
+    private const val PROP_FILTER_ARGUMENT = 45
+    private const val PROP_FILTER_CLIP = 46
+    private const val MODE_REPLACE = 62
+    private const val ARG_INT = 1
+    private const val ARG_BOOL = 2
+    private const val ARG_FLOAT = 3
+    private const val ARG_ENUM = 5
+    private const val ARG_UINT = 7
+    private const val EFFECTS_PARASITE = "brushkin-effects"
+    private const val TEXT_PARASITE = "brushkin-text"
+    private const val METADATA_PARASITE = "brushkin-export-metadata"
+    /** GIMP discards these from a file: it has its own versions and hides GEGL's. */
+    private val GIMP_HIDDEN = setOf("gegl:threshold", "gegl:posterize", "gegl:polar-coordinates")
+    /** GIMP discards a filter saved with another version; every other listed operation is 0:0. */
+    private val GIMP_VERSIONS = mapOf("gegl:exposure" to "1:0")
+
+    private fun gimpOperation(e: LayerEffect): String? =
+        GeglOperations.operation(e.name)?.takeIf { e.paramsVersion >= 2 && it !in GIMP_HIDDEN }
 
     private class Reader(val b: ByteBuffer, val version: Int) {
         val wide = version >= 11
@@ -76,7 +99,60 @@ object Xcf {
         var mode: Int = 0, var ox: Int = 0, var oy: Int = 0, var lockAlpha: Boolean = false, var applyMask: Boolean = true,
         var linked: Boolean = false, var lockPosition: Boolean = false,
         var group: Boolean = false, var path: IntArray? = null, var hierarchy: Long = 0, var mask: Long = 0, var active: Boolean = false,
+        var parasites: Map<String, String> = emptyMap(), var effects: List<LayerEffect> = emptyList(),
     )
+
+    /** Brushkin's own parasites; other apps' may be binary. */
+    private fun parasites(r: Reader, b: ByteBuffer, end: Int): Map<String, String> {
+        val found = HashMap<String, String>()
+        while (b.position() < end) {
+            val name = r.str(); r.u32()
+            val data = ByteArray(r.u32()); b.get(data)
+            if (name.startsWith("brushkin-")) found[name] = String(data, Charsets.UTF_8)
+        }
+        return found
+    }
+
+    /** Null for a filter Brushkin doesn't have. */
+    private fun readEffect(r: Reader, b: ByteBuffer, version: Int): LayerEffect? {
+        r.str(); r.str()
+        val operation = r.str()
+        if (version >= 22) r.str()
+        var visible = true
+        val args = HashMap<String, Float>()
+        while (true) {
+            val type = r.u32(); val len = r.u32()
+            val start = b.position()
+            when (type) {
+                PROP_END -> break
+                PROP_VISIBLE -> visible = r.u32() != 0
+                PROP_FILTER_ARGUMENT -> {
+                    val name = r.str()
+                    when (r.u32()) {
+                        ARG_INT, ARG_BOOL, ARG_ENUM -> args[name] = r.u32().toFloat()
+                        ARG_UINT -> args[name] = (r.u32().toLong() and 0xFFFFFFFFL).toFloat()
+                        ARG_FLOAT -> args[name] = b.float
+                    }
+                }
+            }
+            b.position(start + len)
+        }
+        val title = GeglOperations.title(operation) ?: return null
+        val params = GeglOperations.properties(operation).map { args[it.getString("key")] ?: it.getDouble("default").toFloat() }
+        return LayerEffect(title, params, visible = visible)
+    }
+
+    /** Effects in the order they apply; ones only Brushkin runs go back where they were. */
+    private fun allEffects(live: List<LayerEffect>, own: String?): List<LayerEffect> {
+        val all = live.toMutableList()
+        runCatching {
+            val saved = org.json.JSONArray(own ?: return all)
+            for (i in 0 until saved.length()) saved.getJSONObject(i).let {
+                all.add(it.getInt("index").coerceAtMost(all.size), LayerEffect.fromJson(it.getJSONObject("effect")))
+            }
+        }
+        return all
+    }
 
     fun read(bytes: ByteArray): Stack {
         val b = ByteBuffer.wrap(bytes) // big-endian
@@ -91,12 +167,14 @@ object Xcf {
         var compression = 0
         var colormap: IntArray? = null
         val guides = ArrayList<Guide>()
+        var imageParasites = emptyMap<String, String>()
         // Image properties.
         while (true) {
             val type = r.u32(); val len = r.u32()
             val start = b.position()
             when (type) {
                 PROP_END -> break
+                PROP_PARASITES -> imageParasites = parasites(r, b, start + len)
                 PROP_COMPRESSION -> compression = b.get().toInt()
                 // Guides: (int32 position, int8 orientation: 1 horizontal, 2 vertical) each.
                 PROP_GUIDES -> repeat(len / 5) { val pos = r.u32(); val o = b.get().toInt(); if (o == 1 || o == 2) guides.add(Guide(o == 2, pos)) }
@@ -132,10 +210,16 @@ object Xcf {
                     PROP_GROUP_ITEM -> l.group = true
                     PROP_ITEM_PATH -> l.path = IntArray(len / 4) { r.u32() }
                     PROP_ACTIVE_LAYER -> l.active = true
+                    PROP_PARASITES -> l.parasites = parasites(r, b, start + len)
                 }
                 b.position(start + len)
             }
             l.hierarchy = r.ptr(); l.mask = r.ptr()
+            val effectPtrs = ArrayList<Long>()
+            if (version >= 20) while (true) { val e = r.ptr(); if (e == 0L) break; effectPtrs.add(e) }
+            // GIMP lists the last-applied effect first.
+            val live = effectPtrs.asReversed().mapNotNull { r.seek(it); readEffect(r, b, version) }
+            l.effects = allEffects(live, l.parasites[EFFECTS_PARASITE])
             l
         }
 
@@ -169,6 +253,7 @@ object Xcf {
                 visible = l.visible, opacity = l.opacity.coerceIn(0f, 1f), mode = mode, lockAlpha = l.lockAlpha,
                 lockPosition = l.lockPosition, linked = l.linked,
                 mask = mask(l), maskEnabled = l.applyMask,
+                effects = l.effects, text = l.parasites[TEXT_PARASITE]?.let { TextSpec.fromJson(it) },
                 children = children,
             )
         }
@@ -210,7 +295,8 @@ object Xcf {
             if (isSel) selection = Selection.fromBytes(ByteArray(gray.size) { (gray[it] and 0xFF).toByte() }, w, h)
             else channels.add(SavedChannel(name = name.ifEmpty { "Channel" }, mask = TiledBitmap.fromPixels(IntArray(gray.size) { (gray[it] and 0xFF) * 0x010101 or (0xFF shl 24) }, w, h, MASK_BLACK), color = color, opacity = opacity, visible = visible))
         }
-        return Stack(w, h, layers, active.id, selection = selection, guides = guides, channels = channels)
+        return Stack(w, h, layers, active.id, selection = selection, guides = guides, channels = channels,
+            exportMetadata = imageParasites[METADATA_PARASITE]?.let { io.github.nielstron.brushkin.export.ExportMetadata.fromJson(it) } ?: io.github.nielstron.brushkin.export.ExportMetadata())
     }
 
     private fun flatten(l: List<Layer>): List<Layer> = l.flatMap { listOf(it) + flatten(it.children ?: emptyList()) }
@@ -345,14 +431,16 @@ object Xcf {
 
     // ------------------------------------------------------------------ writing
 
-    /** Writes an XCF v011 file (8-bit sRGB, zlib) that GIMP 2.10 and 3.x open with layers, masks and groups. */
+    /** Writes an 8-bit sRGB zlib file: v011 for GIMP 2.10 and up, or v022 (GIMP 3) when it has live effects. */
     fun write(stack: Stack, os: OutputStream) {
         // Pointers are patched after the fact, so build into a growable byte buffer.
         val out = Bytes()
-        out.str("gimp xcf v011"); out.u8(0)
+        val liveEffects = stack.all.any { l -> l.effects.any { gimpOperation(it) != null } }
+        out.str(if (liveEffects) "gimp xcf v022" else "gimp xcf v011"); out.u8(0)
         out.u32(stack.width); out.u32(stack.height); out.u32(0); out.u32(150)
         out.prop(PROP_COMPRESSION) { u8(2) }
         if (stack.guides.isNotEmpty()) out.prop(PROP_GUIDES) { for (g in stack.guides) { u32(g.pos); u8(if (g.vertical) 2 else 1) } }
+        out.prop(PROP_PARASITES) { parasite(METADATA_PARASITE, stack.exportMetadata.toJson()) }
         out.u32(PROP_END); out.u32(0)
         // Flatten the tree top-to-bottom with item paths.
         data class Item(val layer: Layer, val path: List<Int>)
@@ -373,9 +461,10 @@ object Xcf {
         val chanPtrPos = IntArray(chans.size)
         for (i in chans.indices) { chanPtrPos[i] = out.size; out.u64(0) }
         out.u64(0) // end of channels
+        if (liveEffects) out.u64(0) // end of paths (from v018)
         items.forEachIndexed { i, it ->
             out.patch64(layerPtrPos[i], out.size.toLong())
-            writeLayer(out, it.layer, it.path, stack, it.layer.id == stack.activeId)
+            writeLayer(out, it.layer, it.path, stack, it.layer.id == stack.activeId, liveEffects)
         }
         chans.forEachIndexed { i, (name, px, c) ->
             out.patch64(chanPtrPos[i], out.size.toLong())
@@ -410,10 +499,11 @@ object Xcf {
             val len = size - start
             a[lenPos] = (len ushr 24).toByte(); a[lenPos + 1] = (len ushr 16).toByte(); a[lenPos + 2] = (len ushr 8).toByte(); a[lenPos + 3] = len.toByte()
         }
+        fun parasite(name: String, text: String) { xstr(name); u32(1); val b = text.toByteArray(Charsets.UTF_8); u32(b.size); bytes(b) } // 1: persistent
         fun toByteArray() = a.copyOf(size)
     }
 
-    private fun writeLayer(out: Bytes, l: Layer, path: List<Int>, s: Stack, active: Boolean) {
+    private fun writeLayer(out: Bytes, l: Layer, path: List<Int>, s: Stack, active: Boolean, liveEffects: Boolean) {
         // Layers keep their own size and offset (smaller than the canvas, or reaching past it).
         val reg = if (l.children != null) android.graphics.Rect(0, 0, s.width, s.height) else LayerExtent.saveRegion(l, s.width, s.height)
         val lw = reg.width(); val lh = reg.height()
@@ -430,15 +520,28 @@ object Xcf {
         out.prop(PROP_MODE) { u32(xcfMode(l.mode)) }
         if (l.children != null) out.prop(PROP_GROUP_ITEM) {}
         if (path.size > 1) out.prop(PROP_ITEM_PATH) { path.forEach { u32(it) } }
+        val live = l.effects.filter { gimpOperation(it) != null }
+        val own = org.json.JSONArray()
+        l.effects.forEachIndexed { i, e -> if (gimpOperation(e) == null) own.put(org.json.JSONObject().put("index", i).put("effect", e.toJson())) }
+        if (own.length() > 0 || l.text != null) out.prop(PROP_PARASITES) {
+            if (own.length() > 0) parasite(EFFECTS_PARASITE, own.toString())
+            l.text?.let { parasite(TEXT_PARASITE, it.toJson()) }
+        }
         out.u32(PROP_END); out.u32(0)
         val hierPos = out.size; out.u64(0)
         val maskPos = out.size; out.u64(0)
+        val effectPos = out.size
+        if (liveEffects) repeat(live.size + 1) { out.u64(0) }
         out.patch64(hierPos, out.size.toLong())
-        // GIMP stores its own filter graph; effects are baked in so the file looks the same there.
-        val px = if (l.children != null) IntArray(lw * lh) else if (l.effects.isNotEmpty()) Effects.pixelsSync(l).toPixels().let { full -> if (reg == android.graphics.Rect(0, 0, s.width, s.height)) full else LayerExtent.render(l.copy(pixels = Effects.pixelsSync(l)), reg).let { b -> IntArray(lw * lh).also { b.getPixels(it, 0, lw, 0, 0, lw, lh) } } }
+        val px = if (l.children != null) IntArray(lw * lh)
             else if (reg == android.graphics.Rect(0, 0, s.width, s.height) && l.outside.isEmpty()) l.pixels.toPixels()
             else LayerExtent.render(l, reg).let { b -> IntArray(lw * lh).also { b.getPixels(it, 0, lw, 0, 0, lw, lh) } }
         writeHierarchy(out, px, lw, lh, 4)
+        // GIMP lists the last-applied effect first.
+        live.asReversed().forEachIndexed { i, e ->
+            out.patch64(effectPos + 8 * i, out.size.toLong())
+            writeEffect(out, e)
+        }
         val m = l.mask ?: return
         out.patch64(maskPos, out.size.toLong())
         out.u32(lw); out.u32(lh); out.xstr("${l.name} mask")
@@ -454,6 +557,31 @@ object Xcf {
             IntArray(lw * lh).also { mb.getPixels(it, 0, lw, 0, 0, lw, lh) }
         }
         writeHierarchy(out, mpx, lw, lh, 1)
+    }
+
+    private fun writeEffect(out: Bytes, e: LayerEffect) {
+        val operation = gimpOperation(e)!!
+        out.xstr(""); out.xstr("gimp-image"); out.xstr(operation); out.xstr(GIMP_VERSIONS[operation] ?: "0:0")
+        out.prop(PROP_VISIBLE) { u32(if (e.visible) 1 else 0) }
+        out.prop(PROP_FLOAT_OPACITY) { f32(1f) }
+        out.prop(PROP_MODE) { u32(MODE_REPLACE) }
+        out.prop(PROP_FILTER_CLIP) { u32(0) }
+        out.prop(PROP_FILTER_REGION) { u32(1) } // the whole layer
+        GeglOperations.properties(operation).forEachIndexed { i, p ->
+            val value = e.params.getOrNull(i) ?: return@forEachIndexed
+            out.prop(PROP_FILTER_ARGUMENT) {
+                xstr(p.getString("key"))
+                when (p.getString("kind")) {
+                    "double" -> { u32(ARG_FLOAT); f32(value) }
+                    "int" -> { u32(ARG_INT); u32(value.toInt()) }
+                    "uint" -> { u32(ARG_UINT); u32(value.toLong().toInt()) }
+                    "boolean" -> { u32(ARG_BOOL); u32(if (value != 0f) 1 else 0) }
+                    else -> { u32(ARG_ENUM); u32(value.toInt()) }
+                }
+            }
+        }
+        out.u32(PROP_END); out.u32(0)
+        out.u64(0) // no effect mask
     }
 
     private fun writeHierarchy(out: Bytes, px: IntArray, w: Int, h: Int, bpp: Int) {

@@ -88,7 +88,6 @@ interface FileActions {
     fun openImage()
     fun openProject()
     fun saveProject()
-    fun saveXcf()
     suspend fun exportPreview(options: io.github.nielstron.brushkin.export.ImageExportOptions): android.graphics.Bitmap
     fun export(options: io.github.nielstron.brushkin.export.ImageExportOptions)
     suspend fun stickerPacks(): List<io.github.nielstron.brushkin.export.StickerPack>
@@ -131,7 +130,7 @@ fun Dialogs(vm: EditorViewModel, info: DocInfo, files: FileActions) {
         d == "stroke-selection" || d == "fill-selection-outline" -> SelectionOutlineDialog(vm, d == "stroke-selection", close)
         d == "save" -> SaveMenuDialog(close) { vm.dialog = it }
         d == "export-image" -> ImageExportDialog(info, files, close) { options -> close(); files.export(options) }
-        d == "save-project" -> SaveProjectDialog(close) { xcf -> close(); if (xcf) files.saveXcf() else files.saveProject() }
+        d == "save-project" -> androidx.compose.runtime.LaunchedEffect(Unit) { close(); files.saveProject() }
         d == "export-sticker" -> StickerExportDialog(info, files, close)
         d == "new" -> NewImageDialog(vm, close)
         d == "emoji" -> EmojiDialog(vm, close)
@@ -298,66 +297,44 @@ val FONTS = listOf("Sans" to "sans-serif", "Serif" to "serif", "Mono" to "monosp
 
 // ---------------------------------------------------------------------------- filters
 
-/** A filter parameter; [default] is "no change" wherever the filter has such a setting (what Reset goes back to). */
+/** A filter parameter; [default] is what the panel opens with and Reset goes back to. */
 internal data class Param(val label: String, val range: ClosedFloatingPointRange<Float>, val default: Float, val choices: List<Pair<Float, String>> = emptyList(), val integral: Boolean = false, val allowedRange: ClosedFloatingPointRange<Float> = range, val gamma: Float = 1f, val fmt: (Float) -> String = { "%.2f".format(it) })
 
-internal class FilterSpec(val params: List<Param>, val defaultIsIdentity: Boolean = true, val build: (List<Float>) -> Filter)
+internal class FilterSpec(val params: List<Param>, val build: (List<Float>) -> Filter)
 
-/** Filters with parameters; colors come from the current foreground/background. */
-private fun specs(fg: Int, bg: Int): Map<String, FilterSpec> = BASE_SPECS + geglSpecs + mapOf(
-    "Drop Shadow" to FilterSpec(listOf(
-        Param("Offset X", -100f..100f, 16f) { "${it.roundToInt()} px" }, Param("Offset Y", -100f..100f, 16f) { "${it.roundToInt()} px" },
-        Param("Blur", 0f..100f, 12f) { "${it.roundToInt()} px" }, Param("Opacity", 0f..1f, 0f),
-    )) { DropShadowFilter(it[0], it[1], it[2], it[3], android.graphics.Color.BLACK) },
-    "Vignette" to FilterSpec(listOf(Param("Radius", 0.2f..1.5f, 0.9f), Param("Softness", 0.05f..1f, 0.6f), Param("Strength", 0f..1f, 0f))) {
-        VignetteFilter(it[0], it[1], it[2], android.graphics.Color.BLACK)
-    },
-    "Motion Blur" to FilterSpec(listOf(Param("Length", 0f..200f, 0f) { "${it.roundToInt()} px" }, Param("Angle", -180f..180f, 0f) { "${it.roundToInt()}°" })) { MotionBlurFilter(it[0], it[1]) },
-    "Shadows-Highlights" to FilterSpec(listOf(Param("Shadows", 0f..1f, 0f), Param("Highlights", 0f..1f, 0f), Param("Radius", 2f..200f, 40f) { "${it.roundToInt()} px" })) {
-        ShadowsHighlightsFilter(it[0], it[1], it[2])
-    },
-    "Exposure" to FilterSpec(listOf(Param("Exposure", -3f..3f, 0f) { "%+.2f EV".format(it) }, Param("Black level", -0.1f..0.1f, 0f) { "%.3f".format(it) })) { ExposureFilter(it[0], it[1]) },
+/** The filters GEGL has no operation for; every other filter's controls are generated from GEGL. */
+private fun specs(fg: Int, bg: Int): Map<String, FilterSpec> = geglSpecs + mapOf(
     "Colorize" to FilterSpec(listOf(Param("Hue", 0f..360f, 200f) { "${it.roundToInt()}°" }, Param("Saturation", 0f..1f, 0.5f), Param("Lightness", -1f..1f, 0f))) {
         ColorizeFilter(it[0], it[1], it[2])
     },
+    "Color Balance" to FilterSpec(listOf(Param("Cyan ↔ Red", -1f..1f, 0f), Param("Magenta ↔ Green", -1f..1f, 0f), Param("Yellow ↔ Blue", -1f..1f, 0f))) { ColorBalanceFilter(it[0], it[1], it[2]) },
     // Kept for "Color to Alpha" effects in saved documents; the panel picks its own color.
     "Color to Alpha" to FilterSpec(emptyList()) { ColorToAlphaFilter(bg) },
-    "Channel Mixer" to FilterSpec(listOf(
-        Param("Red ← red", -2f..2f, 1f), Param("Red ← green", -2f..2f, 0f), Param("Red ← blue", -2f..2f, 0f),
-        Param("Green ← red", -2f..2f, 0f), Param("Green ← green", -2f..2f, 1f), Param("Green ← blue", -2f..2f, 0f),
-        Param("Blue ← red", -2f..2f, 0f), Param("Blue ← green", -2f..2f, 0f), Param("Blue ← blue", -2f..2f, 1f),
-    )) { ChannelMixerFilter(it.toFloatArray(), false) },
-    "Noise Reduction" to FilterSpec(listOf(Param("Strength", 0f..8f, 0f) { "${it.roundToInt()}" })) { NoiseReductionFilter(it[0].roundToInt()) },
-    "Ripple" to FilterSpec(listOf(Param("Amplitude", 0f..100f, 0f) { "${it.roundToInt()} px" }, Param("Period", 4f..400f, 60f) { "${it.roundToInt()} px" }, Param("Vertical", 0f..1f, 0f) { if (it > 0.5f) "yes" else "no" })) {
-        RippleFilter(it[0], it[1], it[2] > 0.5f)
-    },
-    "Whirl and Pinch" to FilterSpec(listOf(Param("Whirl", -720f..720f, 0f) { "${it.roundToInt()}°" }, Param("Pinch", -1f..1f, 0f), Param("Radius", 0.05f..2f, 1f))) {
-        WhirlPinchFilter(it[0], it[1], it[2])
-    },
-    "Lens Distortion" to FilterSpec(listOf(Param("Main", -1f..1f, 0f), Param("Edge", -1f..1f, 0f), Param("Zoom", -0.5f..1f, 0f))) {
-        LensDistortionFilter(it[0], it[1], it[2])
-    },
 )
 
-private val BASE_SPECS: Map<String, FilterSpec> = mapOf(
-    "Brightness-Contrast" to FilterSpec(listOf(Param("Brightness", -1f..1f, 0f), Param("Contrast", -1f..1f, 0f))) { LutFilter.brightnessContrast(it[0], it[1]) },
-    "Levels" to FilterSpec(
-        listOf(
-            Param("Input black", 0f..254f, 0f) { "${it.roundToInt()}" }, Param("Input white", 1f..255f, 255f) { "${it.roundToInt()}" },
-            Param("Gamma", 0.1f..3f, 1f), Param("Output black", 0f..255f, 0f) { "${it.roundToInt()}" }, Param("Output white", 0f..255f, 255f) { "${it.roundToInt()}" },
-        )
-    ) { LutFilter.levels(it[0], it[1], it[2], it[3], it[4]) },
-    "Hue-Saturation" to FilterSpec(
-        listOf(Param("Hue", -180f..180f, 0f) { "${it.roundToInt()}°" }, Param("Saturation", -1f..1f, 0f), Param("Lightness", -1f..1f, 0f))
-    ) { HueSaturationFilter(it[0], it[1], it[2]) },
-    "Color Balance" to FilterSpec(listOf(Param("Cyan ↔ Red", -1f..1f, 0f), Param("Magenta ↔ Green", -1f..1f, 0f), Param("Yellow ↔ Blue", -1f..1f, 0f))) { ColorBalanceFilter(it[0], it[1], it[2]) },
-    "Threshold" to FilterSpec(listOf(Param("Low", 0f..255f, 127f) { "${it.roundToInt()}" }, Param("High", 0f..255f, 255f) { "${it.roundToInt()}" })) { ThresholdFilter(it[0].roundToInt(), it[1].roundToInt()) },
-    "Posterize" to FilterSpec(listOf(Param("Levels", 2f..32f, 4f) { "${it.roundToInt()}" })) { LutFilter.posterize(it[0].roundToInt()) },
-    "Gaussian Blur" to FilterSpec(listOf(Param("Radius", 0f..200f, 0f) { "${it.roundToInt()} px" })) { GaussianBlurFilter(it[0]) },
-    "Unsharp Mask" to FilterSpec(listOf(Param("Radius", 1f..60f, 3f) { "${it.roundToInt()} px" }, Param("Amount", 0f..5f, 0f))) { UnsharpMaskFilter(it[0], it[1]) },
-    "Pixelize" to FilterSpec(listOf(Param("Block size", 1f..128f, 1f) { "${it.roundToInt()} px" })) { PixelizeFilter(it[0].roundToInt()) },
-    "RGB Noise" to FilterSpec(listOf(Param("Amount", 0f..1f, 0f))) { NoiseFilter(it[0]) },
-)
+/** Effects saved before these filters moved to GEGL hold Brushkin's own parameters, by position. */
+private fun filterSavedBeforeGegl(name: String, p: List<Float>): Filter? = when (name) {
+    "Drop Shadow" -> DropShadowFilter(p[0], p[1], p[2], p[3], android.graphics.Color.BLACK)
+    "Vignette" -> VignetteFilter(p[0], p[1], p[2], android.graphics.Color.BLACK)
+    "Motion Blur" -> MotionBlurFilter(p[0], p[1])
+    "Shadows-Highlights" -> ShadowsHighlightsFilter(p[0], p[1], p[2])
+    "Exposure" -> ExposureFilter(p[0], p[1])
+    "Channel Mixer" -> ChannelMixerFilter(p.toFloatArray(), false)
+    "Noise Reduction" -> NoiseReductionFilter(p[0].roundToInt())
+    "Ripple" -> RippleFilter(p[0], p[1], p[2] > 0.5f)
+    "Whirl and Pinch" -> WhirlPinchFilter(p[0], p[1], p[2])
+    "Lens Distortion" -> LensDistortionFilter(p[0], p[1], p[2])
+    "Brightness-Contrast" -> LutFilter.brightnessContrast(p[0], p[1])
+    "Levels" -> LutFilter.levels(p[0], p[1], p[2], p[3], p[4])
+    "Hue-Saturation" -> HueSaturationFilter(p[0], p[1], p[2])
+    "Threshold" -> ThresholdFilter(p[0].roundToInt(), p[1].roundToInt())
+    "Posterize" -> LutFilter.posterize(p[0].roundToInt())
+    "Gaussian Blur" -> GaussianBlurFilter(p[0])
+    "Unsharp Mask" -> UnsharpMaskFilter(p[0], p[1])
+    "Pixelize" -> PixelizeFilter(p[0].roundToInt())
+    "RGB Noise" -> NoiseFilter(p[0])
+    else -> null
+}
 
 /** Bottom panel that live-previews a filter on the canvas above it. */
 @Composable
@@ -374,7 +351,7 @@ private fun FilterPanel(vm: EditorViewModel, name: String, close: () -> Unit) {
         else -> LutFilter.curves(curves)
     }
     // Bake into pixels by default. Live layer effects are an explicit, per-filter choice.
-    val unchanged = { spec?.defaultIsIdentity != false && !toAlpha && values.all { (i, v) -> spec?.params?.getOrNull(i)?.default == v } && curves.isEmpty() }
+    val unchanged = { spec == null && curves.isEmpty() }
     var finished by remember { mutableStateOf(false) }
     var allLayers by remember { mutableStateOf(false) }
     var liveEffect by remember { mutableStateOf(false) }
@@ -584,16 +561,10 @@ fun GradientEditor(vm: EditorViewModel, close: () -> Unit) {
 }
 
 /** Rebuilds a layer effect's filter (non-destructive filters store only name and parameters). */
-/**
- * Every filter with parameters at its defaults, which must change nothing (tested) — except those
- * no setting of which leaves the image as it is.
- */
-internal fun filtersAtDefaults(): Map<String, Filter> = specs(0xFF000000.toInt(), -1).filterValues { it.defaultIsIdentity }.filterKeys { it !in setOf("Color to Alpha", "Colorize", "Threshold", "Posterize") }
-    .mapValues { (_, sp) -> sp.build(sp.params.map { it.default }) }
-
-fun buildEffect(e: io.github.nielstron.brushkin.engine.LayerEffect): Filter? = specs(e.fg, e.bg)[e.name]?.let { sp ->
-    sp.build(sp.params.indices.map { e.params.getOrNull(it) ?: sp.params[it].default })
-}
+fun buildEffect(e: io.github.nielstron.brushkin.engine.LayerEffect): Filter? =
+    (if (e.paramsVersion < 2) filterSavedBeforeGegl(e.name, e.params) else null) ?: specs(e.fg, e.bg)[e.name]?.let { sp ->
+        sp.build(sp.params.indices.map { e.params.getOrNull(it) ?: sp.params[it].default })
+    }
 
 /**
  * Pattern editor: generate two-color patterns from the current colors, and rename, scale, offset,

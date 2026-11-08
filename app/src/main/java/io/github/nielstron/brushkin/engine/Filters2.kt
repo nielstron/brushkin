@@ -88,27 +88,7 @@ class NoiseReductionFilter(strength: Int) : Filter by GeglFilter("Noise Reductio
 // ---------------------------------------------------------------------------- colors
 
 /** GIMP's Color to Alpha: remove [color], keeping what differs from it. */
-class ColorToAlphaFilter(private val color: Int) : Filter {
-    override val name = "Color to Alpha"
-    override fun apply(src: IntArray, w: Int, h: Int) = IntArray(src.size).also { o ->
-        val k = floatArrayOf(r(color) / 255f, g(color) / 255f, b(color) / 255f)
-        parallelRows(h) { y0, y1 ->
-            for (i in y0 * w until y1 * w) {
-                val c = src[i]
-                val v = floatArrayOf(r(c) / 255f, g(c) / 255f, b(c) / 255f)
-                var al = 0f
-                for (ch in 0..2) {
-                    val d = v[ch] - k[ch]
-                    val lim = if (d > 0) 1 - k[ch] else k[ch]
-                    if (lim > 1e-4f) al = max(al, abs(d) / lim)
-                }
-                if (al <= 1e-4f) { o[i] = 0; continue }
-                fun out(ch: Int) = (((v[ch] - k[ch]) / al + k[ch]) * 255).roundToInt()
-                o[i] = argb((a(c) * al).roundToInt(), out(0), out(1), out(2))
-            }
-        }
-    }
-}
+class ColorToAlphaFilter(color: Int) : Filter by GeglFilter("Color to Alpha", "gegl:color-to-alpha", mapOf("color" to color.toDouble()))
 
 class ShadowsHighlightsFilter(shadows: Float, highlights: Float, radius: Float) : Filter by GeglFilter("Shadows-Highlights", "gegl:shadows-highlights",
     mapOf("shadows" to shadows * 100.0, "highlights" to highlights * -100.0, "radius" to radius.toDouble()), setOf("radius"))

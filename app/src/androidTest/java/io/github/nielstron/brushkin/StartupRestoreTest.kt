@@ -20,9 +20,9 @@ class StartupRestoreTest {
     @Test fun loadingEndsOnlyAfterTheSavedImageIsInstalled() = runBlocking {
         val context=InstrumentationRegistry.getInstrumentation().targetContext
         val dir=File(context.cacheDir,"startup-restore-test").apply { mkdirs() }
-        val saved=File(dir,"autosave.ora")
+        val saved=File(dir,"autosave.xcf")
         val layer=Layer(name="Saved",pixels=TiledBitmap.fromPixels(IntArray(64*48) { 0xff508090.toInt() },64,48))
-        saved.outputStream().use { Ora.write(Stack(64,48,listOf(layer),layer.id),it) }
+        saved.outputStream().use { Xcf.write(Stack(64,48,listOf(layer),layer.id),it) }
         val original=saved.readBytes()
         val store=ViewModelStore()
         val vm=withContext(Dispatchers.Main) { EditorViewModel(TestApp(context,dir)).also { store.put("test",it) } }

@@ -49,10 +49,10 @@ class LayerTest {
         val off = base.copy(pixels = px, outside = outside, linked = true, lockPosition = true)
         val small = square(300, 200, Color.BLUE).copy(name = "Small", bounds = Rect(280, 180, 380, 280))
         val stack = Stack(w, h, listOf(off, small), small.id)
-        for (fmt in listOf("xcf", "ora")) {
+        for (fmt in listOf("xcf")) {
             val out = ByteArrayOutputStream()
-            if (fmt == "xcf") Xcf.write(stack, out) else Ora.write(stack, out)
-            val back = if (fmt == "xcf") Xcf.read(out.toByteArray()) else Ora.read(out.toByteArray().inputStream())
+            Xcf.write(stack, out)
+            val back = Xcf.read(out.toByteArray())
             val a = back.all.first { it.name == "Sq" }; val b = back.all.first { it.name == "Small" }
             assertEquals(fmt, Rect(-20, -20, 30, 30), LayerExtent.bounds(a))
             assertTrue(fmt, a.linked && a.lockPosition)
@@ -83,8 +83,8 @@ class LayerTest {
         assertEquals(Color.RED, l.pixels.toPixels()[120 * w + 120])        // …pixels untouched
         val hidden = l.copy(effects = l.effects.map { it.copy(visible = false) })
         assertEquals(Color.RED, Compositor.flatten(Stack(w, h, listOf(hidden), l.id), Color.WHITE).getPixel(120, 120))
-        // Saved and loaded with the image (ORA keeps them editable).
-        val out = ByteArrayOutputStream(); Ora.write(Stack(w, h, listOf(l), l.id), out)
-        assertEquals(l.effects, Ora.read(out.toByteArray().inputStream()).all.single().effects)
+        // Saved and loaded with the image, still editable.
+        val out = ByteArrayOutputStream(); Xcf.write(Stack(w, h, listOf(l), l.id), out)
+        assertEquals(l.effects, Xcf.read(out.toByteArray()).all.single().effects)
     }
 }

@@ -3,14 +3,17 @@ package io.github.nielstron.brushkin.engine
 import org.json.JSONArray
 import org.json.JSONObject
 
-/** A non-destructive filter on a layer: a filter by name with its parameters and colors. */
-data class LayerEffect(val name: String, val params: List<Float>, val fg: Int = 0, val bg: Int = 0, val visible: Boolean = true) {
-    fun toJson(): JSONObject = JSONObject().put("name", name).put("params", JSONArray(params.map { it.toDouble() })).put("fg", fg).put("bg", bg).put("visible", visible)
+/**
+ * A non-destructive filter on a layer: a filter by name with its parameters and colors.
+ * [paramsVersion] 1 is Brushkin's own parameter list, from before the filter's parameters came from GEGL.
+ */
+data class LayerEffect(val name: String, val params: List<Float>, val fg: Int = 0, val bg: Int = 0, val visible: Boolean = true, val paramsVersion: Int = 2) {
+    fun toJson(): JSONObject = JSONObject().put("name", name).put("params", JSONArray(params.map { it.toDouble() })).put("fg", fg).put("bg", bg).put("visible", visible).put("paramsVersion", paramsVersion)
 
     companion object {
         fun fromJson(o: JSONObject) = LayerEffect(
             o.getString("name"), o.getJSONArray("params").let { a -> List(a.length()) { a.getDouble(it).toFloat() } },
-            o.optInt("fg"), o.optInt("bg"), o.optBoolean("visible", true),
+            o.optInt("fg"), o.optInt("bg"), o.optBoolean("visible", true), o.optInt("paramsVersion", 1),
         )
         fun listToJson(l: List<LayerEffect>) = JSONArray(l.map { it.toJson() }).toString()
         fun listFromJson(s: String) = JSONArray(s).let { a -> List(a.length()) { fromJson(a.getJSONObject(it)) } }

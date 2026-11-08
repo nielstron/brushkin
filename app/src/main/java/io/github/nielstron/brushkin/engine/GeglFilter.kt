@@ -124,20 +124,11 @@ class GeglFilter(
     private val distances: Set<String> = emptySet(),
 ) : Filter {
     override val wholeImage = true
-    // A neutral displacement must not incur a resampling/color-conversion round trip.
-    private val neutral get() = when (operation) {
-        "gegl:ripple" -> parameters["amplitude"] == 0.0
-        "gegl:whirl-pinch" -> parameters["whirl"] == 0.0 && parameters["pinch"] == 0.0
-        "gegl:lens-distortion" -> listOf("main", "edge", "zoom").all { parameters[it] == 0.0 }
-        else -> false
-    }
-    override val gegl: GeglFilter? get() = if (neutral) null else this
+    override val gegl: GeglFilter get() = this
     override fun incremental(width: Int, height: Int): IncrementalFilter? =
-        if (neutral) null else GeglIncremental(width, height, operation, parameters)
-    override fun apply(src: IntArray, w: Int, h: Int): IntArray {
-        if (neutral) return src.copyOf()
-        return NativeGegl.render(src, w, h, operation, parameters.keys.toTypedArray(), parameters.values.toDoubleArray(), NativeGegl.allowOpenCl)
-    }
+        GeglIncremental(width, height, operation, parameters)
+    override fun apply(src: IntArray, w: Int, h: Int): IntArray =
+        NativeGegl.render(src, w, h, operation, parameters.keys.toTypedArray(), parameters.values.toDoubleArray(), NativeGegl.allowOpenCl)
     override fun scaled(k: Float) = GeglFilter(name, operation,
         parameters.mapValues { (key, value) -> if (key in distances) (value * k).let { if (key == "size-x" || key == "size-y") it.coerceAtLeast(1.0) else it } else value }, distances)
 }

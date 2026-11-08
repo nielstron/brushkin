@@ -82,16 +82,4 @@ class EngineOpsTest {
         assertEquals(Color.WHITE, e.snapshot().layers[0].pixels.toBitmap().getPixel(50, 50))
         e.shutdown()
     }
-
-    /** Opening a filter and closing it (or Reset) must change nothing: every default is a no-op. */
-    @Test fun filterDefaultsChangeNothing() {
-        val r = java.util.Random(1)
-        val w = 64; val h = 48
-        val px = IntArray(w * h) { (0xFF shl 24) or r.nextInt(0xFFFFFF) }
-        for ((name, f) in io.github.nielstron.brushkin.ui.filtersAtDefaults()) {
-            val out = f.apply(px.copyOf(), w, h)
-            val diff = px.indices.count { out[it] != px[it] }
-            assertEquals("$name changes $diff pixels at its defaults", 0, diff)
-        }
-    }
 }

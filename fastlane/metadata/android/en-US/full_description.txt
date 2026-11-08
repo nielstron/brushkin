@@ -12,7 +12,7 @@
 
 <p><b>Filters:</b> curves, levels, hue-saturation, colorize, channel mixer, exposure, shadows-highlights, white balance, blurs, noise reduction, drop shadow, vignette, distortions and more, all with live preview.</p>
 
-<p><b>Files:</b> opens and saves GIMP .xcf (layers, groups, masks, guides, channels) and OpenRaster .ora, exports PNG/JPEG/WebP. Imports GIMP brushes, gradients, palettes and patterns and MyPaint brushes.</p>
+<p><b>Files:</b> opens and saves GIMP .xcf (layers, groups, masks, guides, channels, live filters), opens OpenRaster .ora, exports PNG/JPEG/WebP. Imports GIMP brushes, gradients, palettes and patterns and MyPaint brushes.</p>
 
 <p>Compositing happens in linear light on the GPU, like GIMP 2.10+, and all heavy work runs off the UI thread so the interface stays responsive even with large images.</p>
 

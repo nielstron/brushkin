@@ -167,6 +167,13 @@ static GeglNode *createGraph(JNIEnv *env, jstring operation, jobjectArray keys, 
         else if (G_IS_PARAM_SPEC_UINT(spec)) g_value_set_uint(&value, (guint)params[i]);
         else if (G_IS_PARAM_SPEC_BOOLEAN(spec)) g_value_set_boolean(&value, params[i] != 0);
         else if (G_IS_PARAM_SPEC_ENUM(spec)) g_value_set_enum(&value, (int)params[i]);
+        else if (GEGL_IS_PARAM_SPEC_COLOR(spec)) { // An ARGB int, like the pixels.
+            auto argb = uint32_t(int64_t(params[i]));
+            guint8 rgba[4] = {guint8(argb>>16), guint8(argb>>8), guint8(argb), guint8(argb>>24)};
+            GeglColor *color = gegl_color_new(nullptr);
+            gegl_color_set_pixel(color, babl_format("R'G'B'A u8"), rgba);
+            g_value_take_object(&value, color);
+        }
         else { g_value_unset(&value); g_object_unref(graph); fail(env, "Unsupported GEGL parameter: " + name); return nullptr; }
         if (g_param_value_validate(spec, &value)) {
             g_value_unset(&value); g_object_unref(graph); fail(env, "Out-of-range GEGL parameter: " + name); return nullptr;
@@ -380,7 +387,7 @@ Java_io_github_nielstron_brushkin_engine_NativeGegl_describe(JNIEnv *env, jobjec
         auto *p = props[i]; double low=0, high=1, def=0; const char *kind;
         if (G_IS_PARAM_SPEC_DOUBLE(p)) { auto *s=G_PARAM_SPEC_DOUBLE(p); low=s->minimum; high=s->maximum; def=s->default_value; kind="double"; }
         else if (G_IS_PARAM_SPEC_INT(p)) { auto *s=G_PARAM_SPEC_INT(p); low=s->minimum; high=s->maximum; def=s->default_value; kind="int"; }
-        else if (G_IS_PARAM_SPEC_UINT(p)) { auto *s=G_PARAM_SPEC_UINT(p); low=s->minimum; high=s->maximum; def=s->default_value; kind="int"; }
+        else if (G_IS_PARAM_SPEC_UINT(p)) { auto *s=G_PARAM_SPEC_UINT(p); low=s->minimum; high=s->maximum; def=s->default_value; kind="uint"; }
         else if (G_IS_PARAM_SPEC_BOOLEAN(p)) { def=G_PARAM_SPEC_BOOLEAN(p)->default_value; kind="boolean"; }
         else if (G_IS_PARAM_SPEC_ENUM(p)) { auto *s=G_PARAM_SPEC_ENUM(p); low=s->enum_class->minimum; high=s->enum_class->maximum; def=s->default_value; kind="enum"; }
         else continue; // Color and object inputs need dedicated controls, not numeric sliders.

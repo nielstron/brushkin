@@ -14,6 +14,7 @@ import io.github.nielstron.brushkin.engine.Engine
 import io.github.nielstron.brushkin.engine.Ora
 import io.github.nielstron.brushkin.engine.ParkedDocument
 import io.github.nielstron.brushkin.engine.Stack
+import io.github.nielstron.brushkin.engine.Xcf
 import io.github.nielstron.brushkin.engine.blankStack
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
@@ -113,7 +114,10 @@ class DocumentTabs(
         }
     }
 
-    private fun fileOf(tab: DocumentTab) = if (tab.id == 0L) File(filesDir, "autosave.ora") else File(tabsDir, "${tab.id}.ora")
+    private fun fileOf(tab: DocumentTab) = if (tab.id == 0L) File(filesDir, "autosave.xcf") else File(tabsDir, "${tab.id}.xcf")
+    /** Where versions before XCF autosaved; replaced at the tab's next save. */
+    private fun oraFileOf(tab: DocumentTab) = if (tab.id == 0L) File(filesDir, "autosave.ora") else File(tabsDir, "${tab.id}.ora")
+    private fun isSaved(tab: DocumentTab) = fileOf(tab).exists() || oraFileOf(tab).exists()
     private fun thumbnailOf(tab: DocumentTab) = File(tabsDir, "${tab.id}.thumb.png")
 
     private fun persist() {
@@ -135,19 +139,19 @@ class DocumentTabs(
     suspend fun restore() = lock.withLock {
         withContext(Dispatchers.IO) {
             tabsDir.mkdirs()
-            val known = items.flatMap { listOf("${it.id}.ora", "${it.id}.thumb.png") }.toSet()
+            val known = items.flatMap { listOf("${it.id}.xcf", "${it.id}.ora", "${it.id}.thumb.png") }.toSet()
             tabsDir.listFiles()?.filter { it.name !in known }?.forEach { it.delete() }
-            if (items.none { it.id == 0L }) File(filesDir, "autosave.ora").delete()
+            if (items.none { it.id == 0L }) { File(filesDir, "autosave.xcf").delete(); File(filesDir, "autosave.ora").delete() }
         }
         val tab = active
-        if (fileOf(tab).exists()) {
+        if (isSaved(tab)) {
             load(tab)?.let { show(tab, it) }
         }
         if (!resident) {
             // Nothing to restore (or unreadable): the blank startup document is this tab.
             engine.post {}.join()
             resident = true
-            tab.blank = !fileOf(tab).exists()
+            tab.blank = !isSaved(tab)
         }
         persist()
         scope.launch { loadThumbnails() }
@@ -168,9 +172,13 @@ class DocumentTabs(
         val file = fileOf(tab)
         host.status("Opening ${tab.name}")
         try {
-            val stack = if (file.exists()) withContext(Dispatchers.IO) { file.inputStream().use { Ora.read(it) } }
-                else withContext(Dispatchers.Default) { blankStack(DEFAULT_WIDTH, DEFAULT_HEIGHT, Color.WHITE) }
-            tab.savedVersion = if (file.exists()) 0 else NOT_SAVED
+            val ora = oraFileOf(tab)
+            val stack = when {
+                file.exists() -> withContext(Dispatchers.IO) { Xcf.read(file.readBytes()) }
+                ora.exists() -> withContext(Dispatchers.IO) { ora.inputStream().use { Ora.read(it) } }
+                else -> withContext(Dispatchers.Default) { blankStack(DEFAULT_WIDTH, DEFAULT_HEIGHT, Color.WHITE) }
+            }
+            tab.savedVersion = if (file.exists() || ora.exists()) 0 else NOT_SAVED
             return ParkedDocument(stack, tab.name)
         } catch (t: CancellationException) {
             throw t
@@ -226,7 +234,7 @@ class DocumentTabs(
     fun open(stack: Stack, name: String) = operation(guarded = false) {
         val doc = ParkedDocument(stack, name)
         val info = engine.info.value
-        val unused = if (resident) active.blank && !info.canUndo && !info.canRedo else !fileOf(active).exists()
+        val unused = if (resident) active.blank && !info.canUndo && !info.canRedo else !isSaved(active)
         if (unused) {
             val tab = active
             resident = false // What's showing is thrown away, not parked.
@@ -283,7 +291,7 @@ class DocumentTabs(
     }
 
     private fun deleteFiles(tab: DocumentTab) {
-        scope.launch(Dispatchers.IO) { writeLock.withLock { fileOf(tab).delete(); thumbnailOf(tab).delete() } }
+        scope.launch(Dispatchers.IO) { writeLock.withLock { fileOf(tab).delete(); oraFileOf(tab).delete(); thumbnailOf(tab).delete() } }
     }
 
     /** Names [tab] after a file, e.g. the one it was just saved as. */
@@ -301,7 +309,7 @@ class DocumentTabs(
     /** Applies a title the user typed; names keep an extension so that dots in the title survive [tabTitle]. */
     fun renameTitle(tab: DocumentTab, title: String) {
         if (title.isBlank() || title.trim() == tabTitle(tab.name)) return
-        rename(tab, "${title.trim()}.${tab.name.substringAfterLast('.', "ora")}")
+        rename(tab, "${title.trim()}.${tab.name.substringAfterLast('.', "xcf")}")
     }
 
     fun move(from: Int, to: Int) {
@@ -340,8 +348,9 @@ class DocumentTabs(
             withContext(Dispatchers.IO) {
                 tabsDir.mkdirs()
                 val tmp = File(tabsDir, "${tab.id}.tmp")
-                tmp.outputStream().use { Ora.write(job.stack, it) }
+                tmp.outputStream().use { Xcf.write(job.stack, it) }
                 check(tmp.renameTo(fileOf(tab))) { "couldn't replace the saved file" }
+                oraFileOf(tab).delete()
                 thumbnailOf(tab).outputStream().use { job.thumbnail.compress(Bitmap.CompressFormat.PNG, 100, it) }
             }
             tab.savedVersion = job.version

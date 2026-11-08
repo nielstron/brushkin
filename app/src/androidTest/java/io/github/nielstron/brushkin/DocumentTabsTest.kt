@@ -143,7 +143,7 @@ class DocumentTabsTest {
         t.restore()
         t.renameTitle(t.active, "v1.2 sketch")
         e.post {}.join(); delay(100)
-        assertEquals("v1.2 sketch.ora", t.active.name)
+        assertEquals("v1.2 sketch.xcf", t.active.name)
         assertEquals("v1.2 sketch", io.github.nielstron.brushkin.ui.tabTitle(t.active.name))
         e.shutdown()
     }
@@ -157,7 +157,7 @@ class DocumentTabsTest {
         t.open(stack(0xFF778899.toInt()), "b.png").join()
         t.autosave()
         val id = t.active.id
-        val file = File(dir, "tabs/$id.ora")
+        val file = File(dir, "tabs/$id.xcf")
         assertTrue(file.exists())
         t.close(t.active).join()
         assertTrue("Kept for undo", file.exists())

@@ -17,6 +17,27 @@ class GeglTest {
         assertEquals(100.0,radius.getDouble("max"),0.0)
     }
 
+    @Test fun gaussianBlurSliderIsGeneratedFromGegl() {
+        val sigma=geglSpecs.getValue("Gaussian Blur").params.first()
+        assertEquals(1.5f,sigma.default,0f)
+        assertEquals(0.24f,sigma.range.start,1e-5f)
+        assertEquals(100f,sigma.range.endInclusive,0f)
+        assertEquals(3f,sigma.gamma,0f)
+    }
+
+    @Test fun effectsSavedBeforeGeglSlidersKeepTheirMeaning() {
+        val src=IntArray(64) { i -> 0xff000000.toInt() or (i*4 shl 8) or 80 }
+        val saved=LayerEffect.fromJson(org.json.JSONObject("""{"name":"Exposure","params":[1,0]}"""))
+        assertArrayEquals(ExposureFilter(1f,0f).apply(src,8,8),io.github.nielstron.brushkin.ui.buildEffect(saved)!!.apply(src,8,8))
+        assertEquals(2,LayerEffect.fromJson(LayerEffect("Exposure",emptyList()).toJson()).paramsVersion)
+    }
+
+    @Test fun colorToAlphaRemovesTheChosenColor() {
+        val out=ColorToAlphaFilter(0xffffffff.toInt()).apply(intArrayOf(-1,0xff000000.toInt()),2,1)
+        assertEquals(0,out[0] ushr 24)
+        assertEquals(255,out[1] ushr 24)
+    }
+
     @Test fun exposureUsesLinearLightAndPreservesStraightAlpha() {
         val src = intArrayOf(0xff808080.toInt(), 0x80808080.toInt(), 0xff000000.toInt())
         val out = ExposureFilter(1f, 0f).apply(src, 3, 1)
@@ -47,7 +68,6 @@ class GeglTest {
         val src=IntArray(w*h) { i -> 0xff000000.toInt() or ((i%w*8) shl 16) or ((i/w*8) shl 8) or 80 }
         for ((name,spec) in geglSpecs) {
             try {
-                assertFalse("$name must apply its default settings",spec.defaultIsIdentity)
                 val out=spec.build(spec.params.map { it.default }).apply(src,w,h)
                 assertEquals(name,src.size,out.size)
                 assertTrue("$name produced an empty result",out.any { it ushr 24 > 0 })

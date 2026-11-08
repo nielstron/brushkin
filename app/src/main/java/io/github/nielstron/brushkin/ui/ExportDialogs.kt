@@ -66,17 +66,6 @@ private fun <T> Choice(label: String, value: T, options: List<T>, text: (T) -> S
 }
 
 @Composable
-fun SaveProjectDialog(close: () -> Unit, save: (Boolean) -> Unit) {
-    var xcf by rememberSaveable { mutableStateOf(false) }
-    AlertDialog(onDismissRequest = close, containerColor = Ui.panel, title = { Text("Save as") },
-        text = { Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
-            Choice("Project format", xcf, listOf(false, true), { if (it) "GIMP (.xcf)" else "OpenRaster (.ora)" }) { xcf = it }
-            Text(if (xcf) "Save a layered project for GIMP." else "Keep layers and editing data for reopening in Brushkin.", color = Ui.muted)
-        } }, confirmButton = { TextButton(onClick = { save(xcf) }) { Text("Choose location…") } },
-        dismissButton = { TextButton(onClick = close) { Text("Cancel") } })
-}
-
-@Composable
 private fun ExportToggle(label: String, value: Boolean, enabled: Boolean = true, change: (Boolean) -> Unit) {
     Row(Modifier.fillMaxWidth().clickable(enabled) { change(!value) }, verticalAlignment = Alignment.CenterVertically) {
         Checkbox(value, change, enabled = enabled)
