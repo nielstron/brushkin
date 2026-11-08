@@ -581,7 +581,7 @@ class Engine {
     fun filterApplyAll(f: Filter, afterEffects: Boolean = false) = post {
         previewJob?.cancel(); proxy = null
         val s = stack
-        busy(f.name) {
+        try { busy(f.name) {
             val diffs = ArrayList<TileDiff>()
             var next = s
             for (l in s.all) {
@@ -599,7 +599,7 @@ class Engine {
             preview = null
             stack = next
             record("${f.name} (All Layers)", s, diffs)
-        }
+        } } catch (e: Exception) { applyFailed(f.name, e) }
     }
 
     fun setEffects(layerId: Long, name: String, f: (List<LayerEffect>) -> List<LayerEffect>) = post {
@@ -1285,16 +1285,23 @@ class Engine {
         previewJob?.cancel()
         // One preview at a time, always for the latest request: slider drags never pile up work.
         previewJob = CoroutineScope(Dispatchers.Default).launch {
+            var reportedFailure = false
             previewRequests.collect { f ->
                 if (f == null) return@collect
                 val p = proxy ?: return@collect
+                try {
                 val sf = f.scaled(p.k)
                 val out = maskBlend(p.px, sf.apply(p.px, p.w, p.h), p.mask, p.w, p.h)
                 fun displayed(id: Long, pixels: IntArray): TiledBitmap {
                     var tiles = TiledBitmap.fromPixels(pixels, p.w, p.h, if (filterOnMask) MASK_WHITE else 0)
                     for (effect in p.effects[id].orEmpty()) {
-                        val filter = Effects.factory?.invoke(effect) ?: continue
-                        tiles = applyFilterBanded(tiles, filter.scaled(p.k), null)
+                        tiles = try {
+                            val filter = Effects.factory?.invoke(effect) ?: continue
+                            applyFilterBanded(tiles, filter.scaled(p.k), null)
+                        } catch (e: Exception) {
+                            if (e is kotlinx.coroutines.CancellationException) throw e
+                            Effects.reportSkipped(effect.name, e); tiles
+                        }
                     }
                     return tiles
                 }
@@ -1309,8 +1316,25 @@ class Engine {
                         invalidate()
                     }
                 }
+                reportedFailure = false
+                } catch (e: Exception) {
+                    if (e is kotlinx.coroutines.CancellationException) throw e
+                    // Keep the last good preview; once per run of failures, not per slider step.
+                    android.util.Log.e("Brushkin", "filter preview failed", e)
+                    if (!reportedFailure) onMessage?.invoke("${f.name} can't use these settings")
+                    reportedFailure = true
+                }
             }
         }
+    }
+
+    /** Applying failed: nothing changed, so the preview mustn't look as if it had. */
+    private fun applyFailed(name: String, e: Exception) {
+        if (e is kotlinx.coroutines.CancellationException) throw e
+        android.util.Log.e("Brushkin", "applying $name failed", e)
+        preview = null
+        invalidate()
+        onMessage?.invoke("Couldn't apply $name with these settings")
     }
 
     fun filterPreview(f: Filter) { previewRequests.value = f }
@@ -1321,7 +1345,7 @@ class Engine {
         val s = stack
         val l = s.find(filterLayer) ?: return@post
         val target = if (filterOnMask && l.mask != null) l.mask else l.pixels
-        busy(f.name) {
+        try { busy(f.name) {
             // Process in horizontal bands (overlapping by the filter's reach) so even very large
             // images never need more than a few band-sized arrays on the Java heap.
             val out = withContext(Dispatchers.Default) {
@@ -1333,7 +1357,7 @@ class Engine {
             if (afterEffects && !filterOnMask) stack = stack.replace(l.copy(effects = emptyList()))
             if (!filterOnMask && l.text != null) stack = dropText(stack)
             replaceTiles(s, target, out, f.name)
-        }
+        } } catch (e: Exception) { applyFailed(f.name, e) }
     }
 
     fun filterCancel() = post {

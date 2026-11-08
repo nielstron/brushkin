@@ -474,6 +474,7 @@ class EditorViewModel(app: Application) : AndroidViewModel(app) {
                 io.github.nielstron.brushkin.engine.TextSpec.MEME_FONT to android.graphics.Typeface.createFromAsset(app.assets, "fonts/Anton-Regular.ttf"))
         }
         io.github.nielstron.brushkin.engine.Effects.factory = { buildEffect(it) }
+        io.github.nielstron.brushkin.engine.Effects.onSkipped = { messages.tryEmit(it) }
         viewModelScope.launch(Dispatchers.IO) { resources.load() }
         // Posted, not immediate: the clipboard property is declared further down.
         viewModelScope.launch(Dispatchers.Main) { clipboardManager.addPrimaryClipChangedListener { refreshClipboard() } }

@@ -28,6 +28,15 @@ data class LayerEffect(val name: String, val params: List<Float>, val fg: Int = 
 object Effects {
     /** Builds the filter for an effect (set by the UI, which owns the filter definitions). */
     @Volatile var factory: ((LayerEffect) -> Filter?)? = null
+    /** Told once per effect when its settings can't be rendered, for example from a damaged file. */
+    @Volatile var onSkipped: ((String) -> Unit)? = null
+    private val skipped = java.util.concurrent.ConcurrentHashMap.newKeySet<String>()
+
+    /** The layer still shows every other effect. */
+    internal fun reportSkipped(name: String, e: Exception) {
+        android.util.Log.e("Brushkin", "skipped effect $name", e)
+        if (skipped.add(name)) onSkipped?.invoke("Skipped the $name effect: its settings can't be used")
+    }
 
     private class Entry(val key: Long, val effects: List<LayerEffect>, val result: TiledBitmap)
     // Weak keys: results go away with the layer versions (undo history) they belong to.
@@ -49,7 +58,10 @@ object Effects {
         fun close() = stages.forEach { it.second?.close() }
         fun render(source: TiledBitmap): TiledBitmap {
             var result=source
-            for ((filter, incremental) in stages) if (filter != null) result=incremental?.render(result) ?: applyFilterBanded(result,filter,null)
+            for ((filter, incremental) in stages) if (filter != null) {
+                result=try { incremental?.render(result) ?: applyFilterBanded(result,filter,null) }
+                    catch (e: Exception) { reportSkipped(filter.name, e); result }
+            }
             return result
         }
     }
@@ -74,8 +86,12 @@ object Effects {
             }
             try {
                 for(e in effects.drop(prefix)) {
-                    val filter=factory?.invoke(e)
-                    stages.add(filter to filter?.incremental(t.width,t.height))
+                    stages.add(try {
+                        val filter=factory?.invoke(e)
+                        filter to filter?.incremental(t.width,t.height)
+                    } catch (failure: Exception) {
+                        reportSkipped(e.name, failure); null to null
+                    })
                 }
             } catch (e: Throwable) {
                 stages.forEach { it.second?.close() }; throw e
