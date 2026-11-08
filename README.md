@@ -11,6 +11,7 @@ A layered image editor for Android, inspired by GIMP and designed for fingers an
 
 - Insert other images, emojis, stickers and text.
 - Paint with brushes, pencil, airbrush, ink and MyPaint-style brushes, plus smudge, clone, heal, dodge/burn and symmetry painting.
+- Work on several images at once in Chrome-style tabs, each with its own undo history and autosave.
 - Select with rectangle, lasso, fuzzy, Intelligent Scissors and quick mask.
 - Lightweight AI tools: select objects, remove objects, background depth blur, upscale, denoise and deblur.
 - Transform with move, scale, rotate, perspective, warp, cage and more, snapping to guides and a grid.

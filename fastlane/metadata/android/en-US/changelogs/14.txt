@@ -1,0 +1,2 @@
+Tabs: work on several images at once. Tap the tab counter for all open images, swipe a card away to close it (with Undo), and long-press and drag to reorder. Every tab keeps its own undo history and view, and all of them come back after a restart.
+Opening an image now uses a new tab. Tap the image name to rename it; saving a project also updates the name.
