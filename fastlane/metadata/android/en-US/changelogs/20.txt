@@ -1,0 +1,1 @@
+Your undo history now survives Android closing the app in the background, and it uses much less memory.
