@@ -1,0 +1,2 @@
+Fixes a crash when some filter sliders reached the end of their range.
+Filter help now leaves out descriptions that only repeat the setting's name.
