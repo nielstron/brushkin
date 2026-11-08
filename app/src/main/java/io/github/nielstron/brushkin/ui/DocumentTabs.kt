@@ -52,7 +52,6 @@ class DocumentTab internal constructor(val id: Long, name: String) {
     /** The document while it's in memory in the background; null when active or only on disk. */
     internal var parked: ParkedDocument? = null
     internal var savedVersion = NOT_SAVED
-    internal var historySavedVersion = NOT_SAVED
     internal var edit: TabEdit? = null
     internal var lastUsed = 0L
     internal var closed = false
@@ -83,7 +82,7 @@ class DocumentTabs(
     }
 
     private class Closed(val tab: DocumentTab, val index: Int, val wasActive: Boolean, val replacement: DocumentTab?)
-    private class SaveJob(val tab: DocumentTab, val stack: Stack, val version: Long, val thumbnail: Bitmap)
+    private class SaveJob(val tab: DocumentTab, val stack: Stack, val version: Long, val thumbnail: Bitmap, val history: HistorySnapshot?)
 
     val items = mutableStateListOf<DocumentTab>()
     var active by mutableStateOf(DocumentTab(0, "Untitled")); private set
@@ -177,7 +176,7 @@ class DocumentTabs(
         host.status("Opening ${tab.name}")
         try {
             val restored = withContext(Dispatchers.IO) { HistoryStore.read(historyFileOf(tab), file.length(), file.lastModified(), tab.name) }
-            if (restored != null) { tab.savedVersion = restored.version; tab.historySavedVersion = restored.version; return restored }
+            if (restored != null) { tab.savedVersion = restored.version; return restored }
             val stack = if (file.exists()) withContext(Dispatchers.IO) { file.inputStream().use { Ora.read(it) } }
                 else withContext(Dispatchers.Default) { blankStack(DEFAULT_WIDTH, DEFAULT_HEIGHT, Color.WHITE) }
             tab.savedVersion = if (file.exists()) 0 else NOT_SAVED
@@ -206,7 +205,7 @@ class DocumentTabs(
         if (outgoing == null) return
         outgoing.parked = out
         if (isClosing) return
-        val job = SaveJob(outgoing, engine.snapshot(out), out.version, engine.thumbnail(THUMBNAIL_SIZE, out))
+        val job = SaveJob(outgoing, engine.snapshot(out), out.version, engine.thumbnail(THUMBNAIL_SIZE, out), engine.historySnapshot(out))
         outgoing.thumbnail = job.thumbnail.asImageBitmap()
         scope.launch { write(job); evict() }
     }
@@ -328,7 +327,7 @@ class DocumentTabs(
         val tab = active
         val version = engine.info.value.version
         if (version == tab.savedVersion) return null
-        SaveJob(tab, engine.snapshot(), version, engine.thumbnail(THUMBNAIL_SIZE))
+        SaveJob(tab, engine.snapshot(), version, engine.thumbnail(THUMBNAIL_SIZE), engine.historySnapshot())
     }
 
     /** Saves the active tab if it changed since its last save. */
@@ -336,30 +335,6 @@ class DocumentTabs(
         val job = saveJobForActive() ?: return
         job.tab.thumbnail = job.thumbnail.asImageBitmap()
         write(job)
-    }
-
-    /** When the app leaves the screen, where Android may end it: saves the image and each open tab's undo history. */
-    suspend fun saveHistories() {
-        autosave()
-        lock.withLock {
-            for (tab in items.toList()) {
-                if (tab.closed || (tab === active && !resident)) continue
-                val parked = tab.parked
-                if (tab !== active && parked == null) continue // Only on disk: its history file is still right.
-                val snapshot = engine.historySnapshot(parked)
-                writeLock.withLock { withContext(Dispatchers.IO) { saveHistory(tab, snapshot) } }
-            }
-        }
-    }
-
-    private fun saveHistory(tab: DocumentTab, snapshot: HistorySnapshot?) {
-        val file = historyFileOf(tab)
-        val image = fileOf(tab)
-        if (snapshot == null || !image.exists()) { file.delete(); tab.historySavedVersion = NOT_SAVED; return }
-        if (snapshot.version != tab.savedVersion || snapshot.version == tab.historySavedVersion) return
-        historyDir.mkdirs()
-        runCatching { HistoryStore.write(snapshot, file, image.length(), image.lastModified()); tab.historySavedVersion = snapshot.version }
-            .onFailure { android.util.Log.w("Brushkin", "couldn't save undo history", it) }
     }
 
     /** From inside an [operation], which already holds the lock. */
@@ -375,7 +350,15 @@ class DocumentTabs(
                 tabsDir.mkdirs()
                 val tmp = File(tabsDir, "${tab.id}.tmp")
                 tmp.outputStream().use { Ora.write(job.stack, it) }
+                // Image and history replace their files together, so a save cut off by the app being
+                // ended leaves the previous pair intact; the history matches the image it's written with.
+                val pending = File(historyDir, "${tab.id}.pending")
+                val historySaved = job.history != null && runCatching {
+                    historyDir.mkdirs()
+                    HistoryStore.write(job.history, pending, tmp.length(), tmp.lastModified())
+                }.onFailure { android.util.Log.w("Brushkin", "couldn't save undo history", it) }.isSuccess
                 check(tmp.renameTo(fileOf(tab))) { "couldn't replace the saved file" }
+                if (historySaved) pending.renameTo(historyFileOf(tab)) else historyFileOf(tab).delete()
                 thumbnailOf(tab).outputStream().use { job.thumbnail.compress(Bitmap.CompressFormat.PNG, 100, it) }
             }
             tab.savedVersion = job.version

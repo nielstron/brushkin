@@ -137,6 +137,43 @@ class DocumentTabsTest {
         assertEquals(listOf("parked.png", "bad_name_.png"), tabs(Engine(), dir, prefs, scope).items.map { it.name })
     }
 
+    /** The app can be ended right after any autosave, by being swiped away for instance. */
+    @Test fun autosaveKeepsUndoForTheNextStart() = test { dir, prefs ->
+        val scope = CoroutineScope(coroutineContext + SupervisorJob())
+        val e = Engine(); fresh(e)
+        val t = tabs(e, dir, prefs, scope)
+        t.restore()
+        e.filterBegin().join(); e.filterApply(io.github.nielstron.brushkin.engine.ExposureFilter(1f, 0f)).join()
+        t.autosave()
+        e.shutdown()
+        val next = Engine(); fresh(next)
+        tabs(next, dir, prefs, scope).restore()
+        next.post {}.join()
+        assertTrue("Undo should survive the restart", next.info.value.canUndo)
+        next.shutdown()
+    }
+
+    /** Every pause asks for a save, so most of them must find nothing to do. */
+    @Test fun autosaveWritesOnlyWhenSomethingChanged() = test { dir, prefs ->
+        val scope = CoroutineScope(coroutineContext + SupervisorJob())
+        val e = Engine(); fresh(e)
+        val t = tabs(e, dir, prefs, scope)
+        t.restore()
+        e.filterBegin().join(); e.filterApply(io.github.nielstron.brushkin.engine.ExposureFilter(1f, 0f)).join()
+        t.autosave()
+        val image = File(dir, "autosave.ora"); val history = File(dir, "history/0.history")
+        assertTrue(image.exists() && history.exists())
+        image.setLastModified(1000); history.setLastModified(1000)
+        repeat(3) { t.autosave() }
+        assertEquals("The image was rewritten", 1000, image.lastModified())
+        assertEquals("The history was rewritten", 1000, history.lastModified())
+        e.filterBegin().join(); e.filterApply(io.github.nielstron.brushkin.engine.ExposureFilter(1f, 0f)).join()
+        t.autosave()
+        assertNotEquals("A real change must be saved", 1000, image.lastModified())
+        assertNotEquals("A real change must be saved", 1000, history.lastModified())
+        e.shutdown()
+    }
+
     @Test fun typedTitlesKeepTheirDots() = test { dir, prefs ->
         val e = Engine(); fresh(e)
         val t = tabs(e, dir, prefs, CoroutineScope(coroutineContext + SupervisorJob()))

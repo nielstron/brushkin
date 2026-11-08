@@ -129,10 +129,16 @@ class MainActivity : ComponentActivity(), FileActions {
         if (level == TRIM_MEMORY_RUNNING_CRITICAL || level >= TRIM_MEMORY_MODERATE) vm.tabs.releaseBackgroundTabs()
     }
 
+    override fun onPause() {
+        super.onPause()
+        // Opening Recents only pauses the app, and swiping it away from there ends it almost at once.
+        vm.saveForBackground()
+    }
+
     override fun onStop() {
         super.onStop()
         // Autosave off the main thread so leaving the app never stalls.
-        vm.viewModelScope.launch { vm.saveForBackground() }
+        vm.saveForBackground()
     }
 
     // ------------------------------------------------------------------ FileActions

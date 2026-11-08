@@ -114,6 +114,9 @@ data class ExportedImage(val uri: android.net.Uri, val mime: String)
 
 enum class Sheet { NONE, TOOLS, OPTIONS, COLOR, LAYERS, INSERT, HISTORY }
 
+/** Leaving the app saves at once; this covers the ways of ending it that skip that, like a crash. */
+private const val AUTOSAVE_DELAY_MS = 10_000L
+
 class EditorViewModel(app: Application) : AndroidViewModel(app) {
     val engine = Engine()
     val messages = MutableSharedFlow<String>(extraBufferCapacity = 8)
@@ -483,7 +486,7 @@ class EditorViewModel(app: Application) : AndroidViewModel(app) {
         // Autosave a few seconds after edits settle, so a crash or a killed process loses little.
         viewModelScope.launch {
             @OptIn(kotlinx.coroutines.FlowPreview::class)
-            engine.info.map { it.version }.distinctUntilChanged().drop(1).debounce(4000).collect { autosave() }
+            engine.info.map { it.version }.distinctUntilChanged().drop(1).debounce(AUTOSAVE_DELAY_MS).collect { autosave() }
         }
     }
 
@@ -756,8 +759,11 @@ class EditorViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     suspend fun autosave() { if (!startupLoading) tabs.autosave() }
+    /** Swiping the app away clears this ViewModel while the save is still running, so it runs outside it. */
+    private val outliving = kotlinx.coroutines.CoroutineScope(kotlinx.coroutines.SupervisorJob() + Dispatchers.Default)
+    private var backgroundSave: kotlinx.coroutines.Job? = null
     /** Android may end the app once it's off screen. */
-    suspend fun saveForBackground() { if (!startupLoading) tabs.saveHistories() }
+    fun saveForBackground() { if (!startupLoading) backgroundSave = outliving.launch { tabs.autosave() } }
 
     // Favorite tools (shown in the toolbar strip and first in the tool list) and how often each tool
     // is picked (the tool list shows the most used ones per section first). Both persist.
@@ -859,5 +865,9 @@ class EditorViewModel(app: Application) : AndroidViewModel(app) {
 
     fun swapColors() { val t = fg; fg = bg; bg = t }
 
-    override fun onCleared() { engine.shutdown(); objects.close(); images.close() }
+    override fun onCleared() {
+        objects.close(); images.close()
+        val save = backgroundSave
+        outliving.launch { save?.join(); engine.shutdown() }
+    }
 }
