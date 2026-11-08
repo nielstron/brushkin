@@ -23,11 +23,11 @@ internal val geglSpecs: Map<String, FilterSpec> by lazy {
             val kind = p.getString("kind")
             val options = p.optJSONArray("choices")?.let { choices ->
                 List(choices.length()) { j -> choices.getJSONObject(j).let { it.getDouble("value").toFloat() to it.getString("label") } }
-            } ?: if (kind == "boolean") listOf(0f to "Off", 1f to "On") else emptyList()
+            } ?: emptyList()
             val default = p.getDouble("default").toFloat()
             // Unbounded native numeric fields are edited as numbers, never as enormous sliders.
             Param(p.getString("label"), p.getDouble("min").toFloat()..p.getDouble("max").toFloat(), default,
-                choices = options, integral = kind == "int" || kind == "uint",
+                choices = options, integral = kind == "int" || kind == "uint", toggle = kind == "boolean", key = p.getString("key"), visibleWhen = p.getString("visible"), enabledWhen = p.getString("sensitive"),
                 allowedRange = representableLower(p.getDouble("allowedMin"))..representableUpper(p.getDouble("allowedMax")),
                 gamma = p.getDouble("gamma").toFloat()) { if (kind == "int" || kind == "uint") "${it.roundToInt()}" else "%.3f".format(it) }
         }

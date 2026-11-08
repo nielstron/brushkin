@@ -403,6 +403,7 @@ Java_io_github_nielstron_brushkin_engine_NativeGegl_describe(JNIEnv *env, jobjec
         number("min",low); number("max",high); number("default",def);
         number("allowedMin",allowedLow); number("allowedMax",allowedHigh); number("gamma",gamma);
         const char *unit=gegl_param_spec_get_property_key(p,"unit"); text("unit",unit ? unit : "");
+        for (const char *key : {"visible","sensitive"}) { const char *condition=gegl_param_spec_get_property_key(p,key); text(key,condition ? condition : ""); }
         if (G_IS_PARAM_SPEC_ENUM(p)) {
             json_builder_set_member_name(json,"choices"); json_builder_begin_array(json);
             auto *ec=G_PARAM_SPEC_ENUM(p)->enum_class;

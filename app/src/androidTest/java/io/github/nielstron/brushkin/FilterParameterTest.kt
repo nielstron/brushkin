@@ -13,6 +13,27 @@ import org.junit.Test
 
 class FilterParameterTest {
     @get:Rule val compose = createComposeRule()
+    @Test fun choiceRowShowsLabelAndCurrentChoiceAndChanges() {
+        val param=Param("Shape",0f..1f,0f,choices=listOf(0f to "Circle",1f to "Square"))
+        compose.setContent {
+            var value by remember { mutableFloatStateOf(0f) }
+            io.github.nielstron.brushkin.ui.FilterChoiceRow(param,value) { value=it }
+        }
+        compose.onNodeWithText("Shape").assertExists()
+        compose.onNodeWithText("Circle").performClick()
+        compose.onNodeWithText("Square").performClick()
+        compose.onNodeWithText("Square").assertExists()
+        compose.onNodeWithText("Circle").assertDoesNotExist()
+    }
+
+    @Test fun toggleRowIsACheckbox() {
+        var value by mutableFloatStateOf(0f)
+        compose.setContent { io.github.nielstron.brushkin.ui.FilterToggleRow(Param("Clip",0f..1f,0f,toggle=true),value) { value=it } }
+        compose.onNodeWithText("Clip",useUnmergedTree=true).assertExists()
+        compose.onNode(isToggleable()).assertIsOff().performClick().assertIsOn()
+        org.junit.Assert.assertEquals(1f,value,0f)
+    }
+
     @Test fun typedDecimalsAndSliderShareTheSameValue() {
         compose.setContent {
             var value by remember { mutableFloatStateOf(3f) }

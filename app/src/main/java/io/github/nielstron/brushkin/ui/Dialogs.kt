@@ -299,7 +299,7 @@ val FONTS = listOf("Sans" to "sans-serif", "Serif" to "serif", "Mono" to "monosp
 // ---------------------------------------------------------------------------- filters
 
 /** A filter parameter; [default] is what the panel opens with and Reset goes back to. */
-internal data class Param(val label: String, val range: ClosedFloatingPointRange<Float>, val default: Float, val choices: List<Pair<Float, String>> = emptyList(), val integral: Boolean = false, val allowedRange: ClosedFloatingPointRange<Float> = range, val gamma: Float = 1f, val fmt: (Float) -> String = { "%.2f".format(it) })
+internal data class Param(val label: String, val range: ClosedFloatingPointRange<Float>, val default: Float, val choices: List<Pair<Float, String>> = emptyList(), val integral: Boolean = false, val allowedRange: ClosedFloatingPointRange<Float> = range, val gamma: Float = 1f, val toggle: Boolean = false, val key: String = "", val visibleWhen: String = "", val enabledWhen: String = "", val fmt: (Float) -> String = { "%.2f".format(it) })
 
 internal class FilterSpec(val params: List<Param>, val build: (List<Float>) -> Filter)
 
@@ -412,21 +412,15 @@ private fun FilterPanel(vm: EditorViewModel, name: String, close: () -> Unit) {
                 if (vm.filterPicking != null) Text("Touch the image to pick the color to remove", color = Ui.muted, fontSize = 13.sp, modifier = Modifier.padding(top = 8.dp))
             } else if (spec != null) {
                 Column(Modifier.heightIn(max = 320.dp).verticalScroll(rememberScrollState())) {
+                    val current = spec.params.mapIndexed { i, p -> p.key to (values[i] ?: p.default) }.toMap()
                     spec.params.forEachIndexed { i, p ->
+                        if (!p.isVisible(spec.params, current)) return@forEachIndexed
+                        val enabled = p.isEnabled(spec.params, current)
                         val v = values[i] ?: p.default
                         when {
-                            p.choices.isNotEmpty() -> {
-                                var expanded by remember { mutableStateOf(false) }
-                                Box {
-                                    TextButton(onClick = { expanded = true }) { Text("${p.label}: ${p.choices.firstOrNull { it.first == v }?.second ?: v}") }
-                                    androidx.compose.material3.DropdownMenu(expanded, { expanded = false }) {
-                                        p.choices.forEach { (number, label) ->
-                                            androidx.compose.material3.DropdownMenuItem(text = { Text(label) }, onClick = { values[i] = number; expanded = false })
-                                        }
-                                    }
-                                }
-                            }
-                            else -> FilterParameterRow(p, v) { values[i] = it }
+                            p.toggle -> FilterToggleRow(p, v, enabled) { values[i] = it }
+                            p.choices.isNotEmpty() -> FilterChoiceRow(p, v, enabled) { values[i] = it }
+                            else -> FilterParameterRow(p, v, enabled) { values[i] = it }
                         }
                     }
                 }

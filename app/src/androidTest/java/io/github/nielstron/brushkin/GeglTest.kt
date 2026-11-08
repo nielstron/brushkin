@@ -38,6 +38,16 @@ class GeglTest {
         assertEquals(255,out[1] ushr 24)
     }
 
+    @Test fun everyGeglConditionEvaluates() {
+        for ((name,spec) in geglSpecs) for (p in spec.params) {
+            val current=spec.params.associate { it.key to it.default }
+            try {
+                io.github.nielstron.brushkin.ui.evaluateCondition(p.visibleWhen,"visible",p,spec.params,current)
+                io.github.nielstron.brushkin.ui.evaluateCondition(p.enabledWhen,"sensitive",p,spec.params,current)
+            } catch (e: Exception) { throw AssertionError("$name ${p.key}: ${p.visibleWhen} / ${p.enabledWhen}",e) }
+        }
+    }
+
     @Test fun exposureUsesLinearLightAndPreservesStraightAlpha() {
         val src = intArrayOf(0xff808080.toInt(), 0x80808080.toInt(), 0xff000000.toInt())
         val out = ExposureFilter(1f, 0f).apply(src, 3, 1)
