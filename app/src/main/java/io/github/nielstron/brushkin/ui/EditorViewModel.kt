@@ -473,6 +473,7 @@ class EditorViewModel(app: Application) : AndroidViewModel(app) {
             io.github.nielstron.brushkin.engine.TextSpec.bundledFonts = mapOf(
                 io.github.nielstron.brushkin.engine.TextSpec.MEME_FONT to android.graphics.Typeface.createFromAsset(app.assets, "fonts/Anton-Regular.ttf"))
         }
+        tabs.historyDir = java.io.File(app.noBackupFilesDir, "history")
         io.github.nielstron.brushkin.engine.Effects.factory = { buildEffect(it) }
         io.github.nielstron.brushkin.engine.Effects.onSkipped = { messages.tryEmit(it) }
         viewModelScope.launch(Dispatchers.IO) { resources.load() }
@@ -755,6 +756,8 @@ class EditorViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     suspend fun autosave() { if (!startupLoading) tabs.autosave() }
+    /** Android may end the app once it's off screen. */
+    suspend fun saveForBackground() { if (!startupLoading) tabs.saveHistories() }
 
     // Favorite tools (shown in the toolbar strip and first in the tool list) and how often each tool
     // is picked (the tool list shows the most used ones per section first). Both persist.

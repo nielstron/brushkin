@@ -1766,6 +1766,11 @@ class Engine {
         s.copy(layers = Stack.mapTree(s.layers) { it.copy(pixels = it.pixels.copy(), mask = it.mask?.copy()) })
     }
 
+    /** The undo state to save for the current document or [parked]; null if there's none. */
+    internal suspend fun historySnapshot(parked: ParkedDocument? = null): HistorySnapshot? = withContext(dispatcher) {
+        if (parked != null) HistoryStore.capture(parked.stack, parked.history, parked.version) else HistoryStore.capture(stack, history, version)
+    }
+
     /** A small picture of the current document, or of [parked], at most [maxDim] pixels across. */
     suspend fun thumbnail(maxDim: Int, parked: ParkedDocument? = null): Bitmap = withContext(dispatcher) { Compositor.thumbnail(parked?.stack ?: stack, maxDim) }
 

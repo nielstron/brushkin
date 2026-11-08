@@ -132,7 +132,7 @@ class MainActivity : ComponentActivity(), FileActions {
     override fun onStop() {
         super.onStop()
         // Autosave off the main thread so leaving the app never stalls.
-        lifecycleScope.launch { vm.autosave() }
+        vm.viewModelScope.launch { vm.saveForBackground() }
     }
 
     // ------------------------------------------------------------------ FileActions

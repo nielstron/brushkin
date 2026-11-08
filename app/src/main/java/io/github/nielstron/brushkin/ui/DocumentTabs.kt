@@ -11,6 +11,8 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.graphics.asImageBitmap
 import io.github.nielstron.brushkin.engine.Engine
+import io.github.nielstron.brushkin.engine.HistorySnapshot
+import io.github.nielstron.brushkin.engine.HistoryStore
 import io.github.nielstron.brushkin.engine.Ora
 import io.github.nielstron.brushkin.engine.ParkedDocument
 import io.github.nielstron.brushkin.engine.Stack
@@ -50,6 +52,7 @@ class DocumentTab internal constructor(val id: Long, name: String) {
     /** The document while it's in memory in the background; null when active or only on disk. */
     internal var parked: ParkedDocument? = null
     internal var savedVersion = NOT_SAVED
+    internal var historySavedVersion = NOT_SAVED
     internal var edit: TabEdit? = null
     internal var lastUsed = 0L
     internal var closed = false
@@ -91,6 +94,8 @@ class DocumentTabs(
     val closingName get() = closing.lastOrNull()?.tab?.name.orEmpty()
 
     private val tabsDir = File(filesDir, "tabs")
+    /** Replaced by the app with a folder outside device backups; undo history can be large. */
+    internal var historyDir = File(filesDir, "history")
     /** Serializes changes to the tab list and which document is showing. */
     private val lock = Mutex()
     private val writeLock = Mutex()
@@ -114,6 +119,7 @@ class DocumentTabs(
     }
 
     private fun fileOf(tab: DocumentTab) = if (tab.id == 0L) File(filesDir, "autosave.ora") else File(tabsDir, "${tab.id}.ora")
+    private fun historyFileOf(tab: DocumentTab) = File(historyDir, "${tab.id}.history")
     private fun thumbnailOf(tab: DocumentTab) = File(tabsDir, "${tab.id}.thumb.png")
 
     private fun persist() {
@@ -138,6 +144,8 @@ class DocumentTabs(
             val known = items.flatMap { listOf("${it.id}.ora", "${it.id}.thumb.png") }.toSet()
             tabsDir.listFiles()?.filter { it.name !in known }?.forEach { it.delete() }
             if (items.none { it.id == 0L }) File(filesDir, "autosave.ora").delete()
+            val histories = items.map { "${it.id}.history" }.toSet()
+            historyDir.listFiles()?.filter { it.name !in histories }?.forEach { it.delete() }
         }
         val tab = active
         if (fileOf(tab).exists()) {
@@ -168,6 +176,8 @@ class DocumentTabs(
         val file = fileOf(tab)
         host.status("Opening ${tab.name}")
         try {
+            val restored = withContext(Dispatchers.IO) { HistoryStore.read(historyFileOf(tab), file.length(), file.lastModified(), tab.name) }
+            if (restored != null) { tab.savedVersion = restored.version; tab.historySavedVersion = restored.version; return restored }
             val stack = if (file.exists()) withContext(Dispatchers.IO) { file.inputStream().use { Ora.read(it) } }
                 else withContext(Dispatchers.Default) { blankStack(DEFAULT_WIDTH, DEFAULT_HEIGHT, Color.WHITE) }
             tab.savedVersion = if (file.exists()) 0 else NOT_SAVED
@@ -283,7 +293,7 @@ class DocumentTabs(
     }
 
     private fun deleteFiles(tab: DocumentTab) {
-        scope.launch(Dispatchers.IO) { writeLock.withLock { fileOf(tab).delete(); thumbnailOf(tab).delete() } }
+        scope.launch(Dispatchers.IO) { writeLock.withLock { fileOf(tab).delete(); thumbnailOf(tab).delete(); historyFileOf(tab).delete() } }
     }
 
     /** Names [tab] after a file, e.g. the one it was just saved as. */
@@ -326,6 +336,30 @@ class DocumentTabs(
         val job = saveJobForActive() ?: return
         job.tab.thumbnail = job.thumbnail.asImageBitmap()
         write(job)
+    }
+
+    /** When the app leaves the screen, where Android may end it: saves the image and each open tab's undo history. */
+    suspend fun saveHistories() {
+        autosave()
+        lock.withLock {
+            for (tab in items.toList()) {
+                if (tab.closed || (tab === active && !resident)) continue
+                val parked = tab.parked
+                if (tab !== active && parked == null) continue // Only on disk: its history file is still right.
+                val snapshot = engine.historySnapshot(parked)
+                writeLock.withLock { withContext(Dispatchers.IO) { saveHistory(tab, snapshot) } }
+            }
+        }
+    }
+
+    private fun saveHistory(tab: DocumentTab, snapshot: HistorySnapshot?) {
+        val file = historyFileOf(tab)
+        val image = fileOf(tab)
+        if (snapshot == null || !image.exists()) { file.delete(); tab.historySavedVersion = NOT_SAVED; return }
+        if (snapshot.version != tab.savedVersion || snapshot.version == tab.historySavedVersion) return
+        historyDir.mkdirs()
+        runCatching { HistoryStore.write(snapshot, file, image.length(), image.lastModified()); tab.historySavedVersion = snapshot.version }
+            .onFailure { android.util.Log.w("Brushkin", "couldn't save undo history", it) }
     }
 
     /** From inside an [operation], which already holds the lock. */
