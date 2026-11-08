@@ -23,11 +23,14 @@ A layered image editor for Android, inspired by GIMP and designed for fingers an
 ## Screenshots
 
 <div align="center">
-  <img src="fastlane/metadata/android/en-US/images/phoneScreenshots/1.png" width="200" alt="Canvas with the brush tool">
-  <img src="fastlane/metadata/android/en-US/images/phoneScreenshots/2.png" width="200" alt="Tool palette">
-  <img src="fastlane/metadata/android/en-US/images/phoneScreenshots/3.png" width="200" alt="Layers">
-  <img src="fastlane/metadata/android/en-US/images/phoneScreenshots/4.png" width="200" alt="Color picker">
+  <img src="fastlane/metadata/android/en-US/images/phoneScreenshots/1.png" width="200" alt="Drawing with the brush tool">
+  <img src="fastlane/metadata/android/en-US/images/phoneScreenshots/2.png" width="200" alt="Tab grid with a drawing and a photo open side by side">
+  <img src="fastlane/metadata/android/en-US/images/phoneScreenshots/3.png" width="200" alt="Tool palette">
+  <img src="fastlane/metadata/android/en-US/images/phoneScreenshots/4.png" width="200" alt="Layers">
+  <img src="fastlane/metadata/android/en-US/images/phoneScreenshots/5.png" width="200" alt="Color picker">
 </div>
+
+Sailing boat photo: [“Aruba — Catamaran Sailing at Sunset — 2023”](https://commons.wikimedia.org/wiki/File:Aruba_%E2%80%94_Catamaran_Sailing_at_Sunset_%E2%80%94_2023.jpg) by Rarends297, CC0.
 
 ## Installation
 
