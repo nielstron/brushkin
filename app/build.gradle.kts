@@ -18,8 +18,8 @@ android {
         applicationId = "de.nielstron.brushkin"
         minSdk = 29
         targetSdk = 36
-        versionCode = 14
-        versionName = "0.7.0"
+        versionCode = 15
+        versionName = "0.7.1"
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         // LiteRT (object selection) ships native code: ARM only (phones), which keeps the APK small.
         ndk { abiFilters += listOf("arm64-v8a", "armeabi-v7a") }

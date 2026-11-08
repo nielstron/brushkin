@@ -1,0 +1,2 @@
+Opening an image from another app now adds a tab to the editor that's already open, instead of starting a second copy that could overwrite your tabs.
+OpenCL setup no longer holds up the app at startup, and a crashing GPU driver no longer takes the app down.
