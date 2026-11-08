@@ -250,7 +250,10 @@ fun EditorScreen(vm: EditorViewModel, files: FileActions, store: StoreIntegratio
                             Item("Cut", Icons.Rounded.ContentCut) { vm.copy(cut = true) }
                             Item("Copy", Icons.Rounded.ContentCopy) { vm.copy() }
                         }
-                        if (vm.clipHasImage) Item("Paste as new layer", Icons.Rounded.ContentPaste) { vm.paste() }
+                        if (vm.clipHasImage) {
+                            Item("Paste as new layer", Icons.Rounded.ContentPaste) { vm.paste() }
+                            Item("Paste as new tab", Icons.Rounded.ContentPaste) { vm.pasteAsNewTab() }
+                        }
                         if (info.hasSelection) {
                             Item("Invert selection", ToolIcons.fuzzy) { vm.engine.selectInvert() }
                             Item("Crop to selection", ToolIcons.crop) { vm.engine.cropToSelection() }
