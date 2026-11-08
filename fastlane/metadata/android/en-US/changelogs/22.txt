@@ -1,0 +1,1 @@
+Drag layers to reorder them, into and out of groups, using the handle or a long press. Layer controls now sit in a fixed panel below the list. New command: Paste as new tab.
