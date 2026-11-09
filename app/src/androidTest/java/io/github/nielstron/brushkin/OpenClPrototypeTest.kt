@@ -47,6 +47,7 @@ class OpenClPrototypeTest {
         val pixels=IntArray(w*h) { i -> 0xff000000.toInt() or ((i%251) shl 16) or ((i/w%253) shl 8) or ((i*7)%255) }
         val configurations=listOf(
             "gegl:alien-map" to mapOf("cpn-1-frequency" to 1.3,"cpn-2-frequency" to 0.8),
+            "gegl:bevel" to emptyMap(),
             "gegl:noise-hsv" to mapOf("seed" to 42.0,"hue-distance" to 12.0),
             "gegl:noise-hurl" to mapOf("seed" to 42.0,"pct-random" to 30.0),
             "gegl:vignette" to mapOf("radius" to 0.8),
@@ -72,6 +73,116 @@ class OpenClPrototypeTest {
         verifyAlpha(w,h,"gegl:gaussian-blur",keys,values,pixels)
     }
 
+    @Test fun bevelUsesCpuForOneColumnAndUnverifiedParameters() {
+        val active = NativeGegl.isOpenClActive()
+        if (InstrumentationRegistry.getArguments().getString("requireOpenCl") == "true") assertTrue(active)
+        val operation = "gegl:bevel"
+        val height = 67
+        val cases = listOf(
+            1 to emptyMap(),
+            97 to mapOf("blendmode" to 0.0, "elevation" to 75.0),
+        )
+        for ((width, parameters) in cases) {
+            val keys = parameters.keys.toTypedArray()
+            val values = parameters.values.toDoubleArray()
+            val pixels = IntArray(width * height) { i ->
+                ((i % 256) shl 24) or ((i % 251) shl 16) or ((i / width % 253) shl 8) or ((i * 7) % 255)
+            }
+            val expected = NativeGegl.render(pixels, width, height, operation, keys, values, false)
+            fun checkFallback(path: String, actual: IntArray) {
+                val description = "$path at ${width}x$height with $parameters"
+                assertFalse("$description must use CPU", NativeGegl.lastRenderUsedOpenCl())
+                assertArrayEquals(description, expected, actual)
+            }
+            checkFallback("array", NativeGegl.render(pixels, width, height, operation, keys, values, true))
+            checkFallback("legacy", NativeGegl.renderLegacy(pixels, width, height, operation, keys, values, true))
+
+            val buffer = NativeGegl.createBuffer(width, height)
+            try {
+                NativeGegl.uploadBuffer(buffer, 0, 0, width, height, pixels)
+                val rendered = NativeGegl.renderBuffer(buffer, operation, keys, values, true, false)
+                try {
+                    val actual = IntArray(pixels.size)
+                    NativeGegl.readRendered(rendered, 0, 0, width, height, actual)
+                    checkFallback("buffer", actual)
+                } finally {
+                    NativeGegl.destroyRendered(rendered)
+                }
+            } finally {
+                NativeGegl.destroyBuffer(buffer)
+            }
+
+            val session = NativeGegl.createSession(width, height, operation, keys, values, false)
+            try {
+                NativeGegl.updateSession(session, 0, 0, width, height, pixels)
+                assertArrayEquals(intArrayOf(0, 0, width, height), NativeGegl.renderSession(session))
+                val actual = IntArray(pixels.size)
+                NativeGegl.readSession(session, 0, 0, width, height, actual)
+                checkFallback("session", actual)
+            } finally {
+                NativeGegl.destroySession(session)
+            }
+        }
+    }
+
+    @Test fun newlyEnabledFiltersMatchCpu() {
+        val active = NativeGegl.isOpenClActive()
+        if (InstrumentationRegistry.getArguments().getString("requireOpenCl") == "true") assertTrue(active)
+        val width = 1024
+        val height = 768
+        val pixels = IntArray(width * height) { i ->
+            0xff000000.toInt() or ((i % 251) shl 16) or ((i / width % 253) shl 8) or ((i * 7) % 255)
+        }
+        val configurations = listOf(
+            "gegl:color-rotate" to mapOf("dest-from" to 120.0, "dest-to" to 210.0),
+            "gegl:convolution-matrix" to mapOf("c3" to 5.0, "c2" to -1.0, "c4" to -1.0, "b3" to -1.0, "d3" to -1.0),
+            "gegl:denoise-dct" to emptyMap(),
+            "gegl:domain-transform" to emptyMap(),
+            "gegl:edge" to emptyMap(),
+            "gegl:focus-blur" to emptyMap(),
+            "gegl:focus-blur" to mapOf("blur-type" to 0.0),
+            "gegl:fractal-trace" to emptyMap(),
+            "gegl:image-gradient" to emptyMap(),
+            "gegl:invert-gamma" to emptyMap(),
+            "gegl:lens-flare" to emptyMap(),
+            "gegl:saturation" to mapOf("scale" to 1.5),
+            "gegl:sepia" to emptyMap(),
+            "gegl:supernova" to mapOf("seed" to 42.0),
+        )
+        for ((op, parameters) in configurations) {
+            val keys = parameters.keys.toTypedArray()
+            val values = parameters.values.toDoubleArray()
+            val opaque = verifyOpaque(width, height, op, keys, values, pixels, active)
+            val alpha = verifyAlpha(width, height, op, keys, values, pixels)
+            val usedOpenCl = NativeGegl.lastRenderUsedOpenCl()
+            assertEquals("$op with $parameters must also use OpenCL on transparency", active, usedOpenCl)
+            assertTrue("$op with $parameters differs by $opaque opaque and $alpha alpha-weighted levels", opaque <= 1 && alpha <= 1.0)
+            android.util.Log.i("OpenClPrototype", "$op $parameters OpenCL=$usedOpenCl maxError=$opaque alphaError=$alpha")
+        }
+    }
+
+    @Test fun focusBlurLensUsesCpuUnlessBenchmarking() {
+        val active = NativeGegl.isOpenClActive()
+        if (InstrumentationRegistry.getArguments().getString("requireOpenCl") == "true") assertTrue(active)
+        val width = 513
+        val height = 389
+        val pixels = IntArray(width * height) { i ->
+            ((i % 256) shl 24) or ((i % 251) shl 16) or ((i / width % 253) shl 8) or ((i * 7) % 255)
+        }
+        val op = "gegl:focus-blur"
+        val keys = arrayOf("blur-type")
+        val values = doubleArrayOf(1.0)
+        val cpu = NativeGegl.render(pixels, width, height, op, keys, values, false)
+        val normal = NativeGegl.render(pixels, width, height, op, keys, values, true)
+        assertFalse("Lens Focus Blur must use CPU in normal renders", NativeGegl.lastRenderUsedOpenCl())
+        assertArrayEquals(cpu, normal)
+
+        val benchmark = NativeGegl.render(pixels, width, height, op, keys, values, true, true)
+        assertEquals("Lens Focus Blur must use OpenCL for hardware benchmarks", active, NativeGegl.lastRenderUsedOpenCl())
+        val error = alphaWeightedError(cpu, benchmark)
+        assertTrue("Lens Focus Blur benchmark differs by $error alpha-weighted levels", error <= 1.0)
+    }
+
     // Kernels that work but were under 1.5x the 2-thread CPU path on the Pixel 6 Pro survey.
     private val cpuOnly=setOf("gegl:alien-map","gegl:noise-hurl","gegl:cell-noise")
 
@@ -91,15 +202,20 @@ class OpenClPrototypeTest {
         val transparent=IntArray(pixels.size) { i -> (pixels[i] and 0xffffff) or ((i%256) shl 24) }
         val cpu=NativeGegl.render(transparent,w,h,op,keys,values,false)
         val gpu=NativeGegl.render(transparent,w,h,op,keys,values,true)
+        val maximum = alphaWeightedError(cpu, gpu)
+        assertTrue("$op transparency differs by $maximum",maximum<=2.0)
+        return maximum
+    }
+
+    private fun alphaWeightedError(cpu: IntArray, gpu: IntArray): Double {
         var maximum=0.0
         val shifts=intArrayOf(0,8,16)
         for(i in cpu.indices) {
             val a=cpu[i] ushr 24; val b=gpu[i] ushr 24
             maximum=maxOf(maximum,abs(a-b).toDouble())
             for(shift in shifts) maximum=maxOf(maximum,
-                abs((cpu[i] ushr shift and 255)*a/255.0-(gpu[i] ushr shift and 255)*b/255.0))
+                abs((cpu[i] ushr shift and 255)*a-(gpu[i] ushr shift and 255)*b)/255.0)
         }
-        assertTrue("$op transparency differs by $maximum",maximum<=2.0)
         return maximum
     }
 }

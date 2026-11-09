@@ -27,8 +27,8 @@ triple, family, cpu = ('aarch64-linux-android', 'aarch64', 'aarch64') if a.abi =
 # commit and checksum. BRUSHKIN_GEGL_SOURCE=<checkout> builds a local checkout's
 # HEAD instead (committed state only), for developing GEGL changes.
 GEGL_REPO = 'nielstron/gegl-opencl'
-GEGL_REV = '6c0bec590f3260a68ff222220d623e4c6155ae7f'
-GEGL_SHA256 = '10f1d6046de83017f665e3b2a11739230d43d8575cd019b5ef7033017eaca000'
+GEGL_REV = '32a28472e953e9b73dd62297aa76e9f4073cde80'
+GEGL_SHA256 = 'a42ccbfccdafe77ea417225385b7e6b6267412961b19d9ba8c6efd8a65c17c2d'
 gegl_local = os.environ.get('BRUSHKIN_GEGL_SOURCE')
 if gegl_local:
     GEGL_REV = subprocess.check_output(['git', '-C', gegl_local, 'rev-parse', 'HEAD'], text=True).strip()
