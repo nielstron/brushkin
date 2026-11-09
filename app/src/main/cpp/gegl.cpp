@@ -139,43 +139,58 @@ static bool bevelOpenClEligible(JNIEnv *env, jint width, jobjectArray keys,
     return true;
 }
 
+static bool focusBlurOpenClEligible(JNIEnv *env, jobjectArray keys, const std::vector<jdouble> &params) {
+    // Gaussian is the default (blur-type 0). Lens is slower on the Pixel 6 Pro.
+    for (size_t i = params.size(); i > 0; --i) {
+        auto key = (jstring)env->GetObjectArrayElement(keys, i - 1);
+        const auto name = utf(env, key);
+        env->DeleteLocalRef(key);
+        if (name == "blur-type") return static_cast<int>(params[i - 1]) == 0;
+    }
+    return true;
+}
+
 static GeglNode *createGraph(JNIEnv *env, jstring operation, jobjectArray keys, jdoubleArray values,
                              jint width, GeglNode **output, bool allowOpenCl = true,
                              bool benchmarkOpenCl = false) {
     const auto op = utf(env, operation);
     if (!gegl_has_operation(op.c_str())) { fail(env, "Unavailable GEGL operation: " + op); return nullptr; }
     GeglNode *graph = gegl_node_new();
-    // Survey on a Pixel 6 Pro (Mali-G78) with the gegl-opencl fork, 1024x768,
-    // GPU against the 2-thread CPU path: every listed operation matched the CPU
-    // within 1/255 (opaque and alpha) and was at least 1.5x faster. Faster-but-
-    // marginal kernels (alien-map, cell-noise, noise-hurl, opacity, threshold,
-    // value-invert, ...) stay on the CPU. GEGL keeps its own CPU fallback for
-    // parameter combinations a kernel does not support.
+    // The Pixel 6 Pro survey compared OpenCL with the 2-thread CPU path on
+    // opaque and transparent images. GEGL handles fallback when the device
+    // or settings are outside a kernel's coverage.
     static const std::unordered_set<std::string> acceleratedOps = {
         "gegl:bilateral-filter", "gegl:bloom", "gegl:box-blur",
         "gegl:brightness-contrast", "gegl:cartoon", "gegl:checkerboard",
-        "gegl:color-enhance", "gegl:color-temperature", "gegl:deinterlace",
-        "gegl:diffraction-patterns", "gegl:edge-laplace", "gegl:edge-sobel",
-        "gegl:emboss", "gegl:exposure", "gegl:gaussian-blur",
+        "gegl:color-enhance", "gegl:color-rotate", "gegl:color-temperature",
+        "gegl:convolution-matrix", "gegl:deinterlace", "gegl:denoise-dct",
+        "gegl:diffraction-patterns", "gegl:domain-transform", "gegl:edge",
+        "gegl:edge-laplace", "gegl:edge-sobel", "gegl:emboss", "gegl:exposure",
+        "gegl:fractal-trace", "gegl:gaussian-blur",
         "gegl:gaussian-blur-selective", "gegl:gblur-1d", "gegl:high-pass",
-        "gegl:invert-linear", "gegl:lens-blur", "gegl:lens-distortion",
+        "gegl:image-gradient", "gegl:invert-gamma", "gegl:invert-linear",
+        "gegl:lens-blur", "gegl:lens-distortion", "gegl:lens-flare",
         "gegl:levels", "gegl:mean-curvature-blur", "gegl:median-blur",
         "gegl:mono-mixer", "gegl:motion-blur-circular", "gegl:motion-blur-linear",
         "gegl:motion-blur-zoom", "gegl:newsprint", "gegl:noise-cie-lch",
         "gegl:noise-hsv", "gegl:noise-pick", "gegl:noise-reduction",
         "gegl:noise-rgb", "gegl:noise-slur", "gegl:noise-spread",
         "gegl:normal-map", "gegl:oilify", "gegl:photocopy", "gegl:pixelize",
-        "gegl:polar-coordinates", "gegl:posterize", "gegl:ripple",
-        "gegl:simplex-noise", "gegl:snn-mean", "gegl:softglow",
-        "gegl:stretch-contrast", "gegl:stretch-contrast-hsv",
+        "gegl:polar-coordinates", "gegl:posterize", "gegl:ripple", "gegl:saturation",
+        "gegl:sepia", "gegl:simplex-noise", "gegl:snn-mean", "gegl:softglow",
+        "gegl:stretch-contrast", "gegl:stretch-contrast-hsv", "gegl:supernova",
         "gegl:video-degradation", "gegl:vignette", "gegl:waves",
         "gegl:weighted-blend", "gegl:whirl-pinch", "svg:src-over",
     };
     const int count = env->GetArrayLength(keys);
     std::vector<jdouble> params(count);
     env->GetDoubleArrayRegion(values, 0, count, params.data());
-    const bool useOpenCl = allowOpenCl && (benchmarkOpenCl ||
-        (op == "gegl:bevel" ? bevelOpenClEligible(env, width, keys, params) : acceleratedOps.count(op) != 0));
+    bool useOpenCl = allowOpenCl && benchmarkOpenCl;
+    if (allowOpenCl && !benchmarkOpenCl) {
+        if (op == "gegl:bevel") useOpenCl = bevelOpenClEligible(env, width, keys, params);
+        else if (op == "gegl:focus-blur") useOpenCl = focusBlurOpenClEligible(env, keys, params);
+        else useOpenCl = acceleratedOps.count(op) != 0;
+    }
     g_object_set(graph, "use-opencl", useOpenCl, nullptr);
     GeglNode *filter = gegl_node_new_child(graph, "operation", op.c_str(), nullptr);
     for (int i=0; i<count; i++) {

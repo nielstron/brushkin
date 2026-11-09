@@ -78,6 +78,8 @@ class OpenClSurveyTest {
             "mean-curvature-blur" to emptyMap(),
             "motion-blur-zoom" to emptyMap(),
             "lens-blur" to emptyMap(),
+            "focus-blur#gaussian" to emptyMap(),
+            "focus-blur#lens" to mapOf("blur-type" to 1.0),
             "noise-rgb" to mapOf("seed" to 42.0),
             "noise-cie-lch" to mapOf("seed" to 42.0),
             "noise-pick" to mapOf("seed" to 42.0),
