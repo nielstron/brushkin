@@ -19,20 +19,21 @@ A layered image editor for Android, inspired by GIMP and designed for fingers an
 - Work with layers, groups, blend modes, masks and editable text; import GIMP brushes, gradients, palettes and patterns. Use **Effect** mode for editable, non-destructive filters.
 - Share images, save projects as GIMP `.xcf` or OpenRaster `.ora`, and export PNG, JPEG, WebP or GIF, and send custom stickers to WhatsApp or Telegram.
 
-
 ## Screenshots
 
 <div align="center">
-  <img src="docs/demo.gif" width="300" alt="Drawing a scene: a sailboat emoji, a blurred sun, filled water and brush waves">
-  <img src="docs/brushkin-demo.gif" width="300" alt="Editing a portrait: selecting the face with object selection, pixelizing it, drawing a meme face in a new tab, then pasting it onto the photo as a layer">
+  <img src="fastlane/metadata/android/en-US/images/phoneScreenshots/1.png" width="150" alt="Drawing with the brush tool">
+  <img src="fastlane/metadata/android/en-US/images/phoneScreenshots/2.png" width="150" alt="Tab grid with a drawing and a photo open side by side">
+  <img src="fastlane/metadata/android/en-US/images/phoneScreenshots/3.png" width="150" alt="Tool palette">
+  <img src="fastlane/metadata/android/en-US/images/phoneScreenshots/4.png" width="150" alt="Layers">
+  <img src="fastlane/metadata/android/en-US/images/phoneScreenshots/5.png" width="150" alt="Color picker">
 </div>
 
+## Demos
+
 <div align="center">
-  <img src="fastlane/metadata/android/en-US/images/phoneScreenshots/1.png" width="200" alt="Drawing with the brush tool">
-  <img src="fastlane/metadata/android/en-US/images/phoneScreenshots/2.png" width="200" alt="Tab grid with a drawing and a photo open side by side">
-  <img src="fastlane/metadata/android/en-US/images/phoneScreenshots/3.png" width="200" alt="Tool palette">
-  <img src="fastlane/metadata/android/en-US/images/phoneScreenshots/4.png" width="200" alt="Layers">
-  <img src="fastlane/metadata/android/en-US/images/phoneScreenshots/5.png" width="200" alt="Color picker">
+  <img src="docs/demo.gif" width="200" alt="Drawing a scene: a sailboat emoji, a blurred sun, filled water and brush waves">
+  <img src="docs/brushkin-demo.gif" width="200" alt="Editing a portrait: selecting the face with object selection, pixelizing it, drawing a meme face in a new tab, then pasting it onto the photo as a layer">
 </div>
 
 ## Installation
