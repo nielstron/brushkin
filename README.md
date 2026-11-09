@@ -43,12 +43,7 @@ Install it with [Komi Store](https://komistore.app) or download the APK from the
 ## Filters and performance
 
 Brushkin builds its filters from [gegl-opencl](https://github.com/nielstron/gegl-opencl),
-a fork of GEGL master with fixed and new OpenCL kernels.
-
-With default Lens settings, Focus Blur uses OpenCL on opaque 4:3 to 3:2
-landscape images from 512×384 through 6 MP. On the Pixel 6 Pro, a 6 MP render
-took 1.45 s on OpenCL and 2.80 s on the CPU, with output within one 8-bit code.
-
+a fork of GEGL (GIMPs graphic library) with fixed and new OpenCL kernels.
 
 ## License
 
