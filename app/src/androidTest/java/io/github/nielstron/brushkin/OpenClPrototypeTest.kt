@@ -161,26 +161,87 @@ class OpenClPrototypeTest {
         }
     }
 
-    @Test fun focusBlurLensUsesCpuUnlessBenchmarking() {
+    @Test fun focusBlurLensFollowsMeasuredOpenClPolicy() {
         val active = NativeGegl.isOpenClActive()
         if (InstrumentationRegistry.getArguments().getString("requireOpenCl") == "true") assertTrue(active)
-        val width = 513
-        val height = 389
+        val lens = mapOf("blur-type" to 1.0)
+        val explicitDefaults = lens + mapOf(
+            "blur-radius" to 25.0, "highlight-factor" to 0.0, "highlight-threshold-low" to 0.0,
+            "highlight-threshold-high" to 1.0, "shape" to 0.0, "x" to 0.5, "y" to 0.5,
+            "radius" to 0.75, "focus" to 0.25, "midpoint" to 0.5, "aspect-ratio" to 0.0,
+            "rotation" to 0.0, "high-quality" to 0.0,
+        )
+        val cases = listOf(
+            Triple(512 to 384, lens, true),
+            Triple(768 to 512, lens, true),
+            Triple(1024 to 768, explicitDefaults, true),
+            Triple(384 to 512, lens, false),
+            Triple(512 to 383, lens, false),
+            Triple(512 to 512, lens, false),
+            Triple(800 to 384, lens, false),
+            Triple(512 to 384, lens + ("blur-radius" to 33.0), false),
+        )
+        for ((extent, parameters, eligible) in cases) {
+            val (width, height) = extent
+            val keys = parameters.keys.toTypedArray()
+            val values = parameters.values.toDoubleArray()
+            val op = "gegl:focus-blur"
+            val buffer = NativeGegl.createBuffer(width, height)
+            val session = NativeGegl.createSession(width, height, op, keys, values, false)
+            try {
+                for (alpha in if (eligible && width == 512) listOf(false, true, false) else listOf(false, true)) {
+                    val pixels = IntArray(width * height) { i ->
+                        ((if (alpha) i % 256 else 255) shl 24) or
+                            ((i % 251) shl 16) or ((i / width % 253) shl 8) or ((i * 7) % 255)
+                    }
+                    val cpu = NativeGegl.render(pixels, width, height, op, keys, values, false)
+                    fun check(path: String, result: IntArray, useOpenCl: Boolean = eligible && active && !alpha) {
+                        val label = "$path ${width}x$height $parameters alpha=$alpha"
+                        assertEquals(label, useOpenCl, NativeGegl.lastRenderUsedOpenCl())
+                        if (useOpenCl) {
+                            val error = alphaWeightedError(cpu, result)
+                            assertTrue("$label differs by $error levels", error <= 1.0)
+                        } else assertArrayEquals(label, cpu, result)
+                    }
+                    check("array", NativeGegl.render(pixels, width, height, op, keys, values, true))
+
+                    NativeGegl.uploadBuffer(buffer, 0, 0, width, height, pixels)
+                    val rendered = NativeGegl.renderBuffer(buffer, op, keys, values, true, false)
+                    val result = IntArray(pixels.size)
+                    try {
+                        NativeGegl.readRendered(rendered, 0, 0, width, height, result)
+                        check("buffer", result)
+                    } finally {
+                        NativeGegl.destroyRendered(rendered)
+                    }
+
+                    NativeGegl.updateSession(session, 0, 0, width, height, pixels)
+                    assertArrayEquals(intArrayOf(0, 0, width, height), NativeGegl.renderSession(session))
+                    NativeGegl.readSession(session, 0, 0, width, height, result)
+                    check("session", result)
+
+                    if (width == 384 && height == 512) {
+                        check("survey", NativeGegl.render(pixels, width, height, op, keys, values, true, true), active)
+                    }
+                }
+            } finally {
+                NativeGegl.destroySession(session)
+                NativeGegl.destroyBuffer(buffer)
+            }
+        }
+
+        val width = 3001
+        val height = 2000
         val pixels = IntArray(width * height) { i ->
-            ((i % 256) shl 24) or ((i % 251) shl 16) or ((i / width % 253) shl 8) or ((i * 7) % 255)
+            0xff000000.toInt() or ((i % 251) shl 16) or ((i / width % 253) shl 8) or ((i * 7) % 255)
         }
         val op = "gegl:focus-blur"
         val keys = arrayOf("blur-type")
         val values = doubleArrayOf(1.0)
         val cpu = NativeGegl.render(pixels, width, height, op, keys, values, false)
         val normal = NativeGegl.render(pixels, width, height, op, keys, values, true)
-        assertFalse("Lens Focus Blur must use CPU in normal renders", NativeGegl.lastRenderUsedOpenCl())
+        assertFalse("Lens Focus Blur above 6 MP must use CPU", NativeGegl.lastRenderUsedOpenCl())
         assertArrayEquals(cpu, normal)
-
-        val benchmark = NativeGegl.render(pixels, width, height, op, keys, values, true, true)
-        assertEquals("Lens Focus Blur must use OpenCL for hardware benchmarks", active, NativeGegl.lastRenderUsedOpenCl())
-        val error = alphaWeightedError(cpu, benchmark)
-        assertTrue("Lens Focus Blur benchmark differs by $error alpha-weighted levels", error <= 1.0)
     }
 
     // Kernels that work but were under 1.5x the 2-thread CPU path on the Pixel 6 Pro survey.

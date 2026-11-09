@@ -53,7 +53,9 @@ OpenCL GPU driver to Android apps, these filters use GPU acceleration:
 
 - Blurs: Gaussian (FIR and IIR, including one-dimensional), selective Gaussian, box,
   bilateral, linear/circular/zoom motion, median, mean curvature, lens, SNN mean,
-  and Focus Blur in Gaussian mode.
+  and Focus Blur in Gaussian mode. Lens Focus Blur uses OpenCL with default
+  settings on opaque landscape images at least 512×384 and up to 6 MP, with
+  aspect ratios from 4:3 through 3:2.
 - Distortions: whirl and pinch, polar coordinates, ripple, waves, lens distortion,
   and fractal trace.
 - Noise: HSV, RGB, LCH, pick, slur, spread, noise reduction, DCT denoise, and
@@ -71,11 +73,12 @@ OpenCL GPU driver to Android apps, these filters use GPU acceleration:
 The allowlist is based on CPU/GPU comparisons on a Pixel 6 Pro using opaque and
 transparent inputs. Performance depends on the operation, settings, image size
 and device. In the 6 MP GEGL benchmark on that phone, Gaussian Focus Blur took
-about 1.5 s on OpenCL versus 4.5 s on the two-thread CPU. Lens Focus Blur uses
-CPU rendering in the app after measuring about 2.7 s on OpenCL versus 2.2 s on
-the CPU. Its OpenCL path is available in the survey. Unsupported devices and
-operation settings use CPU rendering. LiteRT model acceleration is separate
-from GEGL's OpenCL support.
+about 1.5 s on OpenCL versus 4.5 s on the two-thread CPU. In Brushkin's native
+render survey, default Lens Focus Blur on opaque images went from 96 to 41 ms
+at 512×384, 376 to 167 ms at 1024×768, and 2.80 to 1.45 s at 3000×2000.
+Transparent images and settings outside the Lens allowlist use the CPU. The
+survey can exercise the OpenCL path for those cases. Unsupported devices use
+CPU rendering. LiteRT model acceleration is separate from GEGL's OpenCL support.
 
 Live effects stay editable and reuse cached stages and incremental updates where
 supported, but can be expensive when drawing beneath them. Filter previews include existing effects, show computing progress, and allow pan and pinch
@@ -114,8 +117,9 @@ To install a separate preview without replacing the normal app, build with `-Pop
 this changes only the debug app ID/version suffix, not which filters are accelerated.
 `OpenClPrototypeTest` checks enabled GPU paths and CPU fallback;
 `OpenClSurveyTest` benchmarks OpenCL candidates and requires an
-OpenCL-capable device. Run the survey explicitly rather than as part of the default
-suite on devices without OpenCL. `tools/export_mobilesam.py` and
+OpenCL-capable device. Use `normalRoute=true` to benchmark the app's allowlist
+and `timeAlpha=true` to include timings on transparent inputs. Run the survey
+explicitly on an OpenCL-capable device. `tools/export_mobilesam.py` and
 `tools/export_models.py` reproduce the model files.
 
 The default build stays ad-free and contains only free software. The Google Play distribution
