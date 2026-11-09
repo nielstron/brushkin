@@ -24,6 +24,7 @@ A layered image editor for Android, inspired by GIMP and designed for fingers an
 
 <div align="center">
   <img src="docs/demo.gif" width="300" alt="Drawing a scene: a sailboat emoji, a blurred sun, filled water and brush waves">
+  <img src="docs/brushkin-demo.gif" width="300" alt="Editing a portrait: selecting the face with object selection, pixelizing it, drawing a meme face in a new tab, then pasting it onto the photo as a layer">
 </div>
 
 <div align="center">
