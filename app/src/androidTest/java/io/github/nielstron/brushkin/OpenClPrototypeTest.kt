@@ -73,6 +73,58 @@ class OpenClPrototypeTest {
         verifyAlpha(w,h,"gegl:gaussian-blur",keys,values,pixels)
     }
 
+    @Test fun bevelUsesCpuForOneColumnAndUnverifiedParameters() {
+        val active = NativeGegl.isOpenClActive()
+        if (InstrumentationRegistry.getArguments().getString("requireOpenCl") == "true") assertTrue(active)
+        val operation = "gegl:bevel"
+        val height = 67
+        val cases = listOf(
+            1 to emptyMap(),
+            97 to mapOf("blendmode" to 0.0, "elevation" to 75.0),
+        )
+        for ((width, parameters) in cases) {
+            val keys = parameters.keys.toTypedArray()
+            val values = parameters.values.toDoubleArray()
+            val pixels = IntArray(width * height) { i ->
+                ((i % 256) shl 24) or ((i % 251) shl 16) or ((i / width % 253) shl 8) or ((i * 7) % 255)
+            }
+            val expected = NativeGegl.render(pixels, width, height, operation, keys, values, false)
+            fun checkFallback(path: String, actual: IntArray) {
+                val description = "$path at ${width}x$height with $parameters"
+                assertFalse("$description must use CPU", NativeGegl.lastRenderUsedOpenCl())
+                assertArrayEquals(description, expected, actual)
+            }
+            checkFallback("array", NativeGegl.render(pixels, width, height, operation, keys, values, true))
+            checkFallback("legacy", NativeGegl.renderLegacy(pixels, width, height, operation, keys, values, true))
+
+            val buffer = NativeGegl.createBuffer(width, height)
+            try {
+                NativeGegl.uploadBuffer(buffer, 0, 0, width, height, pixels)
+                val rendered = NativeGegl.renderBuffer(buffer, operation, keys, values, true, false)
+                try {
+                    val actual = IntArray(pixels.size)
+                    NativeGegl.readRendered(rendered, 0, 0, width, height, actual)
+                    checkFallback("buffer", actual)
+                } finally {
+                    NativeGegl.destroyRendered(rendered)
+                }
+            } finally {
+                NativeGegl.destroyBuffer(buffer)
+            }
+
+            val session = NativeGegl.createSession(width, height, operation, keys, values, false)
+            try {
+                NativeGegl.updateSession(session, 0, 0, width, height, pixels)
+                assertArrayEquals(intArrayOf(0, 0, width, height), NativeGegl.renderSession(session))
+                val actual = IntArray(pixels.size)
+                NativeGegl.readSession(session, 0, 0, width, height, actual)
+                checkFallback("session", actual)
+            } finally {
+                NativeGegl.destroySession(session)
+            }
+        }
+    }
+
     // Kernels that work but were under 1.5x the 2-thread CPU path on the Pixel 6 Pro survey.
     private val cpuOnly=setOf("gegl:alien-map","gegl:noise-hurl","gegl:cell-noise")
 

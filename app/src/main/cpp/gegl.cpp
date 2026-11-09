@@ -5,6 +5,7 @@
 #include <vector>
 #include <string>
 #include <mutex>
+#include <unordered_map>
 #include <unordered_set>
 #include <atomic>
 #include <cstring>
@@ -120,7 +121,27 @@ Java_io_github_nielstron_brushkin_engine_NativeGegl_shrinkTileCache(JNIEnv *, jo
     if (!fullTileCacheSize) return;
     g_object_set(gegl_config(), "tile-cache-size", shrink ? minTileCacheSize : fullTileCacheSize, nullptr);
 }
-static GeglNode *createGraph(JNIEnv *env, jstring operation, jobjectArray keys, jdoubleArray values, GeglNode **output, bool allowOpenCl = true, bool benchmarkOpenCl = false) {
+static bool bevelOpenClEligible(JNIEnv *env, jint width, jobjectArray keys,
+                                const std::vector<jdouble> &params) {
+    if (width <= 1) return false;
+    // The Pixel parity check covered the pinned GEGL's default Chamfer/Hard Light
+    // graph. Other settings can amplify differences in its child operations.
+    static const std::unordered_map<std::string, jdouble> defaults = {
+        {"type", 0}, {"blendmode", 1}, {"metric", GEGL_DISTANCE_METRIC_CHEBYSHEV},
+        {"radius", 3}, {"elevation", 25}, {"depth", 40}, {"azimuth", 68},
+    };
+    for (size_t i = 0; i < params.size(); ++i) {
+        auto key = (jstring)env->GetObjectArrayElement(keys, i);
+        auto expected = defaults.find(utf(env, key));
+        env->DeleteLocalRef(key);
+        if (expected == defaults.end() || params[i] != expected->second) return false;
+    }
+    return true;
+}
+
+static GeglNode *createGraph(JNIEnv *env, jstring operation, jobjectArray keys, jdoubleArray values,
+                             jint width, GeglNode **output, bool allowOpenCl = true,
+                             bool benchmarkOpenCl = false) {
     const auto op = utf(env, operation);
     if (!gegl_has_operation(op.c_str())) { fail(env, "Unavailable GEGL operation: " + op); return nullptr; }
     GeglNode *graph = gegl_node_new();
@@ -131,7 +152,7 @@ static GeglNode *createGraph(JNIEnv *env, jstring operation, jobjectArray keys, 
     // value-invert, ...) stay on the CPU. GEGL keeps its own CPU fallback for
     // parameter combinations a kernel does not support.
     static const std::unordered_set<std::string> acceleratedOps = {
-        "gegl:bevel", "gegl:bilateral-filter", "gegl:bloom", "gegl:box-blur",
+        "gegl:bilateral-filter", "gegl:bloom", "gegl:box-blur",
         "gegl:brightness-contrast", "gegl:cartoon", "gegl:checkerboard",
         "gegl:color-enhance", "gegl:color-temperature", "gegl:deinterlace",
         "gegl:diffraction-patterns", "gegl:edge-laplace", "gegl:edge-sobel",
@@ -150,12 +171,13 @@ static GeglNode *createGraph(JNIEnv *env, jstring operation, jobjectArray keys, 
         "gegl:video-degradation", "gegl:vignette", "gegl:waves",
         "gegl:weighted-blend", "gegl:whirl-pinch", "svg:src-over",
     };
-    const bool accelerated = acceleratedOps.count(op) != 0;
-    g_object_set(graph, "use-opencl", allowOpenCl && (accelerated || benchmarkOpenCl), nullptr);
-    GeglNode *filter = gegl_node_new_child(graph, "operation", op.c_str(), nullptr);
     const int count = env->GetArrayLength(keys);
     std::vector<jdouble> params(count);
     env->GetDoubleArrayRegion(values, 0, count, params.data());
+    const bool useOpenCl = allowOpenCl && (benchmarkOpenCl ||
+        (op == "gegl:bevel" ? bevelOpenClEligible(env, width, keys, params) : acceleratedOps.count(op) != 0));
+    g_object_set(graph, "use-opencl", useOpenCl, nullptr);
+    GeglNode *filter = gegl_node_new_child(graph, "operation", op.c_str(), nullptr);
     for (int i=0; i<count; i++) {
         auto key = (jstring)env->GetObjectArrayElement(keys, i);
         auto name = utf(env, key); env->DeleteLocalRef(key);
@@ -247,7 +269,7 @@ Java_io_github_nielstron_brushkin_engine_NativeGegl_render(JNIEnv *env, jobject,
     }
     const long long t0 = nowNs();
     GeglNode *filter;
-    GeglNode *graph = createGraph(env, operation, keys, values, &filter, useOpenCl, benchmarkOpenCl);
+    GeglNode *graph = createGraph(env, operation, keys, values, w, &filter, useOpenCl, benchmarkOpenCl);
     if (!graph) return nullptr;
     const long long tGraph = nowNs();
     const Babl *format = rgbaU8();
@@ -319,7 +341,7 @@ Java_io_github_nielstron_brushkin_engine_NativeGegl_renderLegacy(JNIEnv *env, jo
     }
     const long long t0 = nowNs();
     GeglNode *filter;
-    GeglNode *graph = createGraph(env, operation, keys, values, &filter, useOpenCl, benchmarkOpenCl);
+    GeglNode *graph = createGraph(env, operation, keys, values, w, &filter, useOpenCl, benchmarkOpenCl);
     if (!graph) return nullptr;
     const long long tGraph = nowNs();
     std::vector<jint> data(w*h);
@@ -492,7 +514,7 @@ Java_io_github_nielstron_brushkin_engine_NativeGegl_createSession(JNIEnv *env, j
         fail(env,"Invalid GEGL session dimensions or parameters"); return 0;
     }
     GeglNode *filter;
-    GeglNode *graph=createGraph(env,operation,keys,values,&filter);
+    GeglNode *graph=createGraph(env,operation,keys,values,w,&filter);
     if (!graph) return 0;
     GeglRectangle extent{0,0,w,h};
     auto *buffer=gegl_buffer_new(&extent,rgbaU8());
@@ -595,14 +617,14 @@ Java_io_github_nielstron_brushkin_engine_NativeGegl_renderBuffer(JNIEnv *env, jo
     std::lock_guard<std::mutex> lock(gate);
     auto *buffer=reinterpret_cast<GeglBuffer *>(handle);
     if (env->GetArrayLength(keys)!=env->GetArrayLength(values)) { fail(env,"Invalid GEGL parameters"); return 0; }
+    const GeglRectangle extent=*gegl_buffer_get_extent(buffer);
     const long long t0=nowNs();
     GeglNode *filter;
-    GeglNode *graph=createGraph(env,operation,keys,values,&filter,useOpenCl);
+    GeglNode *graph=createGraph(env,operation,keys,values,extent.width,&filter,useOpenCl);
     if (!graph) return 0;
     // buffer-source marks its buffer as forked, so no operation processes it in place.
     GeglNode *input=gegl_node_new_child(graph,"operation","gegl:buffer-source","buffer",buffer,nullptr);
     if (gegl_node_has_pad(filter,"input")) gegl_node_link(input,filter);
-    const GeglRectangle extent=*gegl_buffer_get_extent(buffer);
     auto *result=new Rendered{std::unique_ptr<uint32_t[]>(new uint32_t[size_t(extent.width)*extent.height]),extent};
     operationKernelLaunches = 0;
     clBlockedNs = 0;
