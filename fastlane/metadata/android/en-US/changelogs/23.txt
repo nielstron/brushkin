@@ -1,0 +1,1 @@
+Faster filters on devices with OpenCL support, including Focus Blur, Denoise DCT, Fractal Trace, Lens Flare and Bevel. Focus Blur's Lens mode accelerates eligible opaque photos.
