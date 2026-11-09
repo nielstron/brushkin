@@ -3,6 +3,8 @@ package io.github.nielstron.brushkin
 import android.util.Log
 import androidx.test.platform.app.InstrumentationRegistry
 import io.github.nielstron.brushkin.engine.NativeGegl
+import org.junit.Assert.assertEquals
+import org.junit.Assert.assertTrue
 import org.junit.Assume.assumeTrue
 import org.junit.Test
 import kotlin.math.abs
@@ -11,11 +13,17 @@ import kotlin.math.abs
 class OpenClSurveyTest {
     @Test fun compareCandidates() {
         val args=InstrumentationRegistry.getArguments()
-        assumeTrue("Requires an actual OpenCL GPU", NativeGegl.isOpenClActive())
+        val requireParity=args.getString("requireParity") == "true"
+        val active=NativeGegl.isOpenClActive()
+        if (requireParity) assertTrue("Requires an actual OpenCL GPU", active)
+        else assumeTrue("Requires an actual OpenCL GPU", active)
         val w=args.getString("width", "1024").toInt()
         val h=args.getString("height", "768").toInt()
         val rounds=args.getString("rounds", "2").toInt()
         val selected=args.getString("operations", "").split(',')
+        val bypassAllowlist=args.getString("normalRoute") != "true"
+        val timeAlpha=args.getString("timeAlpha") == "true"
+        val expectAlphaOpenCl=args.getString("expectAlphaOpenCl") != "false"
         val configurations=linkedMapOf(
             "channel-mixer" to mapOf("rr-gain" to 0.7,"rg-gain" to 0.3,"bb-gain" to 0.8),
             "alien-map" to mapOf("cpn-1-frequency" to 1.3,"cpn-2-frequency" to 0.8),
@@ -103,19 +111,29 @@ class OpenClSurveyTest {
             val operation=name.substringBefore("#")
             val op=if(":" in operation) operation else "gegl:$operation"
             val keys=params.keys.toTypedArray(); val values=params.values.toDoubleArray()
-            Log.i("OpenClSurvey", "START ${w}x${h} $name params=$params")
-            val opaque=compare(w,h,op,keys,values,false)
-            val cpuTimes=mutableListOf<Double>(); val gpuTimes=mutableListOf<Double>()
-            val pixels=makePixels(w,h,false)
-            repeat(rounds) { round ->
-                for(gpu in if(round%2==0) listOf(false,true) else listOf(true,false)) {
-                    val start=System.nanoTime()
-                    NativeGegl.render(pixels,w,h,op,keys,values,gpu,true)
-                    (if(gpu) gpuTimes else cpuTimes).add((System.nanoTime()-start)/1e6)
+            Log.i("OpenClSurvey", "START ${w}x${h} $name params=$params bypassAllowlist=$bypassAllowlist")
+            fun times(alpha: Boolean): Pair<List<Double>, List<Double>> {
+                val cpuTimes=mutableListOf<Double>(); val gpuTimes=mutableListOf<Double>()
+                val pixels=makePixels(w,h,alpha)
+                repeat(rounds) { round ->
+                    for(gpu in if(round%2==0) listOf(false,true) else listOf(true,false)) {
+                        val start=System.nanoTime()
+                        NativeGegl.render(pixels,w,h,op,keys,values,gpu,bypassAllowlist)
+                        (if(gpu) gpuTimes else cpuTimes).add((System.nanoTime()-start)/1e6)
+                        if (requireParity) assertEquals("$op alpha=$alpha round=$round",
+                            gpu && (!alpha || expectAlphaOpenCl), NativeGegl.lastRenderUsedOpenCl())
+                    }
                 }
+                return cpuTimes to gpuTimes
             }
-            val alpha=compare(w,h,op,keys,values,true)
-            Log.i("OpenClSurvey", "RESULT ${w}x${h} $name cpu=$cpuTimes gpu=$gpuTimes opaque=$opaque alpha=$alpha")
+            val opaque=compare(w,h,op,keys,values,false,bypassAllowlist,requireParity,true)
+            val (cpuTimes,gpuTimes)=times(false)
+            val alpha=compare(w,h,op,keys,values,true,bypassAllowlist,requireParity,expectAlphaOpenCl)
+            val alphaTimes=if (timeAlpha) {
+                val (cpu,gpu)=times(true)
+                " cpuAlpha=$cpu gpuAlpha=$gpu"
+            } else ""
+            Log.i("OpenClSurvey", "RESULT ${w}x${h} $name cpu=$cpuTimes gpu=$gpuTimes opaque=$opaque alpha=$alpha$alphaTimes")
         }
     }
 
@@ -123,20 +141,23 @@ class OpenClSurveyTest {
         ((if(alpha) i%256 else 255) shl 24) or ((i%251) shl 16) or ((i/w%253) shl 8) or ((i*7)%255)
     }
 
-    private fun compare(w:Int,h:Int,op:String,keys:Array<String>,values:DoubleArray,alpha:Boolean):String {
+    private fun compare(w:Int,h:Int,op:String,keys:Array<String>,values:DoubleArray,alpha:Boolean,
+                        bypassAllowlist:Boolean,requireParity:Boolean,expectOpenCl:Boolean):String {
         val pixels=makePixels(w,h,alpha)
-        val cpu=NativeGegl.render(pixels,w,h,op,keys,values,false,true)
-        val gpu=NativeGegl.render(pixels,w,h,op,keys,values,true,true)
+        val cpu=NativeGegl.render(pixels,w,h,op,keys,values,false,bypassAllowlist)
+        val gpu=NativeGegl.render(pixels,w,h,op,keys,values,true,bypassAllowlist)
         val used=NativeGegl.lastRenderUsedOpenCl()
         var maximum=0.0; var total=0.0; var aboveTwo=0L
         val shifts=intArrayOf(0,8,16,24)
         for(i in cpu.indices) for(shift in shifts) {
-            val a=if(alpha && shift!=24) (cpu[i] ushr 24)/255.0 else 1.0
-            val b=if(alpha && shift!=24) (gpu[i] ushr 24)/255.0 else 1.0
-            val error=abs((cpu[i] ushr shift and 255)*a-(gpu[i] ushr shift and 255)*b)
+            val a=if(alpha && shift!=24) cpu[i] ushr 24 else 255
+            val b=if(alpha && shift!=24) gpu[i] ushr 24 else 255
+            val error=abs((cpu[i] ushr shift and 255)*a-(gpu[i] ushr shift and 255)*b)/255.0
             maximum=maxOf(maximum,error); total+=error
             if(error>2) aboveTwo++
         }
+        if (requireParity) assertTrue("$op ${w}x$h alpha=$alpha usedOpenCl=$used maxError=$maximum",
+            used == expectOpenCl && maximum <= 1.0)
         return "{used=$used,max=$maximum,mean=${total/(cpu.size*4L)},above2=$aboveTwo}"
     }
 }

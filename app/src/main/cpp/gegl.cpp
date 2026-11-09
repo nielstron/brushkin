@@ -139,19 +139,39 @@ static bool bevelOpenClEligible(JNIEnv *env, jint width, jobjectArray keys,
     return true;
 }
 
-static bool focusBlurOpenClEligible(JNIEnv *env, jobjectArray keys, const std::vector<jdouble> &params) {
-    // Gaussian is the default (blur-type 0). Lens is slower on the Pixel 6 Pro.
-    for (size_t i = params.size(); i > 0; --i) {
-        auto key = (jstring)env->GetObjectArrayElement(keys, i - 1);
+enum class FocusOpenCl { Disabled, Enabled, OpaqueOnly };
+
+static FocusOpenCl focusBlurOpenClRoute(JNIEnv *env, jint width, jint height, jobjectArray keys,
+                                        const std::vector<jdouble> &params) {
+    // The Pixel timings cover Lens with the default radius and focus mask on landscape images.
+    static const std::unordered_map<std::string, jdouble> lensDefaults = {
+        {"blur-radius", 25}, {"highlight-factor", 0}, {"highlight-threshold-low", 0},
+        {"highlight-threshold-high", 1}, {"shape", 0}, {"x", 0.5}, {"y", 0.5},
+        {"radius", 0.75}, {"focus", 0.25}, {"midpoint", 0.5}, {"aspect-ratio", 0},
+        {"rotation", 0}, {"high-quality", 0},
+    };
+    int blurType = 0;
+    bool defaultLens = true;
+    for (size_t i = 0; i < params.size(); ++i) {
+        auto key = (jstring)env->GetObjectArrayElement(keys, i);
         const auto name = utf(env, key);
         env->DeleteLocalRef(key);
-        if (name == "blur-type") return static_cast<int>(params[i - 1]) == 0;
+        if (name == "blur-type") blurType = static_cast<int>(params[i]);
+        else {
+            const auto expected = lensDefaults.find(name);
+            if (expected == lensDefaults.end() || params[i] != expected->second) defaultLens = false;
+        }
     }
-    return true;
+    if (blurType == 0) return FocusOpenCl::Enabled;
+    const int64_t w = width, h = height;
+    if (blurType == 1 && defaultLens && w >= 512 && h >= 384 &&
+        3 * w >= 4 * h && 2 * w <= 3 * h && w * h <= 6'000'000)
+        return FocusOpenCl::OpaqueOnly;
+    return FocusOpenCl::Disabled;
 }
 
 static GeglNode *createGraph(JNIEnv *env, jstring operation, jobjectArray keys, jdoubleArray values,
-                             jint width, GeglNode **output, bool allowOpenCl = true,
+                             jint width, jint height, GeglNode **output, bool &opaqueOnly, bool allowOpenCl = true,
                              bool benchmarkOpenCl = false) {
     const auto op = utf(env, operation);
     if (!gegl_has_operation(op.c_str())) { fail(env, "Unavailable GEGL operation: " + op); return nullptr; }
@@ -185,10 +205,15 @@ static GeglNode *createGraph(JNIEnv *env, jstring operation, jobjectArray keys, 
     const int count = env->GetArrayLength(keys);
     std::vector<jdouble> params(count);
     env->GetDoubleArrayRegion(values, 0, count, params.data());
+    opaqueOnly = false;
     bool useOpenCl = allowOpenCl && benchmarkOpenCl;
     if (allowOpenCl && !benchmarkOpenCl) {
         if (op == "gegl:bevel") useOpenCl = bevelOpenClEligible(env, width, keys, params);
-        else if (op == "gegl:focus-blur") useOpenCl = focusBlurOpenClEligible(env, keys, params);
+        else if (op == "gegl:focus-blur") {
+            const auto route = focusBlurOpenClRoute(env, width, height, keys, params);
+            useOpenCl = route == FocusOpenCl::Enabled;
+            opaqueOnly = route == FocusOpenCl::OpaqueOnly;
+        }
         else useOpenCl = acceleratedOps.count(op) != 0;
     }
     g_object_set(graph, "use-opencl", useOpenCl, nullptr);
@@ -241,6 +266,28 @@ static inline uint32_t argbToRgba(uint32_t c) { return (c >> 24) == 0 ? 0u : swa
 static const Babl *rgbaU8() { return babl_format("R'G'B'A u8"); }
 static constexpr int64_t BAND_PIXELS = 1 << 16; // 256 KB staging: stays in cache
 
+static bool isOpaque(GeglBuffer *buffer) {
+    GeglBufferIterator *iter = gegl_buffer_iterator_new(buffer, gegl_buffer_get_extent(buffer),
+        0, rgbaU8(), GEGL_ACCESS_READ, GEGL_ABYSS_NONE, 1);
+    while (gegl_buffer_iterator_next(iter)) {
+        auto *pixels = static_cast<const uint32_t *>(iter->items[0].data);
+        uint32_t alpha = 0xff000000u;
+        for (int i = 0; i < iter->length; ++i) alpha &= pixels[i];
+        if (alpha != 0xff000000u) {
+            gegl_buffer_iterator_stop(iter);
+            return false;
+        }
+    }
+    return true;
+}
+
+static void allowOpenClForOpaque(GeglNode *filter, GeglBuffer *buffer) {
+    gboolean active = FALSE;
+    g_object_get(gegl_config(), "use-opencl", &active, nullptr);
+    const bool useOpenCl = active && gegl_buffer_get_format(buffer) == rgbaU8() && isOpaque(buffer);
+    g_object_set(filter, "use-opencl", useOpenCl, nullptr);
+}
+
 // Uploads rect.width×rect.height ARGB ints (row stride rect.width) from pixels into rect of buffer.
 // Bands span whole GEGL tile rows, so tiles are overwritten in one go rather than first being
 // allocated (zeroed) and then filled piece by piece.
@@ -284,13 +331,15 @@ Java_io_github_nielstron_brushkin_engine_NativeGegl_render(JNIEnv *env, jobject,
     }
     const long long t0 = nowNs();
     GeglNode *filter;
-    GeglNode *graph = createGraph(env, operation, keys, values, w, &filter, useOpenCl, benchmarkOpenCl);
+    bool opaqueOnly;
+    GeglNode *graph = createGraph(env, operation, keys, values, w, h, &filter, opaqueOnly, useOpenCl, benchmarkOpenCl);
     if (!graph) return nullptr;
     const long long tGraph = nowNs();
     const Babl *format = rgbaU8();
     GeglRectangle extent{0,0,w,h};
     GeglBuffer *buffer = gegl_buffer_new(&extent, format);
     uploadArgb(env, pixels, buffer, extent);
+    if (opaqueOnly) allowOpenClForOpaque(filter, buffer);
     const long long tCopyIn = nowNs();
     const long long tBufferSet = tCopyIn; // fused into copyIn
     GeglNode *input = gegl_node_new_child(graph, "operation", "gegl:buffer-source", "buffer", buffer, nullptr);
@@ -356,7 +405,8 @@ Java_io_github_nielstron_brushkin_engine_NativeGegl_renderLegacy(JNIEnv *env, jo
     }
     const long long t0 = nowNs();
     GeglNode *filter;
-    GeglNode *graph = createGraph(env, operation, keys, values, w, &filter, useOpenCl, benchmarkOpenCl);
+    bool opaqueOnly;
+    GeglNode *graph = createGraph(env, operation, keys, values, w, h, &filter, opaqueOnly, useOpenCl, benchmarkOpenCl);
     if (!graph) return nullptr;
     const long long tGraph = nowNs();
     std::vector<jint> data(w*h);
@@ -369,6 +419,7 @@ Java_io_github_nielstron_brushkin_engine_NativeGegl_renderLegacy(JNIEnv *env, jo
     GeglRectangle extent{0,0,w,h};
     GeglBuffer *buffer = gegl_buffer_new(&extent, format);
     gegl_buffer_set(buffer, &extent, 0, format, data.data(), GEGL_AUTO_ROWSTRIDE);
+    if (opaqueOnly) allowOpenClForOpaque(filter, buffer);
     const long long tBufferSet = nowNs();
     GeglNode *input = gegl_node_new_child(graph, "operation", "gegl:buffer-source", "buffer", buffer, nullptr);
     if (gegl_node_has_pad(filter, "input")) gegl_node_link(input, filter);
@@ -500,7 +551,7 @@ struct EffectSession {
     GeglNode *graph, *filter;
     GeglBuffer *input;
     GeglRectangle extent, dirty;
-    bool regional, updated;
+    bool regional, updated, opaqueOnly;
     // The last rendered rectangle (RGBA), read back tile by tile; reused across renders.
     std::unique_ptr<uint32_t[]> out;
     size_t outCapacity = 0;
@@ -529,13 +580,14 @@ Java_io_github_nielstron_brushkin_engine_NativeGegl_createSession(JNIEnv *env, j
         fail(env,"Invalid GEGL session dimensions or parameters"); return 0;
     }
     GeglNode *filter;
-    GeglNode *graph=createGraph(env,operation,keys,values,w,&filter);
+    bool opaqueOnly;
+    GeglNode *graph=createGraph(env,operation,keys,values,w,h,&filter,opaqueOnly);
     if (!graph) return 0;
     GeglRectangle extent{0,0,w,h};
     auto *buffer=gegl_buffer_new(&extent,rgbaU8());
     auto *input=gegl_node_new_child(graph,"operation","gegl:buffer-source","buffer",buffer,nullptr);
     gegl_node_link(input,filter);
-    auto *session=new EffectSession{graph,filter,buffer,extent,extent,regional != 0,false};
+    auto *session=new EffectSession{graph,filter,buffer,extent,extent,regional != 0,false,opaqueOnly};
     g_signal_connect(filter,"invalidated",G_CALLBACK(invalidateEffect),session);
     // Prepare the source's buffer-changed subscription before the first tile upload.
     gegl_node_get_bounding_box(filter);
@@ -569,6 +621,7 @@ Java_io_github_nielstron_brushkin_engine_NativeGegl_renderSession(JNIEnv *env,jo
     const size_t count=size_t(rect.width)*rect.height;
     lastRenderUsedOpenCl = false;
     if (count) {
+        if (s->opaqueOnly) allowOpenClForOpaque(s->filter, s->input);
         if (count>s->outCapacity) { s->out.reset(new uint32_t[count]); s->outCapacity=count; }
         operationKernelLaunches = 0;
         gegl_node_blit(s->filter,1.0,&rect,rgbaU8(),s->out.get(),GEGL_AUTO_ROWSTRIDE,s->regional ? GEGL_BLIT_CACHE : GEGL_BLIT_DEFAULT);
@@ -635,8 +688,10 @@ Java_io_github_nielstron_brushkin_engine_NativeGegl_renderBuffer(JNIEnv *env, jo
     const GeglRectangle extent=*gegl_buffer_get_extent(buffer);
     const long long t0=nowNs();
     GeglNode *filter;
-    GeglNode *graph=createGraph(env,operation,keys,values,extent.width,&filter,useOpenCl);
+    bool opaqueOnly;
+    GeglNode *graph=createGraph(env,operation,keys,values,extent.width,extent.height,&filter,opaqueOnly,useOpenCl);
     if (!graph) return 0;
+    if (opaqueOnly) allowOpenClForOpaque(filter, buffer);
     // buffer-source marks its buffer as forked, so no operation processes it in place.
     GeglNode *input=gegl_node_new_child(graph,"operation","gegl:buffer-source","buffer",buffer,nullptr);
     if (gegl_node_has_pad(filter,"input")) gegl_node_link(input,filter);
