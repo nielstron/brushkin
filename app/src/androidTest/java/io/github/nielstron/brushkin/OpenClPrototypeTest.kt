@@ -47,6 +47,7 @@ class OpenClPrototypeTest {
         val pixels=IntArray(w*h) { i -> 0xff000000.toInt() or ((i%251) shl 16) or ((i/w%253) shl 8) or ((i*7)%255) }
         val configurations=listOf(
             "gegl:alien-map" to mapOf("cpn-1-frequency" to 1.3,"cpn-2-frequency" to 0.8),
+            "gegl:bevel" to emptyMap(),
             "gegl:noise-hsv" to mapOf("seed" to 42.0,"hue-distance" to 12.0),
             "gegl:noise-hurl" to mapOf("seed" to 42.0,"pct-random" to 30.0),
             "gegl:vignette" to mapOf("radius" to 0.8),

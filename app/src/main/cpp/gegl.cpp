@@ -131,7 +131,7 @@ static GeglNode *createGraph(JNIEnv *env, jstring operation, jobjectArray keys, 
     // value-invert, ...) stay on the CPU. GEGL keeps its own CPU fallback for
     // parameter combinations a kernel does not support.
     static const std::unordered_set<std::string> acceleratedOps = {
-        "gegl:bilateral-filter", "gegl:bloom", "gegl:box-blur",
+        "gegl:bevel", "gegl:bilateral-filter", "gegl:bloom", "gegl:box-blur",
         "gegl:brightness-contrast", "gegl:cartoon", "gegl:checkerboard",
         "gegl:color-enhance", "gegl:color-temperature", "gegl:deinterlace",
         "gegl:diffraction-patterns", "gegl:edge-laplace", "gegl:edge-sobel",
