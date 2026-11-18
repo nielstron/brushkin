@@ -57,7 +57,11 @@ class MainActivity : ComponentActivity(), FileActions {
         setContent { BrushkinTheme { EditorScreen(vm, this, store) } }
         if (!vm.startupStarted) {
             vm.startupStarted = true
-            val shared = incomingUri(intent)
+            // Android hands the intent that first started the activity to every later start of it: after
+            // it ended the app in the background, or when it's reopened from Recents. A share that started
+            // the app was opened then; opening it again would add a copy instead of restoring the tabs.
+            val repeated = savedInstanceState != null || intent.flags and Intent.FLAG_ACTIVITY_LAUNCHED_FROM_HISTORY != 0
+            val shared = if (repeated) null else incomingUri(intent)
             if (shared != null) open(shared) else vm.restoreAtStartup()
         }
     }

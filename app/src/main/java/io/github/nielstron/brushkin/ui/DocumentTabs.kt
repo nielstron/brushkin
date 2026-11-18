@@ -235,6 +235,8 @@ class DocumentTabs(
     fun open(stack: Stack, name: String) = operation(guarded = false) {
         val doc = ParkedDocument(stack, name)
         val info = engine.info.value
+        // An image shared to the app when it wasn't running opens instead of restore().
+        val startup = !resident
         val unused = if (resident) active.blank && !info.canUndo && !info.canRedo else !fileOf(active).exists()
         if (unused) {
             val tab = active
@@ -248,6 +250,8 @@ class DocumentTabs(
         }
         persist()
         saveActive()
+        // The other tabs still need their pictures in the tab switcher.
+        if (startup) scope.launch { loadThumbnails() }
     }
 
     fun close(tab: DocumentTab) = operation(guarded = tab === active) {
