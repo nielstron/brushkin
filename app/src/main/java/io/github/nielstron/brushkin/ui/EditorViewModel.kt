@@ -265,6 +265,9 @@ class EditorViewModel(app: Application) : AndroidViewModel(app) {
     var fromCenter by mutableStateOf(false)
     /** Width ÷ height that rectangle/ellipse selections and the crop keep; null = free. */
     var aspect by mutableStateOf<Float?>(null)
+    /** Keep the current image's own width ÷ height instead of [aspect]; it follows tab switches and resizes. */
+    var imageAspect by mutableStateOf(false)
+    fun keptAspect(): Float? = if (imageAspect) engine.info.value.let { it.width.toFloat() / it.height } else aspect
     /** Symmetry painting (null: off) around the image center. */
     var symmetryKind by mutableStateOf<io.github.nielstron.brushkin.engine.Symmetry.Kind?>(null)
     var symmetrySegments by mutableStateOf(6)
