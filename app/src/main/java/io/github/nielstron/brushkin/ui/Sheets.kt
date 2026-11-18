@@ -195,13 +195,16 @@ private fun ToolGrid(vm: EditorViewModel, tools: List<Tool>) {
 @Composable
 private fun AspectPicker(vm: EditorViewModel) {
     SectionLabel("Aspect ratio", Modifier.padding(top = 12.dp, bottom = 6.dp))
-    val presets = listOf(null to "Free", 1 to 1, 4 to 3, 3 to 4, 3 to 2, 2 to 3, 16 to 9, 9 to 16)
+    val presets = listOf(1 to 1, 4 to 3, 3 to 4, 3 to 2, 2 to 3, 16 to 9, 9 to 16)
     var w by remember { mutableStateOf("") }; var h by remember { mutableStateOf("") }
+    fun pick(ratio: Float?, image: Boolean = false) { vm.aspect = ratio; vm.imageAspect = image; w = ""; h = "" }
     FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+        Chip("Free", vm.aspect == null && !vm.imageAspect && w.isEmpty()) { pick(null) }
+        // The image's own width : height, e.g. to crop without changing its proportions.
+        Chip("Current", vm.imageAspect) { pick(null, image = true) }
         for ((a, b) in presets) {
-            val r = if (a == null) null else a / (b as Int).toFloat()
-            val label = if (a == null) "Free" else "$a:$b"
-            Chip(label, vm.aspect == r && (r != null || w.isEmpty())) { vm.aspect = r; w = ""; h = "" }
+            val r = a / b.toFloat()
+            Chip("$a:$b", !vm.imageAspect && vm.aspect == r) { pick(r) }
         }
     }
     // Any other ratio, e.g. a print size.
@@ -216,7 +219,7 @@ private fun AspectPicker(vm: EditorViewModel) {
                 keyboardOptions = androidx.compose.foundation.text.KeyboardOptions(keyboardType = androidx.compose.ui.text.input.KeyboardType.Decimal),
                 cursorBrush = androidx.compose.ui.graphics.SolidColor(Ui.accent))
         }
-        fun apply() { val a = w.toFloatOrNull(); val b = h.toFloatOrNull(); if (a != null && b != null && a > 0 && b > 0) vm.aspect = a / b }
+        fun apply() { val a = w.toFloatOrNull(); val b = h.toFloatOrNull(); if (a != null && b != null && a > 0 && b > 0) { vm.aspect = a / b; vm.imageAspect = false } }
         Text("Custom", color = Ui.text, fontSize = 14.sp)
         Field(w, "Width") { w = it.filter { c -> c.isDigit() || c == '.' }.take(6); apply() }
         Text(":", color = Ui.muted)
