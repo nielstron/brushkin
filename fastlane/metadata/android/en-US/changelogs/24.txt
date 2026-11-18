@@ -1,0 +1,1 @@
+New aspect ratio option Current keeps the image's own proportions when selecting or cropping. An image shared to Brushkin is no longer opened again as a duplicate tab after Android closes the app in the background, and all tabs show their previews after a share.
