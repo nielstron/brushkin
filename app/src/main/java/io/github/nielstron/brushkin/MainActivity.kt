@@ -302,9 +302,7 @@ class MainActivity : ComponentActivity(), FileActions {
             runCatching {
                 val name = withContext(Dispatchers.IO) { displayName(uri) }
                 val data = withContext(Dispatchers.IO) { contentResolver.openInputStream(uri)!!.use { it.readBytes() } }
-                // SVG and PDF: ask at which size to draw them first.
-                val vector = withContext(Dispatchers.IO) { VectorImport.probe(data) }
-                if (vector != null) { askVector(VectorImport.Pending(vector, name, insert = true)); return@runCatching }
+                if (askPages(data, name, insert = true)) return@runCatching
                 val result = withContext(Dispatchers.IO) { ImageImport.firstFrame(data) }
                 if (result.originalWidth != result.bitmap.width || result.originalHeight != result.bitmap.height)
                     vm.messages.tryEmit("Scaled from ${result.originalWidth}×${result.originalHeight} to ${result.bitmap.width}×${result.bitmap.height} to fit in memory")
@@ -313,34 +311,55 @@ class MainActivity : ComponentActivity(), FileActions {
         }
     }
 
-    private fun askVector(pending: VectorImport.Pending) {
-        vm.pendingVector = pending
-        vm.dialog = "vector-import"
+    /**
+     * SVG, PDF and multi-page TIFF: ask about size, pages and so on first, as GIMP does (or for a
+     * PDF's password). False when [data] needs no questions.
+     */
+    private suspend fun askPages(data: ByteArray, name: String, insert: Boolean, password: String? = null): Boolean {
+        val source = try { withContext(Dispatchers.IO) { PageImport.probe(data, password) } }
+            catch (e: PageImport.PasswordRequired) {
+                vm.pendingPassword = PageImport.Locked(data, name, insert, e.wrong)
+                vm.dialog = "pdf-password"
+                return true
+            } ?: return false
+        if (!PageImport.asks(source)) return false
+        vm.pendingPages = PageImport.Pending(source, name, insert)
+        vm.dialog = "page-import"
+        return true
     }
 
-    override fun importVector(pending: VectorImport.Pending, options: VectorImport.Options) {
+    override fun unlockPdf(locked: PageImport.Locked, password: String) {
+        lifecycleScope.launch {
+            runCatching { askPages(locked.data, locked.name, locked.insert, password) }
+                .onFailure { vm.messages.tryEmit("Couldn't open ${locked.name}: ${it.message}") }
+        }
+    }
+
+    override fun importPages(pending: PageImport.Pending, options: PageImport.Options) {
         if (vm.importStatus != null) return
         vm.importStatus = if (pending.insert) "Inserting image" else "Opening image"
         vm.viewModelScope.launch {
             try {
                 if (pending.insert) {
-                    val raster = withContext(Dispatchers.IO) { ImageImport.vector(pending.source, options) }
-                    val scaled = raster.bitmap.width != options.width
+                    val raster = withContext(Dispatchers.IO) { ImageImport.page(pending.source, options) }
+                    val scaled = raster.bitmap.width != options.width && pending.source.kind != PageImport.Kind.TIFF
                     // Drawn at the chosen size: place it 1:1, centered, instead of fitting it into the canvas.
                     val s = vm.engine.stack
                     vm.engine.placeFloating(raster.bitmap, pending.name.substringBeforeLast('.'),
                         android.graphics.Point((s.width - raster.bitmap.width) / 2, (s.height - raster.bitmap.height) / 2))
-                    if (scaled) vm.messages.tryEmit("Rendered at ${raster.bitmap.width}×${raster.bitmap.height} to fit in memory")
+                    if (scaled) vm.messages.tryEmit("Drawn at ${raster.bitmap.width}×${raster.bitmap.height} to fit in memory")
                 } else {
-                    val result = withContext(Dispatchers.IO) { ImageImport.openVector(pending.source, options, pending.name) }
-                    result.note?.let { vm.messages.tryEmit(it) }
-                    vm.tabs.open(result.stack, pending.name).join()
+                    val docs = withContext(Dispatchers.IO) { ImageImport.openPages(pending.source, options, pending.name) }
+                    for (d in docs) {
+                        d.note?.let { vm.messages.tryEmit(it) }
+                        vm.tabs.open(d.stack, d.name ?: pending.name).join()
+                    }
                 }
             } catch (t: Exception) {
                 if (t is kotlinx.coroutines.CancellationException) throw t
                 vm.messages.tryEmit("Couldn't open ${pending.name}: ${t.message}")
             } catch (t: OutOfMemoryError) {
-                vm.messages.tryEmit("Couldn't open ${pending.name}: too large, try a smaller size")
+                vm.messages.tryEmit("Couldn't open ${pending.name}: too large, try a smaller size or fewer pages")
             } finally { vm.importStatus = null }
         }
     }
@@ -359,8 +378,7 @@ class MainActivity : ComponentActivity(), FileActions {
                     vm.tabs.open(stack, name).join()
                 } else {
                     val data = withContext(Dispatchers.IO) { contentResolver.openInputStream(uri)!!.use { it.readBytes() } }
-                    val vector = withContext(Dispatchers.IO) { VectorImport.probe(data) }
-                    if (vector != null) { askVector(VectorImport.Pending(vector, name, insert = false)); return@launch }
+                    if (askPages(data, name, insert = false)) return@launch
                     val result = withContext(Dispatchers.IO) { ImageImport.open(data,name) }
                     if(result.originalWidth!=result.stack.width || result.originalHeight!=result.stack.height)
                         vm.messages.tryEmit("Scaled from ${result.originalWidth}×${result.originalHeight} to ${result.stack.width}×${result.stack.height} to fit in memory")

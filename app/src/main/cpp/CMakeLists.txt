@@ -31,10 +31,22 @@ FetchContent_Declare(gif URL https://downloads.sourceforge.net/project/giflib/gi
 FetchContent_Populate(gif)
 add_library(gif_codec STATIC ${gif_SOURCE_DIR}/dgif_lib.c ${gif_SOURCE_DIR}/egif_lib.c ${gif_SOURCE_DIR}/gifalloc.c ${gif_SOURCE_DIR}/gif_err.c ${gif_SOURCE_DIR}/gif_hash.c ${gif_SOURCE_DIR}/openbsd-reallocarray.c ${gif_SOURCE_DIR}/quantize.c)
 target_include_directories(gif_codec PUBLIC ${gif_SOURCE_DIR})
-add_library(brushkin_export SHARED export.cpp decode.cpp)
-add_dependencies(brushkin_export jpeg_build)
-target_include_directories(brushkin_export PRIVATE ${jpeg_SOURCE_DIR}/src ${jpeg_BINARY_DIR} ${png_SOURCE_DIR} ${png_BINARY_DIR} ${webp_SOURCE_DIR}/src)
-target_link_libraries(brushkin_export PRIVATE jpeg_codec png_static webp webpdemux libwebpmux gif_codec)
+# TIFF import: libtiff with its built-in codecs plus Deflate (the NDK's zlib) and JPEG (the libjpeg above).
+FetchContent_Declare(tiff URL https://download.osgeo.org/libtiff/tiff-4.7.1.tar.gz URL_HASH SHA256=f698d94f3103da8ca7438d84e0344e453fe0ba3b7486e04c5bf7a9a3fabe9b69)
+FetchContent_Populate(tiff)
+ExternalProject_Add(tiff_build SOURCE_DIR ${tiff_SOURCE_DIR} BINARY_DIR ${tiff_BINARY_DIR} DEPENDS jpeg_build LIST_SEPARATOR |
+ CMAKE_ARGS -DCMAKE_MAKE_PROGRAM=${CMAKE_MAKE_PROGRAM} -DCMAKE_TOOLCHAIN_FILE=${CMAKE_TOOLCHAIN_FILE} -DANDROID_ABI=${ANDROID_ABI} -DANDROID_PLATFORM=android-29 -DCMAKE_BUILD_TYPE=Release -DBUILD_SHARED_LIBS=OFF -DCMAKE_POSITION_INDEPENDENT_CODE=ON "-DCMAKE_C_FLAGS_RELEASE=-Os -DNDEBUG -ffunction-sections -fdata-sections"
+  -Dtiff-tools=OFF -Dtiff-tests=OFF -Dtiff-contrib=OFF -Dtiff-docs=OFF -Dtiff-cxx=OFF -Dtiff-opengl=OFF -Dtiff-install=OFF -Dsphinx=OFF
+  -Dzlib=ON -Dlibdeflate=OFF -Dpixarlog=OFF -Djpeg=ON -Dold-jpeg=ON -Djpeg12=OFF -Djbig=OFF -Dlerc=OFF -Dlzma=OFF -Dzstd=OFF -Dwebp=OFF
+  -DJPEG_INCLUDE_DIR=${jpeg_SOURCE_DIR}/src|${jpeg_BINARY_DIR} -DJPEG_LIBRARY=${jpeg_BINARY_DIR}/libjpeg.a
+ BUILD_COMMAND ${CMAKE_COMMAND} --build <BINARY_DIR> --target tiff --parallel 4
+ INSTALL_COMMAND "" BUILD_BYPRODUCTS ${tiff_BINARY_DIR}/libtiff/libtiff.a)
+add_library(tiff_codec STATIC IMPORTED)
+set_target_properties(tiff_codec PROPERTIES IMPORTED_LOCATION ${tiff_BINARY_DIR}/libtiff/libtiff.a)
+add_library(brushkin_export SHARED export.cpp decode.cpp tiff.cpp)
+add_dependencies(brushkin_export jpeg_build tiff_build)
+target_include_directories(brushkin_export PRIVATE ${jpeg_SOURCE_DIR}/src ${jpeg_BINARY_DIR} ${png_SOURCE_DIR} ${png_BINARY_DIR} ${webp_SOURCE_DIR}/src ${tiff_SOURCE_DIR}/libtiff ${tiff_BINARY_DIR}/libtiff)
+target_link_libraries(brushkin_export PRIVATE tiff_codec jpeg_codec png_static webp webpdemux libwebpmux gif_codec z m)
 target_compile_features(brushkin_export PRIVATE cxx_std_17)
 target_link_options(brushkin_export PRIVATE -Wl,--gc-sections -Wl,--exclude-libs,ALL -Wl,-z,max-page-size=16384)
 

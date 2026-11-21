@@ -131,8 +131,10 @@ class EditorViewModel(app: Application) : AndroidViewModel(app) {
     var sheet by mutableStateOf(Sheet.NONE)
     var showMenu by mutableStateOf(false)
     var dialog by mutableStateOf<String?>(null)
-    /** The SVG or PDF the "vector-import" dialog asks about. */
-    var pendingVector: io.github.nielstron.brushkin.export.VectorImport.Pending? = null
+    /** The SVG, PDF or TIFF the "page-import" dialog asks about. */
+    var pendingPages: io.github.nielstron.brushkin.export.PageImport.Pending? = null
+    /** The encrypted PDF the "pdf-password" dialog asks about. */
+    var pendingPassword: io.github.nielstron.brushkin.export.PageImport.Locked? = null
 
     var fg by mutableStateOf(0xFF1E5F74.toInt())
     var bg by mutableStateOf(Color.WHITE)

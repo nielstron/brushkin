@@ -99,8 +99,9 @@ interface FileActions {
     fun openExport(uri: android.net.Uri, mime: String)
     fun share()
     fun importResources()
-    /** Renders a pending SVG or PDF as the import dialog chose. */
-    fun importVector(pending: io.github.nielstron.brushkin.export.VectorImport.Pending, options: io.github.nielstron.brushkin.export.VectorImport.Options)
+    /** Opens or inserts a pending SVG, PDF or TIFF as the import dialog chose. */
+    fun importPages(pending: io.github.nielstron.brushkin.export.PageImport.Pending, options: io.github.nielstron.brushkin.export.PageImport.Options)
+    fun unlockPdf(locked: io.github.nielstron.brushkin.export.PageImport.Locked, password: String)
 }
 
 data class TextStyleSpec(val typeface: Typeface, val preview: TextStyle, val outline: Boolean = false)
@@ -136,8 +137,11 @@ fun Dialogs(vm: EditorViewModel, info: DocInfo, files: FileActions) {
         d == "save-project" -> SaveProjectDialog(close) { xcf -> close(); if (xcf) files.saveXcf() else files.saveProject() }
         d == "export-sticker" -> StickerExportDialog(info, files, close)
         d == "new" -> NewImageDialog(vm, close)
-        d == "vector-import" -> vm.pendingVector?.let { p ->
-            VectorImportDialog(p, vm.engine.stack.width, vm.engine.stack.height, close = { vm.pendingVector = null; close() }) { o -> vm.pendingVector = null; close(); files.importVector(p, o) }
+        d == "page-import" -> vm.pendingPages?.let { p ->
+            PageImportDialog(p, vm.engine.stack.width, vm.engine.stack.height, close = { vm.pendingPages = null; close() }) { o -> vm.pendingPages = null; close(); files.importPages(p, o) }
+        } ?: close()
+        d == "pdf-password" -> vm.pendingPassword?.let { l ->
+            PasswordDialog(l, close = { vm.pendingPassword = null; close() }) { pw -> vm.pendingPassword = null; close(); files.unlockPdf(l, pw) }
         } ?: close()
         d == "emoji" -> EmojiDialog(vm, close)
         d == "text" -> { close(); vm.selectTool(Tool.TEXT); vm.messages.tryEmit("Tap where the text should go") }

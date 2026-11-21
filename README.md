@@ -9,7 +9,7 @@
 
 A layered image editor for Android, inspired by GIMP and designed for fingers and styluses:
 
-- Insert other images, emojis, stickers and text.
+- Insert other images, emojis, stickers and text. Open and insert SVG, PDF and (multi-page) TIFF files, choosing size, resolution and pages as in GIMP.
 - Paint with brushes, pencil, airbrush, ink and MyPaint-style brushes, plus smudge, clone, heal, dodge/burn and symmetry painting.
 - Work on several images at once in tabs.
 - Select with rectangle, lasso, fuzzy, Intelligent Scissors and quick mask.

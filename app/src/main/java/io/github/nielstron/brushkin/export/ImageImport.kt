@@ -14,14 +14,14 @@ import kotlin.math.sqrt
 /** Static images retain Android's format/color support; native decoders add editable animation and JPEG compatibility. */
 object ImageImport {
     data class Raster(val bitmap: Bitmap, val originalWidth: Int, val originalHeight: Int)
-    data class Document(val stack: Stack, val originalWidth: Int, val originalHeight: Int, /** Shown to the user after opening. */ val note: String? = null)
+    data class Document(val stack: Stack, val originalWidth: Int, val originalHeight: Int, /** Shown to the user after opening. */ val note: String? = null, /** The tab name, when the file makes several. */ val name: String? = null)
     private fun gif(data: ByteArray) = data.size >= 6 && data.copyOfRange(0,6).toString(Charsets.US_ASCII) in listOf("GIF87a","GIF89a")
     private fun webp(data: ByteArray) = data.size >= 12 && data.copyOfRange(0,4).toString(Charsets.US_ASCII)=="RIFF" && data.copyOfRange(8,12).toString(Charsets.US_ASCII)=="WEBP"
     private fun jpeg(data: ByteArray) = data.size>=2 && data[0]==0xff.toByte() && data[1]==0xd8.toByte()
 
-    /** [vectorSize]: SVGs smaller than this (longest side) are rendered larger. */
-    fun firstFrame(data: ByteArray, maxDim: Int=8192, maxPixels: Long=40_000_000, vectorSize: Int=VectorImport.MIN_SVG_SIZE): Raster {
-        VectorImport.probe(data)?.let { return vector(it,VectorImport.defaults(it,insert=true,minDim=vectorSize),maxDim,maxPixels) }
+    /** [vectorSize]: SVGs smaller than this (longest side) are rendered larger. SVG, PDF and TIFF give their first page. */
+    fun firstFrame(data: ByteArray, maxDim: Int=8192, maxPixels: Long=40_000_000, vectorSize: Int=PageImport.MIN_SVG_SIZE): Raster {
+        PageImport.probe(data)?.let { return page(it,PageImport.defaults(it,insert=true,minDim=vectorSize),maxDim,maxPixels) }
         var width=0; var height=0
         val bitmap = try {
             ImageDecoder.decodeBitmap(ImageDecoder.createSource(ByteBuffer.wrap(data))) { decoder, info, _ ->
@@ -42,7 +42,7 @@ object ImageImport {
     }
 
     fun open(data: ByteArray, name: String): Document {
-        VectorImport.probe(data)?.let { return openVector(it,VectorImport.defaults(it,insert=false),name) }
+        PageImport.probe(data)?.let { return openPages(it,PageImport.defaults(it,insert=false),name).single() }
         val metadata=ExportMetadata.read(data)
         val animation=when { gif(data)->NativeDecode.gif(data);webp(data) && data.size>=21 && data.copyOfRange(12,16).toString(Charsets.US_ASCII)=="VP8X" && (data[20].toInt() and 2)!=0 ->NativeDecode.webp(data);else->null }
         if(animation!=null && animation.size>1) {
@@ -60,29 +60,46 @@ object ImageImport {
         return Document(Stack(layer.pixels.width,layer.pixels.height,listOf(layer),layer.id,exportMetadata=metadata),decoded.originalWidth,decoded.originalHeight)
     }
 
-    /** One page of an SVG or PDF, rendered as [o] says. */
-    fun vector(source: VectorImport.Source, o: VectorImport.Options, maxDim: Int=8192, maxPixels: Long=40_000_000): Raster {
+    /** The first chosen page of an SVG, PDF or TIFF. */
+    fun page(source: PageImport.Source, o: PageImport.Options, maxDim: Int=8192, maxPixels: Long=40_000_000): Raster {
         var bitmap: Bitmap?=null
-        VectorImport.render(source,o.copy(pages=o.pages.first..o.pages.first),maxDim,maxPixels) { _, b -> bitmap=b }
+        PageImport.render(source,o.copy(pages=o.pages.take(1),asImages=false),maxDim,maxPixels) { _, b -> bitmap=b }
         val b=bitmap!!
         return Raster(b,b.width,b.height)
     }
 
-    /** One layer per page, the first on top and the others hidden (a single page takes the file's name). */
-    fun openVector(source: VectorImport.Source, o: VectorImport.Options, name: String): Document {
-        val pages=ArrayList<Layer>()
-        val result=VectorImport.render(source,o) { i, b ->
-            try { pages+=Layer(name="Page ${i+1}",pixels=TiledBitmap.fromBitmap(b),visible=pages.isEmpty()) } finally { b.recycle() }
+    /**
+     * The chosen pages as layers of one image (the first page on top and the only one visible, or
+     * the last with [PageImport.Options.reverse]), or as an image each. A single page takes the file's name.
+     */
+    fun openPages(source: PageImport.Source, o: PageImport.Options, name: String): List<Document> {
+        val base=name.substringBeforeLast('.')
+        val pages=ArrayList<Pair<Int,Bitmap>>()
+        val docs=ArrayList<Document>()
+        fun layer(i: Int, b: Bitmap, w: Int=b.width, h: Int=b.height, visible: Boolean=true) =
+            try { Layer(name=if(o.pages.size==1) name else "Page ${i+1}",pixels=TiledBitmap.fromBitmap(b,w,h),visible=visible) } finally { b.recycle() }
+        val metadata=ExportMetadata(resolution=o.resolution)
+        val result=PageImport.render(source,o) { i, b ->
+            if(!o.asImages) pages+=i to b
+            else { val l=layer(i,b); docs+=Document(Stack(l.pixels.width,l.pixels.height,listOf(l),l.id,exportMetadata=metadata),l.pixels.width,l.pixels.height) }
         }
-        val layers=if(pages.size==1) listOf(pages[0].copy(name=name)) else pages.asReversed()
-        val note=when {
-            result.scaledDown -> "Rendered at ${result.width}×${result.height} (${result.dpi} dpi) to fit in memory"
-            pages.size>1 && result.pages<source.pageCount -> "Opened pages ${pages.first().name.removePrefix("Page ")}–${pages.last().name.removePrefix("Page ")} of ${source.pageCount} as layers"
-            pages.size>1 -> "Each page is a layer; show them in Layers"
-            else -> null
+        val dpi=if(result.dpi!=o.resolution) metadata.copy(resolution=result.dpi) else metadata
+        val sizeNote=if(result.scaledDown) when(source.kind) {
+            PageImport.Kind.TIFF -> "Shrunk to fit in memory"
+            else -> "Drawn at ${result.dpi} ppi to fit in memory"
+        } else null
+        if(o.asImages) {
+            val ordered=if(o.reverse) docs.asReversed() else docs
+            return ordered.mapIndexed { n, d ->
+                val page=(if(o.reverse) o.pages.asReversed() else o.pages).getOrNull(n)?.plus(1)
+                d.copy(stack=d.stack.copy(exportMetadata=dpi),name="$base-$page.png",note=if(n==0) sizeNote else null)
+            }
         }
-        val metadata=if(source.kind==VectorImport.Kind.PDF) ExportMetadata(resolution=result.dpi) else ExportMetadata()
-        return Document(Stack(result.width,result.height,layers,layers.last().id,exportMetadata=metadata),result.width,result.height,note)
+        val w=pages.maxOf { it.second.width }; val h=pages.maxOf { it.second.height }
+        // Bottom-most first: the top layer is the first page (or the last, reversed).
+        val top=if(o.reverse) pages.last().first else pages.first().first
+        val layers=pages.map { (i,b) -> layer(i,b,w,h,visible=i==top) }.let { if(o.reverse) it else it.asReversed() }
+        return listOf(Document(Stack(w,h,layers,layers.last().id,exportMetadata=dpi),w,h,sizeNote,name))
     }
 
     private fun orient(source: Bitmap, exif: ByteArray?): Bitmap {
