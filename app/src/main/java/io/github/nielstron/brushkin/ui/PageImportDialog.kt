@@ -244,11 +244,10 @@ fun PageImportDialog(vm: EditorViewModel, p: PageImport.Pending, canvasW: Int, c
                 }
                 if (kind == PageImport.Kind.PDF && PageImport.pdfExtras) Toggle("Render annotations", annotations) { annotations = it }
                 if (sized) {
-                    Toggle("Transparent background", transparent) { transparent = it }
-                    if (!transparent) Row(Modifier.padding(bottom = 4.dp), verticalAlignment = Alignment.CenterVertically) {
-                        Text("Background color", color = Ui.text.copy(alpha = 0.85f), fontSize = 14.sp, modifier = Modifier.weight(1f))
-                        ColorPicker(vm, "Background color", fill, outline = false) { c -> c?.let { fill = it } }
-                    }
+                    // When off, the color that fills transparent areas sits next to the switch.
+                    Toggle("Transparent background", transparent, beforeSwitch = {
+                        if (!transparent) Box(Modifier.padding(end = 8.dp)) { ColorPicker(vm, "Background color", fill, outline = false) { c -> c?.let { fill = it } } }
+                    }) { transparent = it }
                 }
                 if (tooLarge) Text("Too large: it will be drawn smaller to fit in memory", color = Ui.danger, fontSize = 13.sp)
             }

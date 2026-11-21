@@ -334,9 +334,10 @@ private fun OptionsSheet(vm: EditorViewModel) {
 }
 
 @Composable
-fun Toggle(label: String, value: Boolean, onChange: (Boolean) -> Unit) {
+fun Toggle(label: String, value: Boolean, beforeSwitch: @Composable () -> Unit = {}, onChange: (Boolean) -> Unit) {
     Row(Modifier.fillMaxWidth().height(48.dp).clickable { onChange(!value) }, verticalAlignment = Alignment.CenterVertically) {
         Text(label, color = Ui.text.copy(alpha = 0.85f), modifier = Modifier.weight(1f), fontSize = 14.sp)
+        beforeSwitch()
         Switch(value, onChange, colors = SwitchDefaults.colors(checkedTrackColor = Ui.accent, checkedThumbColor = Ui.onAccent))
     }
 }
