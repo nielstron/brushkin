@@ -326,33 +326,20 @@ private fun FontPicker(family: String, onPick: (String) -> Unit) {
 
 /**
  * A color swatch (filled for the text color, a ring for the outline; crossed out when there's no
- * outline) with a menu of colors: foreground, background, black, white and recent ones.
+ * outline) that opens the full color selection.
  */
 @Composable
 internal fun ColorPicker(vm: EditorViewModel, label: String, color: Int?, outline: Boolean, onPick: (Int?) -> Unit) {
     var open by remember { mutableStateOf(false) }
-    Box {
-        Box(
-            Modifier.size(40.dp).clip(CircleShape).background(Ui.panel).border(1.dp, Ui.border, CircleShape).clickable(onClickLabel = label) { open = true },
-            contentAlignment = Alignment.Center,
-        ) {
-            val c = color?.let { Color(it) }
-            if (!outline) Box(Modifier.size(24.dp).clip(CircleShape).background(c ?: Color.Transparent).border(1.dp, Ui.border, CircleShape))
-            else Box(Modifier.size(24.dp).border(5.dp, c ?: Ui.muted.copy(alpha = 0.4f), CircleShape)) {
-                if (c == null) Box(Modifier.align(Alignment.Center).size(28.dp, 2.dp).graphicsLayer { rotationZ = -45f }.background(Ui.muted))
-            }
-        }
-        androidx.compose.material3.DropdownMenu(open, { open = false }, containerColor = Ui.panel) {
-            Text(label, color = Ui.muted, fontSize = 12.sp, modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp))
-            if (outline) androidx.compose.material3.DropdownMenuItem(text = { Text("No outline", color = Ui.text) }, onClick = { open = false; onPick(null) })
-            val choices = (listOf(vm.fg, vm.bg, android.graphics.Color.BLACK, android.graphics.Color.WHITE) + vm.recentColors).distinct().take(12)
-            // Swatches in rows of six.
-            for (row in choices.chunked(6)) Row(Modifier.padding(horizontal = 12.dp, vertical = 4.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                for (c in row) Box(
-                    Modifier.size(32.dp).clip(CircleShape).background(Color(c)).border(2.dp, if (c == color) Ui.accent else Ui.border, CircleShape)
-                        .clickable { open = false; onPick(c) },
-                )
-            }
+    Box(
+        Modifier.size(40.dp).clip(CircleShape).background(Ui.panel).border(1.dp, Ui.border, CircleShape).clickable(onClickLabel = label) { open = true },
+        contentAlignment = Alignment.Center,
+    ) {
+        val c = color?.let { Color(it) }
+        if (!outline) Box(Modifier.size(24.dp).clip(CircleShape).background(c ?: Color.Transparent).border(1.dp, Ui.border, CircleShape))
+        else Box(Modifier.size(24.dp).border(5.dp, c ?: Ui.muted.copy(alpha = 0.4f), CircleShape)) {
+            if (c == null) Box(Modifier.align(Alignment.Center).size(28.dp, 2.dp).graphicsLayer { rotationZ = -45f }.background(Ui.muted))
         }
     }
+    if (open) ColorPickerDialog(vm, label, color ?: vm.fg, none = if (outline) "No outline" else null, onDismiss = { open = false }) { open = false; onPick(it) }
 }

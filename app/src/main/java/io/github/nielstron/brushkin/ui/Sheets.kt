@@ -26,6 +26,7 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ExperimentalLayoutApi
 import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.RowScope
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -400,22 +401,42 @@ private val PALETTE = listOf(
     0xFF2E5E6E, 0xFF1A1A24, 0xFFE9E1D3, 0xFF1E5F74, 0xFFE5484D, 0xFF46A758, 0xFF3E63DD, 0xFF8E4EC6,
 ).map { it.toInt() }
 
-@OptIn(ExperimentalLayoutApi::class)
 @Composable
 private fun ColorSheet(vm: EditorViewModel) {
-    val hsv = remember(vm.fg) { FloatArray(3).also { android.graphics.Color.colorToHSV(vm.fg, it) } }
-    var hue by remember(vm.fg) { mutableStateOf(hsv[0]) }
-    var sat by remember(vm.fg) { mutableStateOf(hsv[1]) }
-    var value by remember(vm.fg) { mutableStateOf(hsv[2]) }
-    fun commit(h: Float = hue, s: Float = sat, v: Float = value) { vm.fg = android.graphics.Color.HSVToColor(floatArrayOf(h, s, v)) }
-
-    Column(Modifier.padding(horizontal = 16.dp).padding(bottom = 16.dp).verticalScroll(rememberScrollState())) {
-        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+    ColorEditor(vm, vm.fg, onChange = { vm.fg = it }, onPalette = { vm.pickColor(it) },
+        modifier = Modifier.padding(horizontal = 16.dp).padding(bottom = 16.dp),
+        leading = {
             Box(Modifier.size(64.dp, 52.dp)) {
                 Box(Modifier.align(Alignment.BottomEnd).size(36.dp).clip(RoundedCornerShape(10.dp)).background(Color(vm.bg)).border(3.dp, Ui.panel, RoundedCornerShape(10.dp)))
                 Box(Modifier.align(Alignment.TopStart).size(40.dp).clip(RoundedCornerShape(10.dp)).background(Color(vm.fg)).border(2.dp, Ui.accent, RoundedCornerShape(10.dp)))
             }
-            var hex by remember(vm.fg) { mutableStateOf("%06X".format(vm.fg and 0xFFFFFF)) }
+        },
+        trailing = {
+            IconButton(onClick = { vm.pipette = true; vm.sheet = Sheet.NONE }) { Icon(Icons.Rounded.Colorize, "Pick a color from the image", tint = Ui.text) }
+            IconButton(onClick = { vm.swapColors() }) { Icon(Icons.Rounded.SwapHoriz, "Swap foreground and background", tint = Ui.text) }
+        })
+}
+
+/**
+ * The full color selection (as for the brush color): hex code, saturation/value square, hue,
+ * palettes and recent colors. [onPalette] is for palette swatches (the brush sheet also records
+ * them as recent).
+ */
+@Composable
+internal fun ColorEditor(
+    vm: EditorViewModel, color: Int, onChange: (Int) -> Unit, onPalette: (Int) -> Unit = onChange, modifier: Modifier = Modifier,
+    leading: @Composable RowScope.() -> Unit = {}, trailing: @Composable RowScope.() -> Unit = {},
+) {
+    val hsv = remember(color) { FloatArray(3).also { android.graphics.Color.colorToHSV(color, it) } }
+    var hue by remember(color) { mutableStateOf(hsv[0]) }
+    var sat by remember(color) { mutableStateOf(hsv[1]) }
+    var value by remember(color) { mutableStateOf(hsv[2]) }
+    fun commit(h: Float = hue, s: Float = sat, v: Float = value) { onChange(android.graphics.Color.HSVToColor(floatArrayOf(h, s, v))) }
+
+    Column(modifier.verticalScroll(rememberScrollState())) {
+        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+            leading()
+            var hex by remember(color) { mutableStateOf("%06X".format(color and 0xFFFFFF)) }
             Row(
                 Modifier.weight(1f).height(44.dp).clip(RoundedCornerShape(12.dp)).background(Ui.panel2).border(1.dp, Ui.border, RoundedCornerShape(12.dp)).padding(horizontal = 12.dp),
                 verticalAlignment = Alignment.CenterVertically,
@@ -424,14 +445,13 @@ private fun ColorSheet(vm: EditorViewModel) {
                 BasicTextField(
                     hex, { v ->
                         hex = v.filter { it.isLetterOrDigit() }.take(6).uppercase()
-                        if (hex.length == 6) hex.toLongOrNull(16)?.let { vm.fg = (0xFF000000 or it).toInt() }
+                        if (hex.length == 6) hex.toLongOrNull(16)?.let { onChange((0xFF000000 or it).toInt()) }
                     },
                     textStyle = TextStyle(color = Ui.text, fontFamily = Ui.mono, fontSize = 15.sp), singleLine = true,
                     cursorBrush = androidx.compose.ui.graphics.SolidColor(Ui.accent), modifier = Modifier.padding(start = 6.dp),
                 )
             }
-            IconButton(onClick = { vm.pipette = true; vm.sheet = Sheet.NONE }) { Icon(Icons.Rounded.Colorize, "Pick a color from the image", tint = Ui.text) }
-            IconButton(onClick = { vm.swapColors() }) { Icon(Icons.Rounded.SwapHoriz, "Swap foreground and background", tint = Ui.text) }
+            trailing()
         }
         Spacer(Modifier.height(14.dp))
         // Saturation/value square.
@@ -463,12 +483,34 @@ private fun ColorSheet(vm: EditorViewModel) {
         Spacer(Modifier.height(18.dp))
         SectionLabel("Palette")
         Spacer(Modifier.height(8.dp))
-        PaletteSection(vm)
+        PaletteSection(vm, color, onPalette)
         Spacer(Modifier.height(16.dp))
         SectionLabel("Recent")
         Spacer(Modifier.height(8.dp))
-        Swatches(vm.recentColors.toList()) { vm.fg = it }
+        Swatches(vm.recentColors.toList(), onChange)
     }
+}
+
+/** The full color selection in a dialog; [none] offers a "None" choice (e.g. no outline), picked as null. */
+@Composable
+internal fun ColorPickerDialog(vm: EditorViewModel, title: String, initial: Int, none: String? = null, onDismiss: () -> Unit, onPick: (Int?) -> Unit) {
+    var color by remember { mutableStateOf(initial) }
+    androidx.compose.material3.AlertDialog(
+        onDismissRequest = onDismiss, containerColor = Ui.panel,
+        title = { Text(title) },
+        text = {
+            ColorEditor(vm, color, onChange = { color = it }, leading = {
+                Box(Modifier.size(44.dp).clip(RoundedCornerShape(10.dp)).background(Color(color)).border(2.dp, Ui.accent, RoundedCornerShape(10.dp)))
+            })
+        },
+        confirmButton = { androidx.compose.material3.TextButton(onClick = { vm.pushRecent(color); onPick(color) }) { Text("OK") } },
+        dismissButton = {
+            Row {
+                if (none != null) androidx.compose.material3.TextButton(onClick = { onPick(null) }) { Text(none) }
+                androidx.compose.material3.TextButton(onClick = onDismiss) { Text("Cancel") }
+            }
+        },
+    )
 }
 
 @OptIn(ExperimentalLayoutApi::class)
@@ -855,17 +897,17 @@ private fun PatternPicker(vm: EditorViewModel) {
     if (vm.fillWithPattern && list.isEmpty()) Chip("Create a pattern…", false) { vm.dialog = "pattern-edit" }
 }
 
-/** Palette swatches; user palettes can be edited (+ adds the FG color, long-press removes). */
+/** Palette swatches; user palettes can be edited (+ adds [color], long-press removes). */
 @OptIn(ExperimentalLayoutApi::class, androidx.compose.foundation.ExperimentalFoundationApi::class)
 @Composable
-private fun PaletteSection(vm: EditorViewModel) {
+private fun PaletteSection(vm: EditorViewModel, color: Int, onPick: (Int) -> Unit) {
     val palettes by vm.resources.palettes.collectAsState()
     val current = vm.palette
     Row(Modifier.horizontalScroll(rememberScrollState()).padding(bottom = 8.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
         Chip("Default", current == null) { vm.palette = null }
         for (p in palettes) Chip(p.name, current === p) { vm.palette = p }
         Chip("New", false) {
-            vm.palette = vm.resources.savePalette(io.github.nielstron.brushkin.engine.PaletteRes("Palette ${palettes.size + 1}", listOf(vm.fg)))
+            vm.palette = vm.resources.savePalette(io.github.nielstron.brushkin.engine.PaletteRes("Palette ${palettes.size + 1}", listOf(color)))
         }
         Chip("Import…", false) { vm.dialog = "import" }
     }
@@ -873,13 +915,13 @@ private fun PaletteSection(vm: EditorViewModel) {
     FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
         for ((i, c) in colors.withIndex()) Box(
             Modifier.size(36.dp).clip(RoundedCornerShape(10.dp)).background(Color(c)).border(1.dp, Color.White.copy(alpha = 0.1f), RoundedCornerShape(10.dp))
-                .combinedClickable(onClick = { vm.pickColor(c) }, onLongClick = {
+                .combinedClickable(onClick = { onPick(c) }, onLongClick = {
                     if (current != null) vm.palette = vm.resources.savePalette(io.github.nielstron.brushkin.engine.PaletteRes(current.name, current.colors.filterIndexed { k, _ -> k != i }), current)
                 })
         )
         if (current != null) Box(
             Modifier.size(36.dp).clip(RoundedCornerShape(10.dp)).border(1.dp, Ui.border, RoundedCornerShape(10.dp))
-                .clickable { vm.palette = vm.resources.savePalette(io.github.nielstron.brushkin.engine.PaletteRes(current.name, current.colors + vm.fg), current) },
+                .clickable { vm.palette = vm.resources.savePalette(io.github.nielstron.brushkin.engine.PaletteRes(current.name, current.colors + color), current) },
             contentAlignment = Alignment.Center,
         ) { Icon(Icons.Rounded.Add, "Add", tint = Ui.text) }
     }
