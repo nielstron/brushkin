@@ -61,6 +61,11 @@ class PageImportTest {
         assertEquals(Color.BLUE, b.getPixel(295, 145)); b.recycle()
     }
 
+    @Test fun backgroundColorFillsTransparentAreas() {
+        val r = ImageImport.page(PageImport.probe(square.toByteArray())!!, PageImport.Options(40, 20, 96, fill = Color.YELLOW))
+        assertEquals(Color.RED, r.bitmap.getPixel(5, 5)); assertEquals(Color.YELLOW, r.bitmap.getPixel(35, 5)); r.bitmap.recycle()
+    }
+
     @Test fun smallSvgDefaultsKeepPhysicalSize() {
         val o = PageImport.defaults(PageImport.probe(square.toByteArray())!!, insert = false)
         // 40 px wide is drawn 1024 px wide by raising the resolution, not by stretching.

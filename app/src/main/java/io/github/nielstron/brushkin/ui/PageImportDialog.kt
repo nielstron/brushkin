@@ -77,12 +77,12 @@ private fun parseRange(text: String, count: Int): Set<Int>? {
 }
 
 /**
- * The choices GIMP's import dialogs offer: for SVG the size (with unit, ratios and resolution),
- * for PDF the pages, size and resolution, how to open the pages, reverse order, annotations and a
- * white background, for multi-page TIFF the pages and how to open them.
+ * The choices GIMP's import dialogs offer: for SVG the size (with unit) and resolution, for PDF
+ * the pages, size and resolution, how to open the pages, reverse order and annotations, for
+ * multi-page TIFF the pages and how to open them. SVG and PDF can get a background color.
  */
 @Composable
-fun PageImportDialog(p: PageImport.Pending, canvasW: Int, canvasH: Int, close: () -> Unit, ok: (PageImport.Options) -> Unit) {
+fun PageImportDialog(vm: EditorViewModel, p: PageImport.Pending, canvasW: Int, canvasH: Int, close: () -> Unit, ok: (PageImport.Options) -> Unit) {
     val s = p.source
     val kind = s.kind
     val sized = kind != PageImport.Kind.TIFF
@@ -112,16 +112,12 @@ fun PageImportDialog(p: PageImport.Pending, canvasW: Int, canvasH: Int, close: (
     fun toPx(v: Float) = unit.perInch?.let { v / it * res } ?: v
     var wText by remember { mutableStateOf(show(wPx)) }
     var hText by remember { mutableStateOf(show(hPx)) }
-    var xrText by remember { mutableStateOf(fmt(xr, 3)) }
-    var yrText by remember { mutableStateOf(fmt(yr, 3)) }
     var resText by remember { mutableStateOf(fmt(res, 0)) }
     /** Rewrites every field but the one being typed in. */
     fun sync(except: String = "") {
         val (nw, nh) = natural(res)
         if (except != "w") wText = show(nw * xr)
         if (except != "h") hText = show(nh * yr)
-        if (except != "xr") xrText = fmt(xr, 3)
-        if (except != "yr") yrText = fmt(yr, 3)
         if (except != "res") resText = fmt(res, 0)
     }
     // A PDF's pixel size sets its resolution (as in GIMP); an SVG's sets its ratios against its size at the resolution.
@@ -150,7 +146,8 @@ fun PageImportDialog(p: PageImport.Pending, canvasW: Int, canvasH: Int, close: (
     fun select(new: Set<Int>) { pages = new; rangeTextState = rangeText(new) }
     var asImages by remember { mutableStateOf(false) }
     var reverse by remember { mutableStateOf(false) }
-    var background by remember { mutableStateOf(initial.background) }
+    var transparent by remember { mutableStateOf(initial.fill == null) }
+    var fill by remember { mutableStateOf(vm.bg) }
     var annotations by remember { mutableStateOf(true) }
 
     val chosen = pages.sorted().take(PageImport.MAX_PAGES)
@@ -234,14 +231,8 @@ fun PageImportDialog(p: PageImport.Pending, canvasW: Int, canvasH: Int, close: (
                     Row(horizontalArrangement = Arrangement.spacedBy(6.dp), modifier = Modifier.padding(vertical = 6.dp)) {
                         for (u in SizeUnit.entries) Chip(u.label, unit == u) { unit = u; sync() }
                     }
-                    if (kind == PageImport.Kind.SVG) {
-                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                            val keyboard = KeyboardOptions(keyboardType = KeyboardType.Decimal)
-                            OutlinedTextField(xrText, { t -> xrText = t; number(t)?.let { setWidth(natural(res).first * it, "xr") } }, label = { Text("X ratio") }, singleLine = true, modifier = Modifier.weight(1f), keyboardOptions = keyboard)
-                            OutlinedTextField(yrText, { t -> yrText = t; number(t)?.let { setHeight(natural(res).second * it, "yr") } }, label = { Text("Y ratio") }, singleLine = true, modifier = Modifier.weight(1f), keyboardOptions = keyboard)
-                        }
-                        Toggle("Keep aspect ratio", keep) { keep = it; if (it) { yr = xr; sync() } }
-                    }
+                    // Unlocked, width and height stretch the drawing independently.
+                    if (kind == PageImport.Kind.SVG) Toggle("Keep aspect ratio", keep) { keep = it; if (it) { yr = xr; sync() } }
                     OutlinedTextField(resText, { t ->
                         resText = t
                         number(t)?.let { v ->
@@ -252,7 +243,13 @@ fun PageImportDialog(p: PageImport.Pending, canvasW: Int, canvasH: Int, close: (
                     }, label = { Text("Resolution (pixels/in)") }, singleLine = true, keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal))
                 }
                 if (kind == PageImport.Kind.PDF && PageImport.pdfExtras) Toggle("Render annotations", annotations) { annotations = it }
-                if (sized) Toggle("Fill transparent areas with white", background) { background = it }
+                if (sized) {
+                    Toggle("Transparent background", transparent) { transparent = it }
+                    if (!transparent) Row(Modifier.padding(bottom = 4.dp), verticalAlignment = Alignment.CenterVertically) {
+                        Text("Background color", color = Ui.text.copy(alpha = 0.85f), fontSize = 14.sp, modifier = Modifier.weight(1f))
+                        ColorPicker(vm, "Background color", fill, outline = false) { c -> c?.let { fill = it } }
+                    }
+                }
                 if (tooLarge) Text("Too large: it will be drawn smaller to fit in memory", color = Ui.danger, fontSize = 13.sp)
             }
         },
@@ -263,7 +260,7 @@ fun PageImportDialog(p: PageImport.Pending, canvasW: Int, canvasH: Int, close: (
                     height = if (sized) maxOf(1, hPx.roundToInt()) else s.height.roundToInt(),
                     resolution = if (sized) res.roundToInt() else 72,
                     pages = chosen, asImages = asImages && chosen.size > 1, reverse = reverse && chosen.size > 1,
-                    background = background && sized, annotations = annotations,
+                    fill = if (transparent || !sized) null else fill, annotations = annotations,
                 ))
             }) { Text(if (p.insert) "Insert" else "Open") }
         },

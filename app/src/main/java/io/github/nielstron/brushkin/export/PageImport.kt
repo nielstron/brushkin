@@ -60,8 +60,8 @@ object PageImport {
         val asImages: Boolean = false,
         /** The last page as the bottom layer or first image. */
         val reverse: Boolean = false,
-        /** Fill transparent areas with white. */
-        val background: Boolean = false,
+        /** The color under transparent areas; null keeps them transparent. */
+        val fill: Int? = null,
         val annotations: Boolean = true,
     )
 
@@ -130,7 +130,7 @@ object PageImport {
             Kind.TIFF -> 1f to 72
         }
         val pages = if (insert) listOf(0) else (0 until minOf(s.pageCount, DEFAULT_PAGES)).toList()
-        return Options(maxOf(1, (s.width * k).roundToInt()), maxOf(1, (s.height * k).roundToInt()), dpi, pages, background = s.kind == Kind.PDF && !insert)
+        return Options(maxOf(1, (s.width * k).roundToInt()), maxOf(1, (s.height * k).roundToInt()), dpi, pages, fill = if (s.kind == Kind.PDF && !insert) Color.WHITE else null)
     }
 
     internal fun svgSize(svg: SVG): Pair<Float, Float> {
@@ -184,10 +184,10 @@ object PageImport {
                     Bitmap.createBitmap(px, 2, px[0], px[0], px[1], Bitmap.Config.ARGB_8888).let { if (it.isMutable) it else it.copy(Bitmap.Config.ARGB_8888, true).also { _ -> it.recycle() } }
                 }
             }
-            if (o.background) {
-                val white = Bitmap.createBitmap(b.width, b.height, Bitmap.Config.ARGB_8888).apply { eraseColor(Color.WHITE) }
-                Canvas(white).drawBitmap(b, 0f, 0f, null); b.recycle()
-                return white
+            o.fill?.let { fill ->
+                val filled = Bitmap.createBitmap(b.width, b.height, Bitmap.Config.ARGB_8888).apply { eraseColor(fill) }
+                Canvas(filled).drawBitmap(b, 0f, 0f, null); b.recycle()
+                return filled
             }
             return b
         }
@@ -197,7 +197,7 @@ object PageImport {
             val p = source.pages[index]
             val k = size / maxOf(p.width, p.height)
             val w = maxOf(1, (p.width * k).roundToInt()); val h = maxOf(1, (p.height * k).roundToInt())
-            return page(index, w, h, Options(w, h, SVG_DPI, background = source.kind == Kind.PDF))
+            return page(index, w, h, Options(w, h, SVG_DPI, fill = if (source.kind == Kind.PDF) Color.WHITE else null))
         }
 
         override fun close() { pdf?.close(); file?.delete() }

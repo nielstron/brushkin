@@ -138,7 +138,7 @@ fun Dialogs(vm: EditorViewModel, info: DocInfo, files: FileActions) {
         d == "export-sticker" -> StickerExportDialog(info, files, close)
         d == "new" -> NewImageDialog(vm, close)
         d == "page-import" -> vm.pendingPages?.let { p ->
-            PageImportDialog(p, vm.engine.stack.width, vm.engine.stack.height, close = { vm.pendingPages = null; close() }) { o -> vm.pendingPages = null; close(); files.importPages(p, o) }
+            PageImportDialog(vm, p, vm.engine.stack.width, vm.engine.stack.height, close = { vm.pendingPages = null; close() }) { o -> vm.pendingPages = null; close(); files.importPages(p, o) }
         } ?: close()
         d == "pdf-password" -> vm.pendingPassword?.let { l ->
             PasswordDialog(l, close = { vm.pendingPassword = null; close() }) { pw -> vm.pendingPassword = null; close(); files.unlockPdf(l, pw) }
