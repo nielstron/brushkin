@@ -1,0 +1,1 @@
+Open and insert SVG, PDF and TIFF files. As in GIMP, a dialog asks for the size, resolution and pages: PDF and multi-page TIFF pages open as layers or as separate images, and you can pick a background color or keep it transparent. Every color swatch now opens the full color picker.
