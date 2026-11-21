@@ -11,7 +11,7 @@ fun panelCommands(vm: EditorViewModel, info: DocInfo, files: FileActions, view: 
     fun redraw() { view()?.invalidate() }
 
     cmd("File", "Insert image from gallery…", "open photo as a new layer") { files.pickImageLayer() }
-    cmd("File", "Insert image from files…", "open image as a new layer") { files.pickImageLayerFile() }
+    cmd("File", "Insert image from files…", "open image svg pdf vector as a new layer") { files.pickImageLayerFile() }
     cmd("Tools", "Tool options…", "brush size opacity hardness flow spacing smoothing dynamics pressure tilt threshold feather antialias aspect ratio symmetry") { options() }
     cmd("Colors", "Foreground and background colors…", "palette swatches color picker") { vm.sheet = Sheet.COLOR }
     cmd("Colors", "Swap foreground and background colors") { vm.swapColors() }

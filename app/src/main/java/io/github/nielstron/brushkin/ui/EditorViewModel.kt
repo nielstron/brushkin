@@ -131,6 +131,8 @@ class EditorViewModel(app: Application) : AndroidViewModel(app) {
     var sheet by mutableStateOf(Sheet.NONE)
     var showMenu by mutableStateOf(false)
     var dialog by mutableStateOf<String?>(null)
+    /** The SVG or PDF the "vector-import" dialog asks about. */
+    var pendingVector: io.github.nielstron.brushkin.export.VectorImport.Pending? = null
 
     var fg by mutableStateOf(0xFF1E5F74.toInt())
     var bg by mutableStateOf(Color.WHITE)
@@ -722,6 +724,7 @@ class EditorViewModel(app: Application) : AndroidViewModel(app) {
                 }
                 if (result.originalWidth != result.stack.width || result.originalHeight != result.stack.height)
                     messages.tryEmit("Scaled from ${result.originalWidth}×${result.originalHeight} to ${result.stack.width}×${result.stack.height} to fit in memory")
+                result.note?.let { messages.tryEmit(it) }
                 tabs.open(result.stack, "Pasted image.png").join()
             } catch (t: Exception) {
                 if (t is kotlinx.coroutines.CancellationException) throw t

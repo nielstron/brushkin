@@ -148,9 +148,9 @@ class MainActivity : ComponentActivity(), FileActions {
     // ------------------------------------------------------------------ FileActions
 
     override fun pickImageLayer() = pickLayer.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly))
-    override fun pickImageLayerFile() = pickLayerFile.launch(arrayOf("image/*"))
+    override fun pickImageLayerFile() = pickLayerFile.launch(arrayOf("image/*", "application/pdf"))
     override fun openImage() = pickOpen.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly))
-    override fun openProject() = pickProject.launch(arrayOf("image/openraster", "image/x-xcf", "application/zip", "application/octet-stream", "image/*"))
+    override fun openProject() = pickProject.launch(arrayOf("image/openraster", "image/x-xcf", "application/zip", "application/octet-stream", "image/*", "application/pdf"))
     override fun importResources() = pickResources.launch(arrayOf("*/*"))
     override fun saveXcf() = createXcf.launch("${vm.engine.docName.substringBeforeLast('.')}.xcf")
     override fun saveProject() = createProject.launch("${vm.engine.docName.substringBeforeLast('.')}.ora")
@@ -297,18 +297,51 @@ class MainActivity : ComponentActivity(), FileActions {
         contentResolver.query(uri, arrayOf(OpenableColumns.DISPLAY_NAME), null, null, null)?.use { c -> if (c.moveToFirst()) c.getString(0) else null }
     }.getOrNull() ?: "Untitled"
 
-    private suspend fun decode(uri: Uri): Bitmap = withContext(Dispatchers.IO) {
-        val result=contentResolver.openInputStream(uri)!!.use { ImageImport.firstFrame(it.readBytes()) }
-        if(result.originalWidth!=result.bitmap.width || result.originalHeight!=result.bitmap.height)
-            vm.messages.tryEmit("Scaled from ${result.originalWidth}×${result.originalHeight} to ${result.bitmap.width}×${result.bitmap.height} to fit in memory")
-        result.bitmap
-    }
-
     private fun insertImage(uri: Uri) {
         lifecycleScope.launch {
-            runCatching { decode(uri) }
-                .onSuccess { vm.engine.placeFloating(it, displayName(uri).substringBeforeLast('.')) }
-                .onFailure { vm.messages.tryEmit("Couldn't open image: ${it.message}") }
+            runCatching {
+                val name = withContext(Dispatchers.IO) { displayName(uri) }
+                val data = withContext(Dispatchers.IO) { contentResolver.openInputStream(uri)!!.use { it.readBytes() } }
+                // SVG and PDF: ask at which size to draw them first.
+                val vector = withContext(Dispatchers.IO) { VectorImport.probe(data) }
+                if (vector != null) { askVector(VectorImport.Pending(vector, name, insert = true)); return@runCatching }
+                val result = withContext(Dispatchers.IO) { ImageImport.firstFrame(data) }
+                if (result.originalWidth != result.bitmap.width || result.originalHeight != result.bitmap.height)
+                    vm.messages.tryEmit("Scaled from ${result.originalWidth}×${result.originalHeight} to ${result.bitmap.width}×${result.bitmap.height} to fit in memory")
+                vm.engine.placeFloating(result.bitmap, name.substringBeforeLast('.'))
+            }.onFailure { vm.messages.tryEmit("Couldn't open image: ${it.message}") }
+        }
+    }
+
+    private fun askVector(pending: VectorImport.Pending) {
+        vm.pendingVector = pending
+        vm.dialog = "vector-import"
+    }
+
+    override fun importVector(pending: VectorImport.Pending, options: VectorImport.Options) {
+        if (vm.importStatus != null) return
+        vm.importStatus = if (pending.insert) "Inserting image" else "Opening image"
+        vm.viewModelScope.launch {
+            try {
+                if (pending.insert) {
+                    val raster = withContext(Dispatchers.IO) { ImageImport.vector(pending.source, options) }
+                    val scaled = raster.bitmap.width != options.width
+                    // Drawn at the chosen size: place it 1:1, centered, instead of fitting it into the canvas.
+                    val s = vm.engine.stack
+                    vm.engine.placeFloating(raster.bitmap, pending.name.substringBeforeLast('.'),
+                        android.graphics.Point((s.width - raster.bitmap.width) / 2, (s.height - raster.bitmap.height) / 2))
+                    if (scaled) vm.messages.tryEmit("Rendered at ${raster.bitmap.width}×${raster.bitmap.height} to fit in memory")
+                } else {
+                    val result = withContext(Dispatchers.IO) { ImageImport.openVector(pending.source, options, pending.name) }
+                    result.note?.let { vm.messages.tryEmit(it) }
+                    vm.tabs.open(result.stack, pending.name).join()
+                }
+            } catch (t: Exception) {
+                if (t is kotlinx.coroutines.CancellationException) throw t
+                vm.messages.tryEmit("Couldn't open ${pending.name}: ${t.message}")
+            } catch (t: OutOfMemoryError) {
+                vm.messages.tryEmit("Couldn't open ${pending.name}: too large, try a smaller size")
+            } finally { vm.importStatus = null }
         }
     }
 
@@ -325,9 +358,13 @@ class MainActivity : ComponentActivity(), FileActions {
                     val stack = withContext(Dispatchers.IO) { contentResolver.openInputStream(uri)!!.use { Ora.read(it) } }
                     vm.tabs.open(stack, name).join()
                 } else {
-                    val result = withContext(Dispatchers.IO) { contentResolver.openInputStream(uri)!!.use { ImageImport.open(it.readBytes(),name) } }
+                    val data = withContext(Dispatchers.IO) { contentResolver.openInputStream(uri)!!.use { it.readBytes() } }
+                    val vector = withContext(Dispatchers.IO) { VectorImport.probe(data) }
+                    if (vector != null) { askVector(VectorImport.Pending(vector, name, insert = false)); return@launch }
+                    val result = withContext(Dispatchers.IO) { ImageImport.open(data,name) }
                     if(result.originalWidth!=result.stack.width || result.originalHeight!=result.stack.height)
                         vm.messages.tryEmit("Scaled from ${result.originalWidth}×${result.originalHeight} to ${result.stack.width}×${result.stack.height} to fit in memory")
+                    result.note?.let { vm.messages.tryEmit(it) }
                     vm.tabs.open(result.stack, name).join()
                 }
             } catch (t: Throwable) {

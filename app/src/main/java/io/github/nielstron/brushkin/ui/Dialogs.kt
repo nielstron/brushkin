@@ -99,6 +99,8 @@ interface FileActions {
     fun openExport(uri: android.net.Uri, mime: String)
     fun share()
     fun importResources()
+    /** Renders a pending SVG or PDF as the import dialog chose. */
+    fun importVector(pending: io.github.nielstron.brushkin.export.VectorImport.Pending, options: io.github.nielstron.brushkin.export.VectorImport.Options)
 }
 
 data class TextStyleSpec(val typeface: Typeface, val preview: TextStyle, val outline: Boolean = false)
@@ -134,6 +136,9 @@ fun Dialogs(vm: EditorViewModel, info: DocInfo, files: FileActions) {
         d == "save-project" -> SaveProjectDialog(close) { xcf -> close(); if (xcf) files.saveXcf() else files.saveProject() }
         d == "export-sticker" -> StickerExportDialog(info, files, close)
         d == "new" -> NewImageDialog(vm, close)
+        d == "vector-import" -> vm.pendingVector?.let { p ->
+            VectorImportDialog(p, vm.engine.stack.width, vm.engine.stack.height, close = { vm.pendingVector = null; close() }) { o -> vm.pendingVector = null; close(); files.importVector(p, o) }
+        } ?: close()
         d == "emoji" -> EmojiDialog(vm, close)
         d == "text" -> { close(); vm.selectTool(Tool.TEXT); vm.messages.tryEmit("Tap where the text should go") }
         d.startsWith("text-edit:") -> { close(); vm.selectTool(Tool.TEXT); vm.editTextLayer(d.removePrefix("text-edit:").toLong()) }

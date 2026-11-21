@@ -119,6 +119,8 @@ dependencies {
 
     // Full system emoji picker (categories, skin tones, recents).
     implementation("androidx.emoji2:emoji2-emojipicker:1.5.0")
+    // SVG import (Apache-2.0, pure Java).
+    implementation("com.caverock:androidsvg-aar:1.4")
     // Object selection: MobileSAM (downloaded on first use) on LiteRT 2 (Apache-2.0) with its GPU
     // accelerator (ML Drift, Apache-2.0). Google Play's ai-delivery library is only used for
     // downloading models/NPU packs through Play, which we don't do: excluded so no proprietary

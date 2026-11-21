@@ -107,7 +107,7 @@ val KEYWORDS = mapOf(
     "Save as…" to "export gimp xcf ora openraster project desktop layers",
     "New layer group" to "folder organize layers",
     "Put layer in new group" to "folder organize layers",
-    "Open project (.ora / .xcf)…" to "open xcf gimp ora project layers file",
+    "Open project (.ora / .xcf)…" to "open xcf gimp ora project layers file svg pdf vector document",
     "New image…" to "new blank canvas start drawing",
     "New layer" to "add empty layer",
     "Merge down" to "combine layer with the one below",
@@ -162,7 +162,7 @@ fun commands(vm: EditorViewModel, info: DocInfo, files: FileActions, view: () ->
     return listOf(
         Cmd("File", "New image…", run = dlg("new")),
         Cmd("File", "Open image…", run = { files.openImage() }),
-        Cmd("File", "Open project (.ora / .xcf)…", run = { files.openProject() }),
+        Cmd("File", "Open project (.ora / .xcf)…", "or an SVG, PDF or other image file", run = { files.openProject() }),
         Cmd("File", "Rename image…", run = dlg("rename-tab:${vm.tabs.active.id}")),
         Cmd("File", "Save as…", "project with layers", run = dlg("save-project")),
         Cmd("File", "Import brushes, gradients, palettes…", ".gbr .gih .ggr .gpl .pat .myb", run = { files.importResources() }),
