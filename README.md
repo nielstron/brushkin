@@ -5,6 +5,7 @@
 <p align="center"><strong>Brushkin</strong></p>
 <div align="center"><a href="https://komistore.app/app/?repo=nielstron/brushkin"><img src="https://img.shields.io/github/v/release/nielstron/brushkin?label=komi%20store"></a>
 <a href="https://play.google.com/store/apps/details?id=de.nielstron.brushkin"><img src="https://img.shields.io/badge/Google_Play-414141?logo=google-play&logoColor=white"></a></div>
+
 -----
 
 A layered image editor for Android, inspired by GIMP and designed for fingers and styluses:
