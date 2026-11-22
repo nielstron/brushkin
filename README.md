@@ -10,15 +10,17 @@
 
 A layered image editor for Android, inspired by GIMP and designed for fingers and styluses:
 
-- Insert other images, emojis, stickers and text. Open and insert SVG, PDF and (multi-page) TIFF files, choosing size, resolution and pages as in GIMP.
-- Paint with brushes, pencil, airbrush, ink and MyPaint-style brushes, plus smudge, clone, heal, dodge/burn and symmetry painting.
-- Work on several images at once in tabs.
-- Select with rectangle, lasso, fuzzy, Intelligent Scissors and quick mask.
-- Lightweight AI tools: select objects, cut out stickers with an outline, remove objects, background depth blur, upscale, denoise and deblur.
-- Transform with move, scale, rotate, perspective, warp, cage and more, snapping to guides and a grid.
-- Color adjustments and filters with live preview, including GIMP’s upstream GEGL operations: curves, levels, blur, noise, edge detection, lighting, distortions and artistic effects.
-- Work with layers, groups, blend modes, masks and editable text; import GIMP brushes, gradients, palettes and patterns. Use **Effect** mode for editable, non-destructive filters.
-- Share images, save projects as GIMP `.xcf` or OpenRaster `.ora`, and export PNG, JPEG, WebP or GIF, and send custom stickers to WhatsApp or Telegram.
+- Insert other images, vector graphics, emojis, stickers and text. 
+- Paint, smudge, clone, heal, dodge/burn, ...
+- Work on multiple images at once in tabs.
+- Select with rectangle, lasso, fuzzy, Intelligent Scissors and quick mask, object select
+- Transform with move, scale, rotate, perspective, warp, cage, ...
+- Color adjustments: curves, levels, threshold, ...
+- Filters: blur, depth blur, noise, edge detection, lighting, distortions and artistic effects.
+- Work with layers, groups, blend modes, masks and editable text.
+- Create and send custom stickers to WhatsApp or Telegram.
+- Share images, save projects (xcf), and export PNG, JPEG, WebP or GIF
+
 
 ## Screenshots
 
