@@ -167,7 +167,7 @@ class CanvasView(context: Context, private val vm: EditorViewModel) : View(conte
             // The GL view underneath renders the document in linear light; this view only adds overlays.
             loupeFrame = null
             drawAids(canvas, s)
-            s.selection?.let { sel -> drawAnts(canvas, sel) }
+            if (!drawSticker(canvas, s)) s.selection?.let { sel -> drawAnts(canvas, sel) }
             drawOverlays(canvas)
             drawLoupe(canvas, s)
             g.renderer.frame = Frame(Matrix(viewMatrix), scale < 2f, loupeFrame)
@@ -196,7 +196,7 @@ class CanvasView(context: Context, private val vm: EditorViewModel) : View(conte
         drawQuickMask(canvas, s)
         drawAids(canvas, s)
         // Selection outline in screen space so it stays equally visible at any zoom.
-        s.selection?.let { sel -> drawAnts(canvas, sel) }
+        if (!drawSticker(canvas, s)) s.selection?.let { sel -> drawAnts(canvas, sel) }
 
         drawOverlays(canvas)
         drawLoupe(canvas, s)
@@ -531,6 +531,23 @@ class CanvasView(context: Context, private val vm: EditorViewModel) : View(conte
         canvas.drawPath(antsPath, antsPaint)
     }
 
+    private val stickerPaint = Paint().apply { isFilterBitmap = true }
+
+    /**
+     * Sticker tool: the cutout with its outline lifted off the dimmed image, in place of the marching
+     * ants. Not while a new loop is being drawn, so the image shows. Returns whether it drew.
+     */
+    private fun drawSticker(canvas: Canvas, s: io.github.nielstron.brushkin.engine.Stack): Boolean {
+        val p = vm.stickerPreview ?: return false
+        if (vm.tool != Tool.STICKER || s.selection == null || engine.floating != null || lasso != null) return false
+        canvas.save()
+        canvas.concat(viewMatrix)
+        canvas.drawRect(0f, 0f, s.width.toFloat(), s.height.toFloat(), dim)
+        canvas.drawBitmap(p.bitmap, null, p.rect, stickerPaint)
+        canvas.restore()
+        return true
+    }
+
     private fun drawOverlays(canvas: Canvas) {
         // Shape previews are kept in doc coordinates and mapped here.
         preview?.let { p ->
@@ -710,6 +727,8 @@ class CanvasView(context: Context, private val vm: EditorViewModel) : View(conte
     private var strokePoints = 0
     private var preview: Path? = null
     private var lasso: Path? = null
+    /** The Sticker tool's loop so far (doc px). */
+    private val loop = ArrayList<PointF>()
     private var maxPointers = 0
     private var moved = false
     private var lastLineEnd: PointF? = null
@@ -935,7 +954,10 @@ class CanvasView(context: Context, private val vm: EditorViewModel) : View(conte
         }
         when (tool) {
             Tool.RECT_SELECT, Tool.ELLIPSE_SELECT, Tool.GRADIENT -> { mode = Mode.SHAPE; preview = Path() }
-            Tool.FREE_SELECT -> { mode = Mode.SHAPE; lasso = Path().apply { moveTo(downDoc.x, downDoc.y) }; preview = lasso }
+            Tool.FREE_SELECT, Tool.STICKER -> {
+                mode = Mode.SHAPE; lasso = Path().apply { moveTo(downDoc.x, downDoc.y) }; preview = lasso
+                loop.clear(); loop.add(PointF(downDoc.x, downDoc.y))
+            }
             else -> mode = Mode.SHAPE // taps
         }
     }
@@ -967,7 +989,7 @@ class CanvasView(context: Context, private val vm: EditorViewModel) : View(conte
                 vm.cropRect = RectF(min(downDoc.x, downDoc.x + w), min(downDoc.y, downDoc.y + h), max(downDoc.x, downDoc.x + w), max(downDoc.y, downDoc.y + h)).also { if (aspect == null) constrain(it) }
             }
             Mode.SHAPE -> when {
-                lasso != null -> lasso!!.lineTo(d.x, d.y)
+                lasso != null -> { lasso!!.lineTo(d.x, d.y); loop.add(d) }
                 vm.strokeTool.paint != null && vm.lineMode -> {
                     val from = lastLineEnd ?: downDoc
                     preview = Path().apply { moveTo(from.x, from.y); lineTo(d.x, d.y) }
@@ -1041,6 +1063,17 @@ class CanvasView(context: Context, private val vm: EditorViewModel) : View(conte
                         val l = lasso
                         if (l != null && !isTap) { l.close(); engine.select(Path(l), vm.selectMode, vm.antialias, vm.feather, "Free Select") }
                         else if (isTap) engine.selectNone()
+                    }
+                    vm.tool == Tool.STICKER -> {
+                        // A loop around the object; a tap (or a scribble enclosing next to nothing) picks what's under it.
+                        var area = 0f
+                        for (i in loop.indices) { val a = loop[i]; val b = loop[(i + 1) % loop.size]; area += a.x * b.y - b.x * a.y }
+                        val minSide = 32 * density / scale
+                        if (isTap || loop.size < 3 || kotlin.math.abs(area) / 2 < minSide * minSide) {
+                            val c = if (isTap) d else PointF(loop.map { it.x }.average().toFloat(), loop.map { it.y }.average().toFloat())
+                            vm.objectTap(c.x, c.y)
+                        } else vm.objectLoop(FloatArray(loop.size * 2) { if (it % 2 == 0) loop[it / 2].x else loop[it / 2].y })
+                        loop.clear()
                     }
                     vm.tool.picksObjects -> if (isTap) vm.objectTap(d.x, d.y)
                     vm.tool == Tool.SCISSORS -> if (isTap) { vm.scissorsTap(PointF(d.x, d.y), 24 * density / scale); invalidate() }

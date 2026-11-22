@@ -151,6 +151,7 @@ val KEYWORDS = mapOf(
     "Paths" to "bezier pen curve vector precise shape outline",
     "Fuzzy" to "magic wand select similar area",
     "Object" to "AI select person subject thing by tapping",
+    "Sticker" to "cut out subject AI outline border whatsapp telegram lasso draw around",
     "Crop" to "trim cut edges",
     "Eraser" to "remove delete paint",
     "Paintbrush" to "draw paint brush",

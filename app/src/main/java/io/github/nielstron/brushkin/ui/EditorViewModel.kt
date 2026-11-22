@@ -34,6 +34,8 @@ enum class Tool(val label: String, val group: ToolGroup, val paint: PaintTool? =
     FUZZY_SELECT("Fuzzy", ToolGroup.SELECT),
     COLOR_SELECT("By Color", ToolGroup.SELECT),
     OBJECT_SELECT("Object", ToolGroup.SELECT),
+    /** Cuts an object out as a sticker: a loop drawn around it (or a tap) picks it with MobileSAM. */
+    STICKER("Sticker", ToolGroup.SELECT),
     SCISSORS("Scissors", ToolGroup.SELECT),
     BRUSH("Paintbrush", ToolGroup.PAINT, PaintTool.BRUSH),
     PENCIL("Pencil", ToolGroup.PAINT, PaintTool.PENCIL),
@@ -98,7 +100,7 @@ enum class Tool(val label: String, val group: ToolGroup, val paint: PaintTool? =
 
     val isSelect get() = group == ToolGroup.SELECT
     /** Taps pick an object (MobileSAM). */
-    val picksObjects get() = this == OBJECT_SELECT || this == REMOVE_OBJECT
+    val picksObjects get() = this == OBJECT_SELECT || this == REMOVE_OBJECT || this == STICKER
     /** One-shot commands listed with the tools: picking one runs it and keeps the current tool. */
     val isAction get() = this == DEPTH_BLUR || this == UPSCALE || this == DENOISE || this == DEBLUR || filter != null
     /** Tools that work on a lifted copy of the layer (applied or cancelled as a whole). */
@@ -116,6 +118,9 @@ enum class Sheet { NONE, TOOLS, OPTIONS, COLOR, LAYERS, INSERT, HISTORY }
 
 /** Leaving the app saves at once; this covers the ways of ending it that skip that, like a crash. */
 private const val AUTOSAVE_DELAY_MS = 10_000L
+
+/** Longest side of the Sticker tool's on-canvas preview (px). */
+private const val STICKER_PREVIEW_SIDE = 1024
 
 class EditorViewModel(app: Application) : AndroidViewModel(app) {
     val engine = Engine()
@@ -556,24 +561,48 @@ class EditorViewModel(app: Application) : AndroidViewModel(app) {
     val objPoints = mutableStateListOf<io.github.nielstron.brushkin.ml.ObjectSelect.Point>()
     /** Taps mark what isn't part of the object. */
     var objSubtract by mutableStateOf(false)
+    /**
+     * Object and Remove Object: blur the model's mask slightly before thresholding it, which removes
+     * the grid of dots and pinholes it leaves where it's unsure (the Sticker tool always does).
+     */
+    var objectSmooth by mutableStateOf(true)
     private var objBox: android.graphics.RectF? = null
     private var objLogits: FloatArray? = null
     private var objSession = 0L
     private var objMode = SelectMode.REPLACE
+    /** Sticker tool: the loop drawn around the object (doc px, x/y pairs); the cutout stays within it. */
+    private var objLoop: FloatArray? = null
+    /** How far the cutout may reach beyond the loop: a finger's loop cuts corners. */
+    private val loopMargin get() = 0.03f * maxOf(engine.info.value.width, engine.info.value.height)
 
     /** Starts over: the next tap selects a new object. */
-    fun objectNew() { objPoints.clear(); objBox = null; objLogits = null; objSession = 0; objSubtract = false }
+    fun objectNew() { objPoints.clear(); objBox = null; objLogits = null; objSession = 0; objSubtract = false; objLoop = null }
+
+    /** The Object, Remove Object and Sticker tools replace the selection; only Object combines with it. */
+    private val objectMode get() = if (tool == Tool.OBJECT_SELECT) selectMode else SelectMode.REPLACE
 
     /** A tap with the Object tool: a new object, or (while refining one) a point added to it or taken away. */
     fun objectTap(x: Float, y: Float) = withModels("Download object selection?", samText, objects.files) {
-        if (objSession == 0L) { objectNew(); objSession = System.nanoTime(); objMode = if (tool == Tool.REMOVE_OBJECT) SelectMode.REPLACE else selectMode }
-        objPoints.add(io.github.nielstron.brushkin.ml.ObjectSelect.Point(x, y, positive = !objSubtract || objPoints.isEmpty()))
+        if (objSession == 0L) { objectNew(); objSession = System.nanoTime(); objMode = objectMode }
+        val positive = !objSubtract || objPoints.isEmpty()
+        // Adding something outside the loop: the loop no longer bounds the object.
+        objLoop?.let { if (positive && !io.github.nielstron.brushkin.ml.LassoPrompt.near(it, x, y, loopMargin)) objLoop = null }
+        objPoints.add(io.github.nielstron.brushkin.ml.ObjectSelect.Point(x, y, positive))
+        runObjectSelect()
+    }
+
+    /** Sticker tool: picks the object inside [loop] (doc px, x/y pairs, drawn roughly around it). */
+    fun objectLoop(loop: FloatArray) = withModels("Download object selection?", samText, objects.files) {
+        objectNew(); objSession = System.nanoTime(); objMode = objectMode
+        val i = engine.info.value
+        val (box, points) = io.github.nielstron.brushkin.ml.LassoPrompt.of(loop, i.width, i.height)
+        objBox = box; objPoints.addAll(points); objLoop = loop
         runObjectSelect()
     }
 
     /** Selects the main subject (a box around almost the whole image); taps then refine it. */
     fun selectForeground() = withModels("Download object selection?", samText, objects.files) {
-        objectNew(); objSession = System.nanoTime(); objMode = if (tool == Tool.REMOVE_OBJECT) SelectMode.REPLACE else selectMode
+        objectNew(); objSession = System.nanoTime(); objMode = objectMode
         val i = engine.info.value
         objBox = android.graphics.RectF(i.width * 0.03f, i.height * 0.03f, i.width * 0.97f, i.height * 0.97f)
         runObjectSelect()
@@ -581,8 +610,12 @@ class EditorViewModel(app: Application) : AndroidViewModel(app) {
 
     private fun runObjectSelect() {
         val pts = objPoints.toList(); val box = objBox; val prev = objLogits; val session = objSession; val mode = objMode
+        val loop = objLoop; val margin = loopMargin
+        // Stickers need clean edges: no speckles, islands or pinholes, nothing outside the loop.
+        val sticker = tool == Tool.STICKER
+        val smooth = sticker || objectSmooth
         val refining = prev != null
-        mlBusy = when { refining -> "Refining"; box != null -> "Finding the foreground"; else -> "Finding the object" }
+        mlBusy = when { refining -> "Refining"; loop != null || box == null -> "Finding the object"; else -> "Finding the foreground" }
         mlJob = viewModelScope.launch {
             try {
                 val full = engine.flattened(Color.WHITE)
@@ -595,11 +628,18 @@ class EditorViewModel(app: Application) : AndroidViewModel(app) {
                 val kx = small.width / full.width.toFloat(); val ky = small.height / full.height.toFloat()
                 val sp = pts.map { io.github.nielstron.brushkin.ml.ObjectSelect.Point(it.x * kx, it.y * ky, it.positive) }
                 val sb = box?.let { android.graphics.RectF(it.left * kx, it.top * ky, it.right * kx, it.bottom * ky) }
-                val r = objects.select(small, sp, sb, prev)
+                val r = objects.select(small, sp, sb, prev, smooth = smooth)
+                val m = r.mask?.let { raw ->
+                    if (!sticker) raw else withContext(Dispatchers.Default) {
+                        io.github.nielstron.brushkin.engine.Sticker.tidy(raw.bytes, raw.width, raw.height, loop, kx, ky, margin * kx)
+                    }?.let { io.github.nielstron.brushkin.ml.ObjectSelect.Mask(it, raw.width, raw.height) }
+                }
                 if (session != objSession) return@launch // started over meanwhile
-                val m = r.mask
                 if (m == null) {
-                    if (!refining) { messages.tryEmit(if (box != null) "No foreground subject found" else "No object found there. Try tapping the middle of it."); objectNew() }
+                    if (!refining) {
+                        messages.tryEmit(when { loop != null -> "Nothing found inside the loop. Try drawing it closer around the object."; box != null -> "No foreground subject found"; else -> "No object found there. Try tapping the middle of it." })
+                        objectNew()
+                    }
                     else { objPoints.removeAt(objPoints.size - 1); messages.tryEmit("That would leave nothing selected") }
                 } else {
                     objLogits = r.logits
@@ -608,6 +648,75 @@ class EditorViewModel(app: Application) : AndroidViewModel(app) {
             } catch (t: Throwable) {
                 if (!refining) objectNew() else objPoints.removeLastOrNull()
                 if (t !is kotlinx.coroutines.CancellationException) mlError("Object selection", t)
+            } finally { mlBusy = null }
+        }
+    }
+
+    // Sticker tool: the selected object, cut out with an outline (like sticker apps), previewed lifted
+    // off the dimmed image, then made into a layer or an image of its own.
+
+    /** Outline width as a fraction of the sticker's longer side (0: none). */
+    var stickerOutline by mutableStateOf(0.04f)
+    var stickerColor by mutableStateOf(Color.WHITE)
+    var stickerShadow by mutableStateOf(false)
+
+    /** The sticker as it would look ([bitmap], reduced), drawn over [rect] (doc px). */
+    class StickerPreview(val bitmap: android.graphics.Bitmap, val rect: android.graphics.RectF)
+    var stickerPreview by mutableStateOf<StickerPreview?>(null)
+
+    private suspend fun renderSticker(maxSide: Int): Pair<io.github.nielstron.brushkin.engine.Sticker.Rendered, android.graphics.RectF>? {
+        val (cut, b) = engine.selectionCutout(maxSide) ?: return null
+        val outline = stickerOutline; val color = stickerColor; val shadow = stickerShadow
+        val r = withContext(Dispatchers.Default) { io.github.nielstron.brushkin.engine.Sticker.render(cut, outline * maxOf(cut.width, cut.height), color, shadow) }
+        cut.recycle()
+        // Where it goes on the image: the cutout over the selection, the margin around it.
+        val k = b.width() / (r.bitmap.width - 2f * r.pad)
+        val left = b.left - r.pad * k; val top = b.top - r.pad * k
+        return r to android.graphics.RectF(left, top, left + r.bitmap.width * k, top + r.bitmap.height * k)
+    }
+
+    /** Redraws the preview for the current selection and outline (none outside the Sticker tool). */
+    suspend fun refreshStickerPreview() {
+        val i = engine.info.value
+        if (tool != Tool.STICKER || !i.hasSelection || i.floating) { stickerPreview = null; return }
+        stickerPreview = renderSticker(STICKER_PREVIEW_SIDE)?.let { (r, rect) -> StickerPreview(r.bitmap, rect) }
+    }
+
+    enum class StickerTarget { LAYER, IMAGE, EXPORT }
+
+    /**
+     * Makes the sticker: a layer over the object to move and place ([StickerTarget.LAYER]), or a
+     * new image of it, to add text or emoji ([StickerTarget.IMAGE]) or to send to a messenger right
+     * away ([StickerTarget.EXPORT]).
+     */
+    fun makeSticker(target: StickerTarget) {
+        if (mlBusy != null || !engine.info.value.hasSelection) return
+        mlBusy = "Making the sticker"
+        mlJob = viewModelScope.launch {
+            try {
+                val (r, rect) = renderSticker(if (target == StickerTarget.LAYER) 4096 else 2048) ?: return@launch
+                val bmp = r.bitmap
+                if (target == StickerTarget.LAYER) {
+                    objectNew(); engine.selectNone()
+                    val k = rect.width() / bmp.width
+                    engine.placeFloating(bmp, "Sticker", matrix = android.graphics.Matrix().apply { setScale(k, k); postTranslate(rect.left, rect.top) })
+                    return@launch
+                }
+                // A square image with room above and below (or beside) the sticker for text.
+                val side = maxOf(bmp.width, bmp.height)
+                val square = android.graphics.Bitmap.createBitmap(side, side, android.graphics.Bitmap.Config.ARGB_8888)
+                android.graphics.Canvas(square).drawBitmap(bmp, (side - bmp.width) / 2f, (side - bmp.height) / 2f, null)
+                bmp.recycle()
+                val layer = io.github.nielstron.brushkin.engine.Layer(name = "Sticker", pixels = io.github.nielstron.brushkin.engine.TiledBitmap.fromBitmap(square))
+                square.recycle()
+                objectNew()
+                tabs.open(io.github.nielstron.brushkin.engine.Stack(side, side, listOf(layer), layer.id), "Sticker").join()
+                if (target == StickerTarget.EXPORT) dialog = "export-sticker"
+                else messages.tryEmit("Add text or emoji with +, then File › Export as sticker")
+            } catch (t: Throwable) {
+                if (t is kotlinx.coroutines.CancellationException) throw t
+                android.util.Log.w("Brushkin", "Sticker failed", t)
+                messages.tryEmit("Couldn't make the sticker: ${t.message ?: t.javaClass.simpleName}")
             } finally { mlBusy = null }
         }
     }

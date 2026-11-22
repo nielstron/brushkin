@@ -1767,6 +1767,25 @@ class Engine {
         out
     }
 
+    /**
+     * The visible pixels inside the selection (transparent outside it), scaled down to at most
+     * [maxSide] px across, and the selection's bounds; null without a selection.
+     */
+    suspend fun selectionCutout(maxSide: Int): Pair<Bitmap, Rect>? = withContext(dispatcher) {
+        val s = stack
+        val sel = s.selection ?: return@withContext null
+        val b = sel.bounds
+        val out = Bitmap.createBitmap(b.width(), b.height(), Bitmap.Config.ARGB_8888)
+        Canvas(out).apply {
+            translate(-b.left.toFloat(), -b.top.toFloat())
+            drawBitmap(Compositor.flatten(s, region = b), b.left.toFloat(), b.top.toFloat(), null)
+            MaskOps.apply(this, sel.mask, 0f, 0f)
+        }
+        val k = maxSide / maxOf(b.width(), b.height()).toFloat()
+        if (k >= 1f) return@withContext out to Rect(b)
+        Bitmap.createScaledBitmap(out, maxOf(1, (b.width() * k).roundToInt()), maxOf(1, (b.height() * k).roundToInt()), true).also { out.recycle() } to Rect(b)
+    }
+
     suspend fun snapshot(parked: ParkedDocument? = null): Stack = withContext(dispatcher) {
         // Tiles are copy-on-write, so a shallow copy of each layer's tile array is a consistent snapshot.
         val s = parked?.stack ?: stack
