@@ -1,0 +1,5 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Data files of the Play Billing library that no code references. Optimized resource shrinking would
+     drop them; they stay because the purchase flow has not been tested without them. -->
+<resources xmlns:tools="http://schemas.android.com/tools"
+    tools:keep="@raw/com_android_billingclient_*,@xml/com_android_billingclient_*" />
