@@ -4,7 +4,7 @@
 
 <p><b>Selections:</b> rectangle, ellipse, free, fuzzy, by color and Intelligent Scissors; quick mask, feather, grow, shrink, border and saved channels.</p>
 
-<p><b>On-device AI:</b> select an object with a tap and refine it with more taps, remove objects and fill in what was behind them, blur the background by depth with a focus point you choose, upscale ×2 or ×4, denoise and deblur photos. Nothing leaves the device.</p>
+<p><b>On-device AI:</b> select an object with a tap and refine it with more taps, cut an object out as a sticker by drawing around it (with an outline and an optional shadow), remove objects and fill in what was behind them, blur the background by depth with a focus point you choose, upscale ×2 or ×4, denoise and deblur photos. Nothing leaves the device.</p>
 
 <p><b>Layers:</b> groups (including pass-through), 17 blend modes, masks, editable text layers (also along a path), layers smaller or larger than the image, lock and link, and non-destructive filters.</p>
 
