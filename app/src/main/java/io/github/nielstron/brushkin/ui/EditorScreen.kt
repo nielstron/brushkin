@@ -6,7 +6,10 @@ import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
-import androidx.compose.foundation.gestures.detectVerticalDragGestures
+import androidx.compose.foundation.gestures.awaitEachGesture
+import androidx.compose.foundation.gestures.awaitFirstDown
+import androidx.compose.foundation.gestures.awaitVerticalTouchSlopOrCancellation
+import androidx.compose.foundation.gestures.verticalDrag
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -67,6 +70,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.input.pointer.PointerInputChange
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalDensity
@@ -82,6 +86,7 @@ import androidx.compose.ui.unit.sp
 import androidx.compose.ui.viewinterop.AndroidView
 import io.github.nielstron.brushkin.engine.SelectMode
 import io.github.nielstron.brushkin.store.StoreIntegration
+import kotlin.math.ln
 import kotlin.math.pow
 import kotlin.math.roundToInt
 
@@ -545,9 +550,9 @@ private fun DockButton(icon: ImageVector, label: String, active: Boolean = false
     }
 }
 
-/** Brush size maps exponentially so small sizes get finer control. */
-fun sizeToPos(s: Float) = ((s / 1000f).toDouble().pow(1 / 3.0)).toFloat()
-fun posToSize(p: Float) = (1000f * p.toDouble().pow(3.0).toFloat()).coerceIn(1f, 1000f)
+/** Brush size 1…1000 maps logarithmically: each step along a slider scales the size by the same factor. */
+fun sizeToPos(s: Float) = (ln(s.toDouble()) / ln(1000.0)).toFloat().coerceIn(0f, 1f)
+fun posToSize(p: Float) = 1000.0.pow(p.toDouble()).toFloat().coerceIn(1f, 1000f)
 
 @Composable
 private fun SideSliders(vm: EditorViewModel, modifier: Modifier, sideBySide: Boolean = false, sliderHeight: Dp = 130.dp) {
@@ -580,18 +585,28 @@ private fun SideSliders(vm: EditorViewModel, modifier: Modifier, sideBySide: Boo
 
 @Composable
 private fun VerticalSlider(value: Float, fill: Color, label: String, height: Dp, onChange: (Float) -> Unit) {
-    var h by remember { mutableStateOf(1) }
+    val currentValue by androidx.compose.runtime.rememberUpdatedState(value)
     val currentOnChange by androidx.compose.runtime.rememberUpdatedState(onChange)
     Box(
-        Modifier.width(44.dp).height(height).onSizeChanged { h = it.height }
+        Modifier.width(44.dp).height(height)
             .semantics {
                 contentDescription = label
                 progressBarRangeInfo = ProgressBarRangeInfo(value, 0f..1f)
                 setProgress { currentOnChange(it.coerceIn(0f, 1f)); true }
             }
             .pointerInput(Unit) {
-                detectVerticalDragGestures(onDragStart = { o -> currentOnChange(1f - (o.y / h).coerceIn(0f, 1f)) }) { change, _ ->
-                    currentOnChange(1f - (change.position.y / h).coerceIn(0f, 1f))
+                // Relative: the knob moves as far as the finger has moved since touching down,
+                // so grabbing it (or moving and coming back) never changes the value.
+                awaitEachGesture {
+                    val down = awaitFirstDown()
+                    val start = currentValue.coerceIn(0f, 1f)
+                    fun follow(c: PointerInputChange) {
+                        c.consume()
+                        currentOnChange((start + (down.position.y - c.position.y) / (size.height - 20.dp.toPx())).coerceIn(0f, 1f))
+                    }
+                    val drag = awaitVerticalTouchSlopOrCancellation(down.id) { c, _ -> follow(c) }
+                        ?: return@awaitEachGesture
+                    verticalDrag(drag.id, ::follow)
                 }
             },
         contentAlignment = Alignment.Center,
