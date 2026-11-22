@@ -94,6 +94,34 @@ class HistoryStoreTest {
         file.delete()
     }
 
+    /** Shows [stack] in [e] the way it comes back from a history file. */
+    private suspend fun restore(e: Engine, stack: Stack) {
+        val history = History(); history.push(HistoryEntry("step", stack, stack))
+        HistoryStore.write(HistoryStore.capture(stack, history, 1)!!, file, 1, 2)
+        e.exchangeDocument(HistoryStore.read(file, 1, 2, "Doc")!!)
+        file.delete()
+    }
+
+    /** Ids start at 1 in every process, so a file written by another one can hold the ids this one hands out next. */
+    @Test fun newLayersDontReuseRestoredIds() = runBlocking<Unit> {
+        val e = edited()
+        val saved = Layer(id = newId() + 2, name = "Saved", pixels = TiledBitmap.fromPixels(px, w, h))
+        restore(e, Stack(w, h, listOf(saved), saved.id))
+        repeat(2) { e.addLayer().join() }
+        assertEquals(3, e.snapshot().all.map { it.id }.toSet().size)
+        e.shutdown()
+    }
+
+    @Test fun newChannelsDontReuseRestoredIds() = runBlocking<Unit> {
+        val e = edited()
+        val layer = Layer(name = "L", pixels = TiledBitmap.fromPixels(px, w, h))
+        val saved = SavedChannel(id = newId() + 2, name = "Saved", mask = TiledBitmap(w, h, MASK_BLACK))
+        restore(e, Stack(w, h, listOf(layer), layer.id, Selection.all(w, h), channels = listOf(saved)))
+        repeat(2) { e.saveSelectionToChannel().join() }
+        assertEquals(3, e.snapshot().channels.map { it.id }.toSet().size)
+        e.shutdown()
+    }
+
     /** A new field must be added to [HistoryStore], or it's silently lost across a restart. */
     @Test fun storedFieldsAreKeptUpToDate() {
         fun fields(c: Class<*>) = c.declaredFields.filter { !java.lang.reflect.Modifier.isStatic(it.modifiers) && !it.isSynthetic }.map { it.name }.toSet()

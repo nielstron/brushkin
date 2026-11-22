@@ -32,6 +32,8 @@ enum class LayerMode(val label: String, val blend: BlendMode?, val oraName: Stri
 
 private val ids = AtomicLong(1)
 fun newId() = ids.getAndIncrement()
+/** Ids start at 1 in every process: [id] was read from a file, so [newId] must not hand it out again. */
+internal fun restoredId(id: Long): Long { ids.updateAndGet { maxOf(it, id + 1) }; return id }
 
 /**
  * A raster layer. Pixel data lives in [pixels]; the scalar properties are immutable so that a

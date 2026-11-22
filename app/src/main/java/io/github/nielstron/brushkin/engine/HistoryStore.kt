@@ -211,12 +211,12 @@ internal object HistoryStore {
             val quick = tiledOrNull(input.readInt())
             val guides = List(input.readInt()) { Guide(input.readBoolean(), input.readInt()) }
             val channels = List(input.readInt()) {
-                SavedChannel(input.readLong(), string()!!, tiled[input.readInt()], input.readInt(), input.readFloat(), input.readBoolean())
+                SavedChannel(restoredId(input.readLong()), string()!!, tiled[input.readInt()], input.readInt(), input.readFloat(), input.readBoolean())
             }
             return Stack(w, h, layers, active, selection, quick, guides, channels, io.github.nielstron.brushkin.export.ExportMetadata.fromJson(string()!!))
         }
         private fun layers(): List<Layer> = List(input.readInt()) {
-            val id = input.readLong(); val name = string()!!; val pixels = tiled[input.readInt()]; val visible = input.readBoolean(); val opacity = input.readFloat()
+            val id = restoredId(input.readLong()); val name = string()!!; val pixels = tiled[input.readInt()]; val visible = input.readBoolean(); val opacity = input.readFloat()
             val mode = LayerMode.valueOf(string()!!); val lockAlpha = input.readBoolean(); val lockPixels = input.readBoolean()
             val mask = tiledOrNull(input.readInt()); val maskEnabled = input.readBoolean(); val editMask = input.readBoolean()
             val children = if (input.readBoolean()) layers() else null
