@@ -1,18 +1,24 @@
-<p>A layered image editor for phones and tablets that aims at GIMP's feature set, with controls designed for fingers and styluses instead of mouse and keyboard.</p>
+<p>A layered image editor for phones and tablets, inspired by GIMP and designed for fingers and styluses.</p>
 
-<p><b>Painting:</b> paintbrush, pencil, airbrush, ink, MyPaint-style brushes, eraser, smudge, clone, heal, perspective clone, dodge/burn, blur/sharpen, bucket fill and gradients. Brush editor, paint dynamics (pressure, speed, tilt, randomness) and symmetry painting (mirror and mandala).</p>
+<p><b>Insert:</b> photos, SVG, PDF and TIFF files, emojis, stickers and text.</p>
 
-<p><b>Selections:</b> rectangle, ellipse, free, fuzzy, by color and Intelligent Scissors; quick mask, feather, grow, shrink, border and saved channels.</p>
+<p><b>Draw:</b> paintbrush, pencil, airbrush, ink and MyPaint-style brushes; smudge, clone, heal, dodge/burn; bucket fill, gradients, mirror and mandala symmetry.</p>
 
-<p><b>On-device AI:</b> select an object with a tap and refine it with more taps, cut an object out as a sticker by drawing around it (with an outline and an optional shadow), remove objects and fill in what was behind them, blur the background by depth with a focus point you choose, upscale ×2 or ×4, denoise and deblur photos. Nothing leaves the device.</p>
+<p><b>Select:</b> rectangle, ellipse, lasso, fuzzy, by color, Intelligent Scissors and quick mask; tap an object to select it.</p>
 
-<p><b>Layers:</b> groups (including pass-through), 17 blend modes, masks, editable text layers (also along a path), layers smaller or larger than the image, lock and link, and non-destructive filters.</p>
+<p><b>Transform:</b> move, scale, rotate, flip, shear, perspective, warp and cage, with guides, grid and snapping.</p>
 
-<p><b>Transform:</b> move, scale, rotate, flip, shear, perspective, 3D, handle transform, warp, cage and align, with guides, grid, rulers and snapping.</p>
+<p><b>Colors:</b> curves, levels, hue-saturation, exposure, white balance, threshold and more.</p>
 
-<p><b>Filters:</b> curves, levels, hue-saturation, colorize, channel mixer, exposure, shadows-highlights, white balance, blurs, noise reduction, drop shadow, vignette, distortions and more, all with live preview.</p>
+<p><b>Filters:</b> blurs, noise reduction, edge detection, lighting, distortions and artistic effects, all with live preview.</p>
 
-<p><b>Files:</b> opens and saves GIMP .xcf (layers, groups, masks, guides, channels) and OpenRaster .ora, exports PNG/JPEG/WebP. Imports GIMP brushes, gradients, palettes and patterns and MyPaint brushes.</p>
+<p><b>On-device AI:</b> cut out stickers, remove objects, blur the background by depth, upscale, denoise and deblur. Nothing leaves the device.</p>
+
+<p><b>Layers:</b> groups, 17 blend modes, masks, editable text and non-destructive filters.</p>
+
+<p><b>Tabs:</b> work on several images at once.</p>
+
+<p><b>Files:</b> open and save GIMP .xcf and OpenRaster .ora; export PNG, JPEG, WebP or GIF; send stickers to WhatsApp or Telegram.</p>
 
 <p>Compositing happens in linear light on the GPU, like GIMP 2.10+, and all heavy work runs off the UI thread so the interface stays responsive even with large images.</p>
 
