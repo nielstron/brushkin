@@ -1,6 +1,5 @@
 plugins {
     id("com.android.application")
-    id("org.jetbrains.kotlin.android")
     id("org.jetbrains.kotlin.plugin.compose")
 }
 
@@ -71,16 +70,16 @@ android {
     }
 
     sourceSets {
-        getByName("main").java.srcDir(if (playStore) "src/play/java" else "src/foss/java")
+        getByName("main").kotlin.directories += if (playStore) "src/play/java" else "src/foss/java"
         if (playStore) {
-            getByName("main").res.srcDir("src/play/res")
-            getByName("debug").res.srcDir("src/playDebug/res")
+            getByName("main").res.directories += "src/play/res"
+            getByName("debug").res.directories += "src/playDebug/res"
             getByName("debug").manifest.srcFile("src/play/AndroidManifest.xml")
             getByName("release").manifest.srcFile("src/play/AndroidManifest.xml")
-            getByName("test").java.srcDir("src/testPlay/java")
+            getByName("test").kotlin.directories += "src/testPlay/java"
         }
     }
-    buildFeatures { compose = true; buildConfig = true }
+    buildFeatures { compose = true; buildConfig = true; resValues = true }
 
 
     compileOptions {
@@ -102,6 +101,9 @@ dependencies {
         implementation("com.google.android.libraries.ads.mobile.sdk:ads-mobile-sdk:1.6.0")
         implementation("com.google.android.ump:user-messaging-platform:4.0.0")
         implementation("com.android.billingclient:billing:9.1.0")
+        // Fragment 1.3.6 is what ships (through AppCompat), but Play services put 1.1.0 on the compile
+        // classpath. AGP 9 no longer aligns the two, and lint rejects ActivityResult APIs with Fragment < 1.3.
+        constraints { implementation("androidx.fragment:fragment:1.3.6") }
     }
     val composeBom = platform("androidx.compose:compose-bom:2026.06.01")
     implementation(composeBom)
