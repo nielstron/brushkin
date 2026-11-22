@@ -62,9 +62,10 @@ class ObjectSelectClient(private val store: ModelStore) {
 
     /**
      * The object marked by [points] (image pixels) or [box] in [image], refining [previous]
-     * (a [ObjectSelect.Result.logits]) when given.
+     * (a [ObjectSelect.Result.logits]) when given. [smooth]: blur the model's mask a little before
+     * thresholding it, which removes its checkerboard speckles where it is unsure (cleaner edges).
      */
-    suspend fun select(image: Bitmap, points: List<ObjectSelect.Point>, box: RectF? = null, previous: FloatArray? = null): ObjectSelect.Result = lock.withLock {
+    suspend fun select(image: Bitmap, points: List<ObjectSelect.Point>, box: RectF? = null, previous: FloatArray? = null, smooth: Boolean = false): ObjectSelect.Result = lock.withLock {
         // The cache may have been cleared since the last use.
         if (!store.ready(files)) { close(); throw ModelUnavailable("The object selection model isn't downloaded") }
         withContext(Dispatchers.Default) {
@@ -94,8 +95,25 @@ class ObjectSelectClient(private val store: ModelStore) {
             // With more prompts its single-mask output (the first) is the right one.
             val best = if (box == null && taps.size == 1 && previous == null) sc.indices.maxBy { sc[it] } else 0
             val low = all.copyOfRange(best * LOW * LOW, (best + 1) * LOW * LOW)
-            ObjectSelect.Result(toMask(low, w, h, k), low)
+            ObjectSelect.Result(toMask(if (smooth) gaussian(low) else low, w, h, k), low)
         }
+    }
+
+    /** 5×5 gaussian blur (σ = 1) of a [LOW]² map, edges clamped. */
+    private fun gaussian(src: FloatArray): FloatArray {
+        val k = floatArrayOf(0.0545f, 0.2442f, 0.4026f, 0.2442f, 0.0545f)
+        val tmp = FloatArray(LOW * LOW); val out = FloatArray(LOW * LOW)
+        for (y in 0 until LOW) for (x in 0 until LOW) {
+            var s = 0f
+            for (i in -2..2) s += k[i + 2] * src[y * LOW + (x + i).coerceIn(0, LOW - 1)]
+            tmp[y * LOW + x] = s
+        }
+        for (y in 0 until LOW) for (x in 0 until LOW) {
+            var s = 0f
+            for (i in -2..2) s += k[i + 2] * tmp[(y + i).coerceIn(0, LOW - 1) * LOW + x]
+            out[y * LOW + x] = s
+        }
+        return out
     }
 
     /** The low-res mask covers the padded 1024² input; sample it bilinearly per image pixel. */

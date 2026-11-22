@@ -91,10 +91,12 @@ object ToolIcons {
     val mypaint get() = Icons.Rounded.Draw
     val perspClone get() = stroke("M3 8l6-3v14l-6-3zM12 6l9-3v18l-9-3zM9 12h3")
     val mirror get() = Icons.Rounded.Flip
+    /** A sticker with its corner peeling off. */
+    val sticker get() = stroke("M4 6a2 2 0 0 1 2-2h12a2 2 0 0 1 2 2v7l-7 7H6a2 2 0 0 1-2-2zM20 13h-5a2 2 0 0 0-2 2v5")
 
     fun of(t: Tool): ImageVector = when (t) {
         Tool.RECT_SELECT -> rect; Tool.ELLIPSE_SELECT -> ellipse; Tool.FREE_SELECT -> lasso
-        Tool.FUZZY_SELECT -> fuzzy; Tool.COLOR_SELECT -> byColor; Tool.OBJECT_SELECT -> objectSel; Tool.REMOVE_OBJECT -> removeObj; Tool.DEPTH_BLUR -> depthBlur; Tool.UPSCALE -> upscale; Tool.DENOISE -> denoise; Tool.DEBLUR -> deblur;
+        Tool.FUZZY_SELECT -> fuzzy; Tool.COLOR_SELECT -> byColor; Tool.OBJECT_SELECT -> objectSel; Tool.STICKER -> sticker; Tool.REMOVE_OBJECT -> removeObj; Tool.DEPTH_BLUR -> depthBlur; Tool.UPSCALE -> upscale; Tool.DENOISE -> denoise; Tool.DEBLUR -> deblur;
         Tool.CURVES -> curves; Tool.BRIGHTNESS_CONTRAST -> contrast; Tool.HUE_SATURATION -> hue; Tool.COLORIZE -> hue; Tool.COLOR_BALANCE -> hue
         Tool.GAUSSIAN_BLUR -> blur; Tool.MOTION_BLUR -> blur; Tool.NOISE_REDUCTION -> denoise; Tool.UNSHARP_MASK -> sharpen; Tool.LEVELS -> levels
         Tool.EXPOSURE -> dodge; Tool.SHADOWS_HIGHLIGHTS -> contrast; Tool.VIGNETTE -> depthBlur; Tool.DROP_SHADOW -> filterFx; Tool.PIXELIZE -> denoise; Tool.THRESHOLD -> contrast;

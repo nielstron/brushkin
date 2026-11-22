@@ -304,7 +304,17 @@ private fun OptionsSheet(vm: EditorViewModel) {
             if (t.paint == null) LabeledSlider("Opacity", vm.settings.opacity, 0.01f..1f, "${(vm.settings.opacity * 100).roundToInt()}%", { vm.settings = vm.settings.copy(opacity = it) })
             ModePicker(vm.settings.mode) { vm.settings = vm.settings.copy(mode = it) }
         }
-        if (t.isSelect) {
+        if (t == Tool.STICKER) {
+            val o = vm.stickerOutline
+            LabeledSlider("Outline", o, 0f..0.12f, if (o < 0.002f) "None" else "${(o * 100).roundToInt()}%", { vm.stickerOutline = if (it < 0.002f) 0f else it })
+            Text("Relative to the sticker's size. Pick its color with the chips under the image.", color = Ui.muted, fontSize = 12.sp)
+            Toggle("Drop shadow", vm.stickerShadow) { vm.stickerShadow = it }
+        }
+        if (t == Tool.OBJECT_SELECT || t == Tool.REMOVE_OBJECT) {
+            Toggle("Smooth edges", vm.objectSmooth) { vm.objectSmooth = it }
+            Text("Removes the dotted specks and pinholes where the model is unsure. Turn off to keep very thin details.", color = Ui.muted, fontSize = 12.sp)
+        }
+        if (t.isSelect && t != Tool.STICKER) {
             LabeledSlider("Feather", vm.feather, 0f..100f, "${vm.feather.roundToInt()} px", { vm.feather = it })
             Toggle("Antialiasing", vm.antialias) { vm.antialias = it }
             if (t == Tool.RECT_SELECT) LabeledSlider("Rounded corners", vm.cornerRadius, 0f..300f, "${vm.cornerRadius.roundToInt()} px", { vm.cornerRadius = it })

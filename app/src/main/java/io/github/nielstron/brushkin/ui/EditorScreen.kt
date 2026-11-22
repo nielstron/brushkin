@@ -42,6 +42,8 @@ import androidx.compose.material.icons.rounded.ContentCopy
 import androidx.compose.material.icons.rounded.ContentCut
 import androidx.compose.material.icons.rounded.ContentPaste
 import androidx.compose.material.icons.rounded.IosShare
+import androidx.compose.material.icons.rounded.AddPhotoAlternate
+import androidx.compose.material.icons.rounded.Layers
 import androidx.compose.material.icons.rounded.Menu
 import androidx.compose.material.icons.rounded.ExpandMore
 import androidx.compose.material.icons.rounded.Remove
@@ -265,6 +267,13 @@ fun EditorScreen(vm: EditorViewModel, files: FileActions, store: StoreIntegratio
         }
 
         androidx.compose.runtime.LaunchedEffect(vm.showGrid, vm.gridSize, vm.showRulers, vm.symmetryKind, vm.symmetrySegments) { holder.view?.invalidate() }
+        // Sticker tool: redraw the preview when the selection or the look changes (restarting drops stale work).
+        androidx.compose.runtime.LaunchedEffect(vm.tool, info, vm.stickerOutline, vm.stickerColor, vm.stickerShadow) {
+            if (vm.tool != Tool.STICKER && vm.stickerPreview == null) return@LaunchedEffect
+            kotlinx.coroutines.delay(30)
+            vm.refreshStickerPreview()
+            holder.view?.invalidate()
+        }
 
         // Side sliders for size and opacity, within reach of the holding thumb.
         if (hasSliders) {
@@ -322,6 +331,7 @@ fun EditorScreen(vm: EditorViewModel, files: FileActions, store: StoreIntegratio
                 }
                 if (vm.favorites.isNotEmpty()) FavoriteBar(vm)
                 ContextChips(vm, info.hasSelection, holder)
+                if (vm.tool == Tool.STICKER && info.hasSelection) StickerBar(vm)
             }
         }
         val bottomModifier = Modifier.align(Alignment.BottomCenter)
@@ -429,6 +439,7 @@ private fun ContextChips(vm: EditorViewModel, hasSelection: Boolean, holder: Can
                 Chip("Pick", vm.pickMode, ToolIcons.picker) { vm.pickMode = !vm.pickMode }
                 if (t != Tool.ERASER && t != Tool.SMUDGE) Chip("Erase", vm.eraseToggle, ToolIcons.eraser) { vm.eraseToggle = !vm.eraseToggle }
             }
+            t == Tool.STICKER -> StickerChips(vm, hasSelection)
             t.isSelect -> {
                 if (t == Tool.OBJECT_SELECT) ObjectChips(vm, holder, removeChip = hasSelection)
                 if (t != Tool.OBJECT_SELECT || vm.objPoints.isEmpty())
@@ -599,6 +610,58 @@ private fun VerticalSlider(value: Float, fill: Color, label: String, height: Dp,
 private fun androidx.compose.foundation.layout.RowScope.ObjectChips(vm: EditorViewModel, holder: CanvasHolder?, removeChip: Boolean) {
     Chip("Whole foreground", false) { vm.selectForeground() }
     if (removeChip) Chip("Remove object", false) { vm.removeObject() }
+}
+
+/** Sticker tool: how to start, or (with an object picked) the outline and shadow of the sticker. */
+@Composable
+private fun androidx.compose.foundation.layout.RowScope.StickerChips(vm: EditorViewModel, hasSelection: Boolean) {
+    if (!hasSelection) {
+        Chip("Whole foreground", false) { vm.selectForeground() }
+        Text("Draw around the object, or tap it", color = Ui.muted, fontSize = 13.sp, maxLines = 1,
+            modifier = Modifier.align(Alignment.CenterVertically).padding(horizontal = 4.dp))
+        return
+    }
+    for ((label, width) in STICKER_OUTLINES) Chip(label, kotlin.math.abs(vm.stickerOutline - width) < 0.002f) { vm.stickerOutline = width }
+    if (vm.stickerOutline > 0f) {
+        Chip("White", vm.stickerColor == android.graphics.Color.WHITE) { vm.stickerColor = android.graphics.Color.WHITE }
+        Chip("Black", vm.stickerColor == android.graphics.Color.BLACK) { vm.stickerColor = android.graphics.Color.BLACK }
+        // Any other color, from the full color selection.
+        var picking by remember { mutableStateOf(false) }
+        val other = vm.stickerColor != android.graphics.Color.WHITE && vm.stickerColor != android.graphics.Color.BLACK
+        Box(
+            Modifier.align(Alignment.CenterVertically).size(40.dp).clip(CircleShape).background(Ui.panel)
+                .border(2.dp, if (other) Ui.accent else Ui.border, CircleShape).clickable(onClickLabel = "Outline color") { picking = true },
+            contentAlignment = Alignment.Center,
+        ) { Box(Modifier.size(24.dp).clip(CircleShape).background(Color(if (other) vm.stickerColor else vm.fg))) }
+        if (picking) ColorPickerDialog(vm, "Outline color", if (other) vm.stickerColor else vm.fg, onDismiss = { picking = false }) { picking = false; if (it != null) vm.stickerColor = it }
+    }
+    Chip("Shadow", vm.stickerShadow) { vm.stickerShadow = !vm.stickerShadow }
+}
+
+/** Outline widths offered as chips (fractions of the sticker's longer side). */
+private val STICKER_OUTLINES = listOf("No outline" to 0f, "Thin" to 0.02f, "Medium" to 0.04f, "Thick" to 0.07f)
+
+/** What to make of the picked object: a layer to place, a new image, or a sticker to send right away. */
+@Composable
+private fun StickerBar(vm: EditorViewModel) {
+    Row(Modifier.fillMaxWidth().padding(top = 8.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+        @Composable
+        fun androidx.compose.foundation.layout.RowScope.Action(label: String, icon: ImageVector, primary: Boolean, target: EditorViewModel.StickerTarget) {
+            val shape = RoundedCornerShape(14.dp)
+            Row(
+                Modifier.weight(1f).height(48.dp).clip(shape).background(if (primary) Ui.accent else Ui.panel)
+                    .border(1.dp, if (primary) Ui.accent else Ui.border, shape).clickable { vm.makeSticker(target) },
+                horizontalArrangement = Arrangement.Center, verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Icon(icon, null, tint = if (primary) Ui.onAccent else Ui.text, modifier = Modifier.size(20.dp))
+                Spacer(Modifier.width(6.dp))
+                Text(label, color = if (primary) Ui.onAccent else Ui.text, fontWeight = if (primary) FontWeight.SemiBold else null, maxLines = 1)
+            }
+        }
+        Action("As layer", Icons.Rounded.Layers, false, EditorViewModel.StickerTarget.LAYER)
+        Action("New image", Icons.Rounded.AddPhotoAlternate, false, EditorViewModel.StickerTarget.IMAGE)
+        Action("Export", Icons.Rounded.IosShare, true, EditorViewModel.StickerTarget.EXPORT)
+    }
 }
 
 /** Whether a transform acts on the active layer or the whole image. */

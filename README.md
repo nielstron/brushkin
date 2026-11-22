@@ -13,7 +13,7 @@ A layered image editor for Android, inspired by GIMP and designed for fingers an
 - Paint with brushes, pencil, airbrush, ink and MyPaint-style brushes, plus smudge, clone, heal, dodge/burn and symmetry painting.
 - Work on several images at once in tabs.
 - Select with rectangle, lasso, fuzzy, Intelligent Scissors and quick mask.
-- Lightweight AI tools: select objects, remove objects, background depth blur, upscale, denoise and deblur.
+- Lightweight AI tools: select objects, cut out stickers with an outline, remove objects, background depth blur, upscale, denoise and deblur.
 - Transform with move, scale, rotate, perspective, warp, cage and more, snapping to guides and a grid.
 - Color adjustments and filters with live preview, including GIMP’s upstream GEGL operations: curves, levels, blur, noise, edge detection, lighting, distortions and artistic effects.
 - Work with layers, groups, blend modes, masks and editable text; import GIMP brushes, gradients, palettes and patterns. Use **Effect** mode for editable, non-destructive filters.
