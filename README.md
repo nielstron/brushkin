@@ -10,15 +10,15 @@
 
 A layered image editor for Android, inspired by GIMP and designed for fingers and styluses:
 
-- Insert other images, vector graphics, emojis, stickers and text. 
-- Paint, smudge, clone, heal, dodge/burn, ...
-- Work on multiple images at once in tabs.
-- Select with rectangle, lasso, fuzzy, Intelligent Scissors and quick mask, object select
-- Transform with move, scale, rotate, perspective, warp, cage, ...
+- Insert: Images, vector graphics, emojis, stickers and text. 
+- Draw: Paint, smudge, clone, heal, dodge/burn, ...
+- Selection: Rectangle, lasso, fuzzy, Intelligent Scissors and quick mask, object select
+- Transform: Move, scale, rotate, perspective, warp, cage, ...
 - Color adjustments: curves, levels, threshold, ...
 - Filters: blur, depth blur, noise, edge detection, lighting, distortions and artistic effects.
-- Work with layers, groups, blend modes, masks and editable text.
 - Create and send custom stickers to WhatsApp or Telegram.
+- Work on multiple images at once in tabs.
+- Work with layers, groups, blend modes, masks and editable text.
 - Share images, save projects (xcf), and export PNG, JPEG, WebP or GIF
 
 
