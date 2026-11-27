@@ -905,8 +905,11 @@ class Engine {
         busy("Merging group") {
             val isolated = group.copy(visible = true,opacity = 1f,mode = LayerMode.NORMAL)
             val bmp = rendered(s.copy(layers = listOf(isolated)))
-            val layer = Layer(id = group.id,name = group.name,pixels = TiledBitmap.fromBitmap(bmp),
-                visible = group.visible,opacity = group.opacity,lockPosition = group.lockPosition,linked = group.linked)
+            // Group contents are rasterized in isolation; the result still blends with the backdrop.
+            val mode = if (group.mode == LayerMode.PASS_THROUGH) LayerMode.NORMAL else group.mode
+            val layer = Layer(id = group.id, name = group.name, pixels = TiledBitmap.fromBitmap(bmp),
+                visible = group.visible, opacity = group.opacity, mode = mode,
+                lockPosition = group.lockPosition, linked = group.linked)
             bmp.recycle()
             stack = s.replace(layer)
             record("Merge Group",s,extraBytes = s.width.toLong()*s.height*4)

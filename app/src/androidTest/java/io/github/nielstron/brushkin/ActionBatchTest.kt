@@ -40,6 +40,27 @@ class ActionBatchTest {
             assertEquals(before,Compositor.flatten(s).getPixel(0,0))
         } finally {e.shutdown()}
     }
+    @Test fun mergeGroupKeepsBlendModeOverBackdrop() = runBlocking {
+        val engine = Engine()
+        try {
+            val backdrop = layer("Backdrop", Color.GREEN)
+            val child = layer("Wash", Color.RED)
+            val mask = TiledBitmap.fromPixels(IntArray(64) { if (it % 8 < 4) MASK_WHITE else MASK_BLACK }, 8, 8)
+            for (mode in listOf(LayerMode.NORMAL, LayerMode.MULTIPLY, LayerMode.SCREEN)) {
+                val group = Layer(name = "Wash group", pixels = TiledBitmap(8, 8), children = listOf(child),
+                    mode = mode, opacity = 0.5f, mask = mask)
+                engine.openStack(Stack(8, 8, listOf(backdrop, group), group.id), "Wash").join()
+                val before = engine.flattened()
+                assertNotEquals(Color.GREEN, before.getPixel(0, 0))
+                assertEquals(Color.GREEN, before.getPixel(7, 0))
+
+                engine.mergeGroup().join()
+                assertEquals(mode, engine.snapshot().active!!.mode)
+                assertTrue("Appearance after merging ${mode.label}", before.sameAs(engine.flattened()))
+            }
+        } finally { engine.shutdown() }
+    }
+
     @Test fun selectionOperationsAndOutlines() = runBlocking {
         val e=Engine()
         try {
