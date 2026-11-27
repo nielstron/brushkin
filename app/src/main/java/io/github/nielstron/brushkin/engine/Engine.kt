@@ -1684,7 +1684,11 @@ class Engine {
                 val delta = Matrix().also { f.initial.invert(it); it.postConcat(f.matrix) }
                 val newSpec = target.text.transformedBy(delta)
                 floating = null
-                stack = s.replace(target.copy(text = newSpec, pixels = newSpec.renderLayer(s.width, s.height)))
+                val layer = target.copy(
+                    text = newSpec, pixels = newSpec.renderLayer(s.width, s.height),
+                    bounds = target.bounds?.let { delta.mapBoundary(it) },
+                )
+                stack = s.replaceTransformedLayer(layer, delta)
                 record(name, s, extraBytes = s.width.toLong() * s.height * 4)
                 return@busy
             }
@@ -1706,14 +1710,9 @@ class Engine {
                 val outside = (if (keepOld) target.outside else emptyMap()) + fresh
                 // A layer boundary moves with the layer.
                 val delta = Matrix().also { f.initial.invert(it); it.postConcat(f.matrix) }
-                val bounds = target.bounds?.takeIf { !keepOld }?.let { b -> RectF(b).also { delta.mapRect(it) }.let { r -> Rect().also { r.round(it) } } } ?: target.bounds
-                var next = s.copy(selection = moved).replace(target.copy(outside = outside, bounds = bounds))
-                // Linked layers follow a whole-layer move or transform.
-                if (target.linked && !keepOld) for (o in next.all) if (o.linked && o.id != target.id && !o.isGroup && !o.lockPosition) {
-                    val (px, out2) = LayerExtent.transform(o, delta, s.width, s.height)
-                    next = next.replace(o.copy(pixels = px, outside = out2, mask = o.mask?.let { transformMask(it, delta, s.width, s.height) }))
-                }
-                stack = next
+                val bounds = if (keepOld) target.bounds else target.bounds?.let { delta.mapBoundary(it) }
+                val layer = target.copy(outside = outside, bounds = bounds)
+                stack = s.copy(selection = moved).replaceTransformedLayer(layer, delta, moveLinked = !keepOld)
                 replaceLayerPixels(s, target, TiledBitmap.fromBitmap(out), name)
                 if (ss != null) { ss.matrix.set(f.matrix); ss.version = version }
             } else {
@@ -1725,6 +1724,31 @@ class Engine {
                 record("Insert ${f.name}", s, extraBytes = 0)
             }
         }
+    }
+
+    private fun Matrix.mapBoundary(bounds: Rect): Rect {
+        val mapped = RectF(bounds)
+        mapRect(mapped)
+        return Rect().also { mapped.round(it) }
+    }
+
+    /** Commit a whole-layer transform to the layer and its unlocked linked peers together. */
+    private fun Stack.replaceTransformedLayer(layer: Layer, delta: Matrix, moveLinked: Boolean = true): Stack {
+        if (!layer.linked || !moveLinked) return replace(layer)
+        return copy(layers = Stack.mapTree(layers) { peer ->
+            when {
+                peer.id == layer.id -> layer
+                !peer.linked || peer.isGroup || peer.lockPosition -> peer
+                else -> {
+                    val (pixels, outside) = LayerExtent.transform(peer, delta, width, height)
+                    peer.copy(
+                        pixels = pixels, outside = outside, bounds = peer.bounds?.let { delta.mapBoundary(it) },
+                        mask = peer.mask?.let { transformMask(it, delta, width, height) },
+                        text = peer.text?.transformedBy(delta),
+                    )
+                }
+            }
+        })
     }
 
     private fun Floating.selectionMoved(s: Stack): Selection? {
