@@ -917,7 +917,9 @@ class CanvasView(context: Context, private val vm: EditorViewModel) : View(conte
         }
         if (tool == Tool.PATHS) { startPath(); return }
         if (tool == Tool.CROP) { mode = Mode.CROP; vm.cropRect = RectF(downDoc.x, downDoc.y, downDoc.x, downDoc.y); return }
-        if (vm.pickMode || tool == Tool.PICKER) { mode = Mode.PICK; pick(e.x, e.y); return }
+        if (tool == Tool.PICKER || (tool.supportsPickMode && vm.pickMode)) {
+            mode = Mode.PICK; pick(e.x, e.y); return
+        }
         val st = vm.strokeTool
         val cloneLike = tool == Tool.CLONE || tool == Tool.HEAL || tool == Tool.PERSPECTIVE_CLONE
         if (tool == Tool.PERSPECTIVE_CLONE && vm.perspEditing) {
