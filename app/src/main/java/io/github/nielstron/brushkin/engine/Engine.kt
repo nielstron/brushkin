@@ -1609,6 +1609,10 @@ class Engine {
         val s = stack
         val l = s.active ?: return@post
         if (l.isGroup) return@post
+        if (l.lockPosition) {
+            onMessage?.invoke("“${l.name}” has its position locked")
+            return@post
+        }
         val b = l.pixels.contentBounds() ?: return@post
         val dx = when (h) { 0 -> -b.left; 1 -> (s.width - b.width()) / 2 - b.left; 2 -> s.width - b.right; else -> 0 }
         val dy = when (v) { 0 -> -b.top; 1 -> (s.height - b.height()) / 2 - b.top; 2 -> s.height - b.bottom; else -> 0 }
