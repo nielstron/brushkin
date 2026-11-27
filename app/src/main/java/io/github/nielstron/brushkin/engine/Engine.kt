@@ -1444,7 +1444,7 @@ class Engine {
      * blurring a little more each time. Valid while nothing else changed the document.
      */
     private class TransformSession(
-        val layerId: Long, val bitmap: Bitmap, val remainder: TiledBitmap?, val selection: Selection?,
+        val layerId: Long, val bitmap: Bitmap, val remainder: TiledBitmap?, val liftedMask: LiftedMask?, val selection: Selection?,
         val matrix: Matrix, val name: String, var version: Long,
     )
     private var session: TransformSession? = null
@@ -1465,14 +1465,14 @@ class Engine {
         if (wholeImage) { session = null; liftImage(); return@post }
         val ss = session
         if (continueSession && ss != null && ss.version == version && ss.layerId == stack.activeId) {
-            floating = Floating(ss.bitmap, Matrix(ss.matrix), ss.layerId, ss.name, remainder = ss.remainder)
+            floating = Floating(ss.bitmap, Matrix(ss.matrix), ss.layerId, ss.name, remainder = ss.remainder, liftedMask = ss.liftedMask)
             publish(); invalidate(); return@post
         }
         val sel = stack.selection
         liftNow()
         val f = floating
         val l = stack.active
-        session = if (continueSession && f != null && f.targetLayerId != null && l?.text == null) TransformSession(f.targetLayerId, f.bitmap, f.remainder, sel, Matrix(f.matrix), f.name, -1) else null
+        session = if (continueSession && f != null && f.targetLayerId != null && l?.text == null) TransformSession(f.targetLayerId, f.bitmap, f.remainder, f.liftedMask, sel, Matrix(f.matrix), f.name, -1) else null
     }
 
     private fun liftImage() {
@@ -1496,7 +1496,8 @@ class Engine {
             val lifted = Bitmap.createBitmap(b.width(), b.height(), Bitmap.Config.ARGB_8888)
             val c = Canvas(lifted); c.translate(-b.left.toFloat(), -b.top.toFloat())
             LayerExtent.draw(c, l)
-            floating = Floating(lifted, Matrix().apply { setTranslate(b.left.toFloat(), b.top.toFloat()) }, l.id, l.name, remainder = null)
+            floating = Floating(lifted, Matrix().apply { setTranslate(b.left.toFloat(), b.top.toFloat()) }, l.id, l.name,
+                liftedMask = l.mask?.let { LiftedMask(it, b.left, b.top) })
         } else {
             val full = l.pixels.toBitmap()
             val b = sel.bounds
@@ -1678,7 +1679,10 @@ class Engine {
         busy("Applying") {
             val out = Bitmap.createBitmap(s.width, s.height, Bitmap.Config.ARGB_8888)
             val c = Canvas(out)
-            val target = f.targetLayerId?.let { id -> s.find(id) }
+            val target = f.targetLayerId?.let { id -> s.find(id) }?.let { layer ->
+                val lifted = f.liftedMask
+                if (lifted == null) layer else layer.copy(mask = transformMask(lifted.tiles, lifted.matrix(f.matrix), s.width, s.height))
+            }
             if (target != null && target.text != null && f.remainder == null) {
                 // Transforming a text layer keeps it editable: compose the transform into its spec.
                 val delta = Matrix().also { f.initial.invert(it); it.postConcat(f.matrix) }

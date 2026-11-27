@@ -160,7 +160,12 @@ class GlRenderer(private val engine: Engine) : GLSurfaceView.Renderer {
                 glBindFramebuffer(GL_FRAMEBUFFER, content.fbo)
                 glEnable(GL_BLEND); glBlendFunc(GL_ZERO, GL_SRC_ALPHA)
                 glUseProgram(maskProg)
-                if (p != null && p.mask && p.scale != 1f) drawTiles(maskProg, p.tiles, m, filter, p.scale)
+                glUniform2f(glGetUniformLocation(maskProg, "uMaskSize"), s.width.toFloat(), s.height.toFloat())
+                if (f?.targetLayerId == l.id && f.liftedMask != null) {
+                    val lifted = f.liftedMask
+                    val maskMatrix = multiply(m, mat3(lifted.matrix(f.matrix), flipY = false))
+                    drawTiles(maskProg, lifted.tiles, maskMatrix, filter, 1f)
+                } else if (p != null && p.mask && p.scale != 1f) drawTiles(maskProg, p.tiles, m, filter, p.scale)
                 else drawTiles(maskProg, mask, m, filter, 1f)
             }
             glBindFramebuffer(GL_FRAMEBUFFER, other.fbo)
@@ -439,8 +444,12 @@ void main() {
 precision highp float;
 in vec2 vUv;
 uniform sampler2D uTex;
+uniform vec4 uRect;
+uniform vec2 uMaskSize;
 out vec4 o;
 void main() {
+    // The last tile may extend beyond the original mask when the floating layer moves.
+    if (any(greaterThanEqual(uRect.xy + vUv * uRect.zw, uMaskSize))) discard;
     vec3 c = texture(uTex, vUv).rgb;
     o = vec4(0.0, 0.0, 0.0, dot(c, vec3(0.299, 0.587, 0.114)));
 }"""
