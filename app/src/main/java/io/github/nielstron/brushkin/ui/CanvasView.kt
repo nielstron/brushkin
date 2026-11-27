@@ -561,7 +561,7 @@ class CanvasView(context: Context, private val vm: EditorViewModel) : View(conte
             canvas.drawPath(outside, dim)
             canvas.drawPath(vr, accent)
         }
-        engine.floating?.let { drawFloatingHandles(canvas, it) }
+        if (vm.tool != Tool.NAVIGATE) engine.floating?.let { drawFloatingHandles(canvas, it) }
         if (engine.floating != null || !vm.tool.directTransform) updateGestureExclusion()
         // Move/Rotate while idle: the outline of what moves, and the rotation handle.
         if (vm.tool.directTransform && engine.floating == null) moveQuad()?.let { pts ->
@@ -640,6 +640,7 @@ class CanvasView(context: Context, private val vm: EditorViewModel) : View(conte
     private var exclusionKey = 0
     private fun updateGestureExclusion() {
         val pts = when {
+            vm.tool == Tool.NAVIGATE -> null
             engine.floating != null -> engine.floating!!.corners().also { viewMatrix.mapPoints(it) }
             vm.tool.directTransform -> moveQuad()
             else -> null
@@ -783,7 +784,8 @@ class CanvasView(context: Context, private val vm: EditorViewModel) : View(conte
         when (e.actionMasked) {
             MotionEvent.ACTION_DOWN -> {
                 effectGesture = vm.dialog?.startsWith("filter:") == true
-                navigationOnly = effectGesture && vm.filterPicking == null && vm.filterPoint == null
+                val hand = vm.tool == Tool.NAVIGATE && !vm.pipette && !vm.dofOpen
+                navigationOnly = (hand || effectGesture) && vm.filterPicking == null && vm.filterPoint == null
                 maxPointers = 1; moved = false
                 downTime = e.eventTime
                 down = PointF(e.x, e.y); downDoc = docPoint(e.x, e.y)
@@ -849,7 +851,7 @@ class CanvasView(context: Context, private val vm: EditorViewModel) : View(conte
             }
             MotionEvent.ACTION_UP -> {
                 removeCallbacks(longPress)
-                if (mode == Mode.VIEW) {
+                if (mode == Mode.VIEW || (mode == Mode.PAN && maxPointers >= 2)) {
                     val quick = !effectGesture && e.eventTime - downTime < 300
                     if (quick && maxPointers == 2 && !moved) engine.undo()
                     if (quick && maxPointers == 3 && !moved) engine.redo()

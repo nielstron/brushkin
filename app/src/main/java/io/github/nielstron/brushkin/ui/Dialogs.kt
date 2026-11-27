@@ -210,7 +210,7 @@ private fun EmojiDialog(vm: EditorViewModel, close: () -> Unit) {
             LaunchedEffect(Unit) { kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.Default) { EmojiSearch.index(ctx) } }
             fun place(emoji: String) {
                 close()
-                vm.engine.placeFloating(renderText(emoji, 400f, Typeface.DEFAULT, android.graphics.Color.BLACK), "Emoji $emoji")
+                vm.placeFloating(renderText(emoji, 400f, Typeface.DEFAULT, android.graphics.Color.BLACK), "Emoji $emoji")
             }
             OutlinedTextField(
                 query, { query = it }, singleLine = true, placeholder = { Text("Search emoji (e.g. boat, heart, laugh)") },
@@ -233,7 +233,7 @@ private fun EmojiDialog(vm: EditorViewModel, close: () -> Unit) {
                         emojiGridColumns = 8
                         setOnEmojiPickedListener { item ->
                             close()
-                            vm.engine.placeFloating(renderText(item.emoji, 400f, Typeface.DEFAULT, android.graphics.Color.BLACK), "Emoji ${item.emoji}")
+                            vm.placeFloating(renderText(item.emoji, 400f, Typeface.DEFAULT, android.graphics.Color.BLACK), "Emoji ${item.emoji}")
                         }
                     }
                 },
