@@ -995,7 +995,7 @@ class Engine {
             return TiledBitmap.fromBitmap(dst, fill = t.fill)
         }
         val layers = Stack.mapTree(s.layers) { original ->
-            val l = original.copy(text = original.text?.let { text -> text.withMatrix(Matrix().apply { setConcat(m, text.matrix()) }) })
+            val l = original.copy(text = original.text?.transformedBy(m))
             if (l.isGroup) l.copy(pixels = TiledBitmap(newW, newH), mask = l.mask?.let { xf(it) })
             else if (l.id in replace) l.copy(pixels = replace.getValue(l.id), mask = l.mask?.let { xf(it) })
             else {
@@ -1100,6 +1100,7 @@ class Engine {
         if (t.fill != 0) dst.eraseColor(t.fill)
         val m = Matrix().apply { if (horizontal) setScale(-1f, 1f, s.width / 2f, 0f) else setScale(1f, -1f, 0f, s.height / 2f) }
         Canvas(dst).drawBitmap(t.toBitmap(), m, null)
+        if (t === l.pixels && l.text != null) stack = s.replace(l.copy(text = l.text.transformedBy(m)))
         replaceTiles(s, t, TiledBitmap.fromBitmap(dst, fill = t.fill), "Flip Layer")
     }
 
@@ -1614,8 +1615,10 @@ class Engine {
         val dy = when (v) { 0 -> -b.top; 1 -> (s.height - b.height()) / 2 - b.top; 2 -> s.height - b.bottom; else -> 0 }
         if (dx == 0 && dy == 0) return@post
         val out = Bitmap.createBitmap(s.width, s.height, Bitmap.Config.ARGB_8888)
-        val c = Canvas(out); c.translate(dx.toFloat(), dy.toFloat())
+        val m = Matrix().apply { setTranslate(dx.toFloat(), dy.toFloat()) }
+        val c = Canvas(out); c.concat(m)
         Compositor.drawTiles(c, l.pixels, null, null)
+        if (l.text != null) stack = s.replace(l.copy(text = l.text.transformedBy(m)))
         replaceLayerPixels(s, l, TiledBitmap.fromBitmap(out), "Align Layer")
     }
 
@@ -1659,9 +1662,8 @@ class Engine {
             val target = f.targetLayerId?.let { id -> s.find(id) }
             if (target != null && target.text != null && f.remainder == null) {
                 // Transforming a text layer keeps it editable: compose the transform into its spec.
-                val m = Matrix(f.initial); val inv = Matrix(); m.invert(inv)
-                val spec = target.text.withMatrix(Matrix(target.text.matrix()).apply { postConcat(inv); postConcat(f.matrix) })
-                val newSpec = if (spec.path != null) target.text else spec
+                val delta = Matrix().also { f.initial.invert(it); it.postConcat(f.matrix) }
+                val newSpec = target.text.transformedBy(delta)
                 floating = null
                 stack = s.replace(target.copy(text = newSpec, pixels = newSpec.renderLayer(s.width, s.height)))
                 record(name, s, extraBytes = s.width.toLong() * s.height * 4)

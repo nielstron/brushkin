@@ -32,6 +32,8 @@ data class TextSpec(
     /** Lines centered (else left-aligned). */
     val center: Boolean = false,
     val outlineColor: Int = 0xFFFFFFFF.toInt(),
+    /** Transforms applied after attaching the path, whose anchors start in document coordinates. */
+    val pathMatrix: FloatArray? = null,
 ) {
     val typeface: Typeface get() {
         val style = when {
@@ -51,6 +53,13 @@ data class TextSpec(
     fun matrix() = Matrix().apply { setValues(matrix) }
 
     fun withMatrix(m: Matrix) = copy(matrix = FloatArray(9).also { m.getValues(it) })
+
+    fun transformedBy(transform: Matrix): TextSpec {
+        val positioned = withMatrix(matrix().apply { postConcat(transform) })
+        if (path == null) return positioned
+        val m = Matrix().apply { pathMatrix?.let { setValues(it) }; postConcat(transform) }
+        return positioned.copy(pathMatrix = FloatArray(9).also { m.getValues(it) })
+    }
 
     /** The text rendered unpositioned (for placing as a floating layer). */
     fun renderBox(): Bitmap {
@@ -111,6 +120,7 @@ data class TextSpec(
         val c = Canvas(out)
         val bp = bezierPath()
         if (bp != null) {
+            pathMatrix?.let { values -> c.concat(Matrix().apply { setValues(values) }) }
             val p = paint()
             val line = shown.replace('\n', ' ')
             if (outline) c.drawTextOnPath(line, bp, 0f, 0f, outlinePaint(p))
@@ -125,6 +135,7 @@ data class TextSpec(
         put("text", text); put("size", size.toDouble()); put("family", family); put("bold", bold); put("italic", italic)
         put("color", color); put("outline", outline); put("matrix", JSONArray(matrix.map { it.toDouble() }))
         path?.let { put("path", JSONArray(it.map { v -> v.toDouble() })) }; put("pathClosed", pathClosed)
+        pathMatrix?.let { put("pathMatrix", JSONArray(it.map { v -> v.toDouble() })) }
         boxWidth?.let { put("boxWidth", it.toDouble()) }
         if (center) put("center", true)
         if (outlineColor != 0xFFFFFFFF.toInt()) put("outlineColor", outlineColor)
@@ -149,6 +160,7 @@ data class TextSpec(
                 o.optJSONArray("path")?.let { floats(it) }, o.optBoolean("pathClosed"),
                 if (o.has("boxWidth")) o.getDouble("boxWidth").toFloat() else null,
                 center = o.optBoolean("center"), outlineColor = o.optInt("outlineColor", 0xFFFFFFFF.toInt()),
+                pathMatrix = o.optJSONArray("pathMatrix")?.let { floats(it) },
             )
         }.getOrNull()
     }
