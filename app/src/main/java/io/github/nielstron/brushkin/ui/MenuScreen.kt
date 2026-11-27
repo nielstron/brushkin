@@ -242,7 +242,9 @@ fun commands(vm: EditorViewModel, info: DocInfo, files: FileActions, view: () ->
         Cmd("Layer", "Flip layer vertically", run = { e.flipLayer(false) }),
         Cmd("Layer", "Add layer mask (white)", run = { e.addMask(io.github.nielstron.brushkin.engine.Engine.MaskInit.WHITE) }),
         Cmd("Layer", "Add layer mask from selection", run = { e.addMask(io.github.nielstron.brushkin.engine.Engine.MaskInit.SELECTION) }),
-        Cmd("Layer", "Apply layer mask", run = { e.applyMask() }),
+        if (info.layers.any { it.id == info.activeId && it.isGroup && it.hasMask })
+            Cmd("Layer", "Merge masked group", "apply layer mask to merged pixels", run = { e.applyMask() })
+        else Cmd("Layer", "Apply layer mask", run = { e.applyMask() }),
         Cmd("Layer", "Delete layer mask", run = { e.deleteMask() }),
         Cmd("Layer", "Edit layer mask", run = { e.setEditMask(info.activeId, true) }),
         Cmd("Layer", "Move or rotate layer", run = { vm.selectTool(Tool.MOVE) }),

@@ -902,6 +902,10 @@ class Engine {
         val s = stack
         val group = s.active ?: return@post
         if (!group.isGroup) { onMessage?.invoke("Select a layer group first"); return@post }
+        mergeGroup(s, group, "Merge Group")
+    }
+
+    private suspend fun mergeGroup(s: Stack, group: Layer, historyName: String) {
         busy("Merging group") {
             val isolated = group.copy(visible = true,opacity = 1f,mode = LayerMode.NORMAL)
             val bmp = rendered(s.copy(layers = listOf(isolated)))
@@ -909,7 +913,7 @@ class Engine {
                 visible = group.visible,opacity = group.opacity,lockPosition = group.lockPosition,linked = group.linked)
             bmp.recycle()
             stack = s.replace(layer)
-            record("Merge Group",s,extraBytes = s.width.toLong()*s.height*4)
+            record(historyName,s,extraBytes = s.width.toLong()*s.height*4)
         }
     }
 
@@ -1199,6 +1203,11 @@ class Engine {
         val s = stack
         val l = s.active ?: return@post
         if (l.mask == null) return@post
+        if (l.isGroup) {
+            // A group renders its children. Bake their combined coverage into one raster layer.
+            mergeGroup(s, l.copy(maskEnabled = true), "Merge Masked Group")
+            return@post
+        }
         busy("Applying mask") {
             val sub = Stack(s.width, s.height, listOf(l.copy(opacity = 1f, mode = LayerMode.NORMAL, visible = true, maskEnabled = true)), l.id)
             val bmp = Compositor.flatten(sub)

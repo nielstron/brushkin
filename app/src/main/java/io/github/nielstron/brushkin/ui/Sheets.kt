@@ -650,7 +650,7 @@ private fun ActiveLayerPanel(vm: EditorViewModel, l: LayerInfo, info: DocInfo, m
                 }
             } else {
                 Chip(if (l.maskEnabled) "Disable mask" else "Enable mask", !l.maskEnabled) { e.setLayer(l.id, "Toggle Mask") { it.copy(maskEnabled = !it.maskEnabled) } }
-                Chip("Apply mask", false) { e.applyMask() }
+                Chip(if (l.isGroup) "Merge masked group" else "Apply mask", false) { e.applyMask() }
                 Chip("Delete mask", false) { e.deleteMask() }
                 Chip("Mask to selection", false) { e.maskToSelection() }
             }
