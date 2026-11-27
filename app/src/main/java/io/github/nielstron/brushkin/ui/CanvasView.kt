@@ -14,6 +14,7 @@ import android.graphics.PointF
 import android.graphics.Rect
 import android.graphics.RectF
 import android.graphics.Shader
+import android.util.SparseArray
 import android.view.MotionEvent
 import android.view.View
 import android.view.ViewConfiguration
@@ -731,6 +732,7 @@ class CanvasView(context: Context, private val vm: EditorViewModel) : View(conte
     private val loop = ArrayList<PointF>()
     private var maxPointers = 0
     private var moved = false
+    private val pointerStarts = SparseArray<PointF>()
     private var lastLineEnd: PointF? = null
     private val longPress = Runnable { onLongPress() }
 
@@ -766,6 +768,18 @@ class CanvasView(context: Context, private val vm: EditorViewModel) : View(conte
     @SuppressLint("ClickableViewAccessibility")
     override fun onTouchEvent(e: MotionEvent): Boolean {
         lastTouch = if (e.actionMasked == MotionEvent.ACTION_UP || e.actionMasked == MotionEvent.ACTION_CANCEL) null else PointF(e.getX(0), e.getY(0))
+        // A history tap requires every finger to stay within slop of its own starting point.
+        // Pointer indices can change when a finger lifts, so match positions by pointer ID.
+        if (!moved && e.actionMasked != MotionEvent.ACTION_DOWN) {
+            for (i in 0 until e.pointerCount) {
+                val start = pointerStarts[e.getPointerId(i)] ?: continue
+                if (hypot(e.getX(i) - start.x, e.getY(i) - start.y) > slop) {
+                    moved = true
+                    removeCallbacks(longPress)
+                    break
+                }
+            }
+        }
         when (e.actionMasked) {
             MotionEvent.ACTION_DOWN -> {
                 effectGesture = vm.dialog?.startsWith("filter:") == true
@@ -773,9 +787,13 @@ class CanvasView(context: Context, private val vm: EditorViewModel) : View(conte
                 maxPointers = 1; moved = false
                 downTime = e.eventTime
                 down = PointF(e.x, e.y); downDoc = docPoint(e.x, e.y)
+                pointerStarts.clear()
+                pointerStarts.put(e.getPointerId(0), down)
                 if (navigationOnly || !startGuide(e)) startSingle(e)
             }
             MotionEvent.ACTION_POINTER_DOWN -> {
+                val i = e.actionIndex
+                pointerStarts.put(e.getPointerId(i), PointF(e.getX(i), e.getY(i)))
                 maxPointers = max(maxPointers, e.pointerCount)
                 removeCallbacks(longPress)
                 // A second finger turns whatever started into a view gesture. Strokes that just
@@ -791,7 +809,6 @@ class CanvasView(context: Context, private val vm: EditorViewModel) : View(conte
                 invalidate()
             }
             MotionEvent.ACTION_MOVE -> {
-                if (!moved && hypot(e.x - down.x, e.y - down.y) > slop) { moved = true; removeCallbacks(longPress) }
                 when (mode) {
                     Mode.PAN -> {
                         viewMatrix.set(gStartMatrix)
@@ -818,6 +835,7 @@ class CanvasView(context: Context, private val vm: EditorViewModel) : View(conte
                 }
             }
             MotionEvent.ACTION_POINTER_UP -> {
+                pointerStarts.remove(e.getPointerId(e.actionIndex))
                 if (mode == Mode.VIEW && navigationOnly && e.pointerCount == 2) {
                     // Continue panning with the remaining finger after a pinch.
                     val remaining = if (e.actionIndex == 0) 1 else 0
