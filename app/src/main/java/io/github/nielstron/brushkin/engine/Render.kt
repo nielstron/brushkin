@@ -15,6 +15,11 @@ class Preview(
     fun forLayer(id: Long): Preview? = if (id == layerId) this else others[id]?.let { Preview(id, false, it, scale) }
 }
 
+/** The mask in its original document coordinates and the origin of the pixels lifted with it. */
+class LiftedMask(val tiles: TiledBitmap, private val left: Int, private val top: Int) {
+    fun matrix(placement: Matrix) = Matrix(placement).apply { preTranslate(-left.toFloat(), -top.toFloat()) }
+}
+
 /** A bitmap being placed or transformed (Insert, Paste, Transform tool). */
 class Floating(
     val bitmap: Bitmap,
@@ -29,6 +34,7 @@ class Floating(
     val text: TextSpec? = null,
     /** The whole (flattened) image is being transformed: layers aren't drawn, and applying transforms them all. */
     val wholeImage: Boolean = false,
+    val liftedMask: LiftedMask? = null,
 ) {
     /** The placement when lifted, so Move can apply an offset to it. */
     val initial = Matrix(matrix)
@@ -119,7 +125,14 @@ object Compositor {
                 // closes GPU seams; the whole mask is then applied once (luminance → alpha, DST_IN).
                 canvas.saveLayer(0f, 0f, w, h, maskPaint.get()!!)
                 canvas.drawRect(0f, 0f, w, h, whitePaint)
-                if (pv != null && pv.mask && pv.scale != 1f) drawScaled(canvas, pv, tp, pixelSize)
+                if (floating?.targetLayerId == layer.id && floating.liftedMask != null) {
+                    val lifted = floating.liftedMask
+                    canvas.save()
+                    canvas.concat(lifted.matrix(floating.matrix))
+                    canvas.clipRect(0, 0, lifted.tiles.width, lifted.tiles.height)
+                    drawTiles(canvas, lifted.tiles, null, tp)
+                    canvas.restore()
+                } else if (pv != null && pv.mask && pv.scale != 1f) drawScaled(canvas, pv, tp, pixelSize)
                 else drawTiles(canvas, mask, visible, tp, pixelSize * 0.5f)
                 canvas.restore()
             }
