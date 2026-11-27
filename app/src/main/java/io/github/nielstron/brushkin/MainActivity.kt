@@ -306,7 +306,7 @@ class MainActivity : ComponentActivity(), FileActions {
                 val result = withContext(Dispatchers.IO) { ImageImport.firstFrame(data) }
                 if (result.originalWidth != result.bitmap.width || result.originalHeight != result.bitmap.height)
                     vm.messages.tryEmit("Scaled from ${result.originalWidth}×${result.originalHeight} to ${result.bitmap.width}×${result.bitmap.height} to fit in memory")
-                vm.engine.placeFloating(result.bitmap, name.substringBeforeLast('.'))
+                vm.placeFloating(result.bitmap, name.substringBeforeLast('.'))
             }.onFailure { vm.messages.tryEmit("Couldn't open image: ${it.message}") }
         }
     }
@@ -345,7 +345,7 @@ class MainActivity : ComponentActivity(), FileActions {
                     val scaled = raster.bitmap.width != options.width && pending.source.kind != PageImport.Kind.TIFF
                     // Drawn at the chosen size: place it 1:1, centered, instead of fitting it into the canvas.
                     val s = vm.engine.stack
-                    vm.engine.placeFloating(raster.bitmap, pending.name.substringBeforeLast('.'),
+                    vm.placeFloating(raster.bitmap, pending.name.substringBeforeLast('.'),
                         android.graphics.Point((s.width - raster.bitmap.width) / 2, (s.height - raster.bitmap.height) / 2))
                     if (scaled) vm.messages.tryEmit("Drawn at ${raster.bitmap.width}×${raster.bitmap.height} to fit in memory")
                 } else {

@@ -53,6 +53,7 @@ import androidx.compose.material.icons.rounded.Remove
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.Icon
+import androidx.compose.material3.IconToggleButton
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
@@ -297,7 +298,7 @@ fun EditorScreen(vm: EditorViewModel, files: FileActions, store: StoreIntegratio
         }
 
         val actions: @Composable () -> Unit = {
-            if (info.floating && !vm.tool.directTransform) {
+            if (info.floating && !vm.tool.directTransform && vm.tool != Tool.NAVIGATE) {
                 val lifted = vm.tool.confirmTransform
                 if (lifted) Row(Modifier.padding(bottom = 8.dp).horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     if (vm.tool != Tool.WARP && vm.tool != Tool.CAGE) TargetChips(!vm.transformWhole) { vm.changeTransformTarget(!it) }
@@ -500,6 +501,7 @@ private fun ContextChips(vm: EditorViewModel, hasSelection: Boolean, holder: Can
                 if (hasSelection) Chip("Crop to selection", false, ToolIcons.crop) { vm.engine.cropToSelection(layerOnly = vm.cropLayer) }
                 Text("Drag to choose the area to keep", color = Ui.muted, fontSize = 13.sp, modifier = Modifier.padding(8.dp))
             }
+            t == Tool.NAVIGATE -> Text("Drag to pan · Pinch to zoom and rotate", color = Ui.muted, fontSize = 13.sp, modifier = Modifier.padding(8.dp))
             t == Tool.MEME -> Text("Tap where the text should go", color = Ui.muted, fontSize = 13.sp, modifier = Modifier.padding(8.dp))
             t == Tool.TEXT -> Text("Tap the canvas to add text", color = Ui.muted, fontSize = 13.sp, modifier = Modifier.padding(8.dp))
             t == Tool.PICKER -> Text("Touch the canvas to pick a color", color = Ui.muted, fontSize = 13.sp, modifier = Modifier.padding(8.dp))
@@ -513,13 +515,22 @@ private fun Dock(vm: EditorViewModel, layerCount: Int) {
         Modifier.fillMaxWidth().height(68.dp).clip(RoundedCornerShape(22.dp)).background(Ui.panel).border(1.dp, Ui.border, RoundedCornerShape(22.dp)).padding(horizontal = 6.dp),
         horizontalArrangement = Arrangement.SpaceAround, verticalAlignment = Alignment.CenterVertically,
     ) {
-        DockButton(ToolIcons.of(vm.tool), "Tools (${vm.tool.label})", active = true) { vm.sheet = Sheet.TOOLS }
-        DockButton(ToolIcons.sliders, "Options") { vm.sheet = Sheet.OPTIONS }
-        Box(Modifier.size(52.dp).clip(CircleShape).background(Ui.text).clickable { vm.sheet = Sheet.INSERT }, contentAlignment = Alignment.Center) {
+        val slot = Modifier.weight(1f, fill = false)
+        val navigating = vm.tool == Tool.NAVIGATE
+        IconToggleButton(
+            checked = navigating, onCheckedChange = { vm.toggleNavigation() },
+            modifier = slot.size(52.dp).clip(RoundedCornerShape(16.dp)).background(if (navigating) Ui.accent else Color.Transparent),
+        ) {
+            Icon(ToolIcons.of(Tool.NAVIGATE), if (navigating) "Return to ${vm.editingTool.label}" else "Navigate canvas",
+                tint = if (navigating) Ui.onAccent else Ui.text)
+        }
+        DockButton(ToolIcons.of(vm.editingTool), "Tools (${vm.editingTool.label})", slot, active = !navigating) { vm.sheet = Sheet.TOOLS }
+        DockButton(ToolIcons.sliders, "Options", slot) { vm.sheet = Sheet.OPTIONS }
+        Box(slot.size(52.dp).clip(CircleShape).background(Ui.text).clickable { vm.sheet = Sheet.INSERT }, contentAlignment = Alignment.Center) {
             Icon(Icons.Rounded.Add, "Insert image, text, sticker or emoji", tint = Ui.ground, modifier = Modifier.size(28.dp))
         }
         Box(
-            Modifier.size(52.dp).clip(RoundedCornerShape(16.dp)).clickable(onClickLabel = "Color") { vm.sheet = Sheet.COLOR },
+            slot.size(52.dp).clip(RoundedCornerShape(16.dp)).clickable(onClickLabel = "Color") { vm.sheet = Sheet.COLOR },
             contentAlignment = Alignment.Center,
         ) {
             Box(Modifier.size(32.dp, 30.dp)) {
@@ -527,7 +538,7 @@ private fun Dock(vm: EditorViewModel, layerCount: Int) {
                 Box(Modifier.align(Alignment.TopStart).size(23.dp).clip(CircleShape).background(Color(vm.fg)).border(2.dp, Ui.text, CircleShape))
             }
         }
-        Box {
+        Box(slot) {
             DockButton(ToolIcons.layers, "Layers") { vm.sheet = Sheet.LAYERS }
             Box(
                 Modifier.align(Alignment.TopEnd).offset((-2).dp, 4.dp).size(18.dp).clip(CircleShape).background(Color(0xFF3A3A42)),
@@ -538,9 +549,9 @@ private fun Dock(vm: EditorViewModel, layerCount: Int) {
 }
 
 @Composable
-private fun DockButton(icon: ImageVector, label: String, active: Boolean = false, onClick: () -> Unit) {
+private fun DockButton(icon: ImageVector, label: String, modifier: Modifier = Modifier, active: Boolean = false, onClick: () -> Unit) {
     Box(
-        Modifier.size(52.dp).clip(RoundedCornerShape(16.dp)).background(if (active) Ui.accent else Color.Transparent).clickable(onClick = onClick),
+        modifier.size(52.dp).clip(RoundedCornerShape(16.dp)).background(if (active) Ui.accent else Color.Transparent).clickable(onClick = onClick),
         contentAlignment = Alignment.Center,
     ) {
         Icon(icon, label, tint = if (active) Ui.onAccent else Ui.text.copy(alpha = 0.85f), modifier = Modifier.size(24.dp))

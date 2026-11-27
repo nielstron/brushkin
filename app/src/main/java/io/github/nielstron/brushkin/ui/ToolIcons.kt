@@ -95,6 +95,7 @@ object ToolIcons {
     val sticker get() = stroke("M4 6a2 2 0 0 1 2-2h12a2 2 0 0 1 2 2v7l-7 7H6a2 2 0 0 1-2-2zM20 13h-5a2 2 0 0 0-2 2v5")
 
     fun of(t: Tool): ImageVector = when (t) {
+        Tool.NAVIGATE -> Icons.Rounded.PanTool
         Tool.RECT_SELECT -> rect; Tool.ELLIPSE_SELECT -> ellipse; Tool.FREE_SELECT -> lasso
         Tool.FUZZY_SELECT -> fuzzy; Tool.COLOR_SELECT -> byColor; Tool.OBJECT_SELECT -> objectSel; Tool.STICKER -> sticker; Tool.REMOVE_OBJECT -> removeObj; Tool.DEPTH_BLUR -> depthBlur; Tool.UPSCALE -> upscale; Tool.DENOISE -> denoise; Tool.DEBLUR -> deblur;
         Tool.CURVES -> curves; Tool.BRIGHTNESS_CONTRAST -> contrast; Tool.HUE_SATURATION -> hue; Tool.COLORIZE -> hue; Tool.COLOR_BALANCE -> hue

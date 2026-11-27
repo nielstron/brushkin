@@ -93,6 +93,7 @@ enum class Tool(val label: String, val group: ToolGroup, val paint: PaintTool? =
     CAGE("Cage", ToolGroup.TRANSFORM),
     ALIGN("Align", ToolGroup.TRANSFORM),
     CROP("Crop", ToolGroup.TRANSFORM),
+    NAVIGATE("Navigate", ToolGroup.OTHER),
     PATHS("Paths", ToolGroup.OTHER),
     PICKER("Color Picker", ToolGroup.OTHER),
     TEXT("Text", ToolGroup.OTHER),
@@ -133,7 +134,12 @@ class EditorViewModel(app: Application) : AndroidViewModel(app) {
     var exportStatus by mutableStateOf<String?>(null)
     var exportedImage by mutableStateOf<ExportedImage?>(null)
 
-    var tool by mutableStateOf(Tool.BRUSH)
+    var tool by mutableStateOf(Tool.NAVIGATE)
+        private set
+    /** The tool to resume when the hand is toggled off. Its pending edits survive navigation. */
+    var editingTool by mutableStateOf(Tool.BRUSH)
+        private set
+    private var needsToolSetup = true
     var lastPaintTool by mutableStateOf(Tool.BRUSH)
     var sheet by mutableStateOf(Sheet.NONE)
     var showMenu by mutableStateOf(false)
@@ -467,7 +473,7 @@ class EditorViewModel(app: Application) : AndroidViewModel(app) {
         override fun leaving(tab: DocumentTab?) {
             finishText()
             // Like switching tools: an unapplied transform is discarded.
-            if (tool.liftsLayer) engine.cancelFloating()
+            if (editingTool.liftsLayer) engine.cancelFloating()
             tab?.edit = TabEdit(cloneSource, cloneOffset, perspPlane, perspOffset, path.anchors.toList(), path.closed, canvas?.view?.saveView())
         }
         override fun arrived(tab: DocumentTab) {
@@ -479,7 +485,9 @@ class EditorViewModel(app: Application) : AndroidViewModel(app) {
             pathVersion++
             cropRect = null; textAt = null; depthMap = null
             handles.clear(); objectNew(); scissorsClear()
-            selectTool(tool) // Lifts the new image for transform tools and asks for what the tool still needs.
+            // A suspended transform should only lift this document when editing resumes.
+            needsToolSetup = true
+            if (tool != Tool.NAVIGATE) selectTool(tool)
             canvas?.view?.restoreView(e?.view)
         }
     })
@@ -701,7 +709,7 @@ class EditorViewModel(app: Application) : AndroidViewModel(app) {
                 if (target == StickerTarget.LAYER) {
                     objectNew(); engine.selectNone()
                     val k = rect.width() / bmp.width
-                    engine.placeFloating(bmp, "Sticker", matrix = android.graphics.Matrix().apply { setScale(k, k); postTranslate(rect.left, rect.top) })
+                    placeFloating(bmp, "Sticker", matrix = android.graphics.Matrix().apply { setScale(k, k); postTranslate(rect.left, rect.top) })
                     return@launch
                 }
                 // A square image with room above and below (or beside) the sticker for text.
@@ -864,7 +872,7 @@ class EditorViewModel(app: Application) : AndroidViewModel(app) {
                     }.let { if (it.config != android.graphics.Bitmap.Config.ARGB_8888) it.copy(android.graphics.Bitmap.Config.ARGB_8888, true) else it }
                 }
                 val own = lastCopy?.takeIf { it.first == uri }?.second
-                engine.placeFloating(bmp, "Pasted Layer", own?.let { android.graphics.Point(it.left, it.top) })
+                placeFloating(bmp, "Pasted Layer", own?.let { android.graphics.Point(it.left, it.top) })
             }.onFailure { messages.tryEmit("Couldn't paste: ${it.message}") }
         }
     }
@@ -946,11 +954,25 @@ class EditorViewModel(app: Application) : AndroidViewModel(app) {
         }
     }
 
+    fun toggleNavigation() {
+        selectTool(if (tool == Tool.NAVIGATE) editingTool else Tool.NAVIGATE)
+    }
+
     fun selectTool(t: Tool) {
-        // Leaving a transform tool discards an unapplied transform (like GIMP).
-        if (tool.liftsLayer && t != tool) engine.cancelFloating()
-        if (t != tool) { altEffect = false; objectNew() }
+        if (t == Tool.NAVIGATE) {
+            finishText()
+        } else if (needsToolSetup || tool != Tool.NAVIGATE || t != editingTool) {
+            prepareEditingTool(t)
+            needsToolSetup = false
+        }
         tool = t
+    }
+
+    private fun prepareEditingTool(t: Tool) {
+        // Leaving a transform tool discards an unapplied transform (like GIMP).
+        if (editingTool.liftsLayer && t != editingTool) engine.cancelFloating()
+        if (t != editingTool) { altEffect = false; objectNew() }
+        editingTool = t
         if (t.paint != null) lastPaintTool = t
         // Scale and Rotate show handles right away; Move lifts on touch.
         if (t.confirmTransform) {
@@ -969,6 +991,12 @@ class EditorViewModel(app: Application) : AndroidViewModel(app) {
             perspPlane = floatArrayOf(w * 0.25f, h * 0.3f, w * 0.75f, h * 0.3f, w * 0.9f, h * 0.7f, w * 0.1f, h * 0.7f)
             perspEditing = true
         }
+    }
+
+    /** Inserting starts an interactive placement, including when opened from the hand tool. */
+    fun placeFloating(bitmap: android.graphics.Bitmap, name: String, at: android.graphics.Point? = null, matrix: android.graphics.Matrix? = null) {
+        if (tool == Tool.NAVIGATE) toggleNavigation()
+        engine.placeFloating(bitmap, name, at, matrix = matrix)
     }
 
     fun pickColor(c: Int) {

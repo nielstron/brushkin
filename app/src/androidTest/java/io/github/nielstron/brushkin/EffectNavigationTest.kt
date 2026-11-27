@@ -47,6 +47,7 @@ class EffectNavigationTest {
         withContext(Dispatchers.Main) {
             val vm = EditorViewModel(TestApp(context, dir)).also { store.put("test", it) }
             try {
+                vm.selectTool(Tool.BRUSH)
                 vm.engine.newDocument(64, 64, null).join()
                 vm.engine.fillSelection(Color.RED).join()
                 suspend fun pixel() = vm.engine.snapshot().active!!.pixels.toPixels().first()
@@ -99,6 +100,7 @@ class EffectNavigationTest {
             withTimeout(5000) { while (vm.engine.preview == null) delay(20) }
             val preview=vm.engine.preview
             withContext(Dispatchers.Main) {
+                vm.selectTool(Tool.BRUSH)
                 vm.dialog="filter:Gaussian Blur"
                 val view=CanvasView(context,vm)
                 view.layout(0,0,600,800)

@@ -737,7 +737,7 @@ private fun InsertSheet(vm: EditorViewModel, files: FileActions) {
                 val bmp = remember(s) { renderSticker(s, 96, vm.fg) }
                 Box(
                     Modifier.weight(1f).height(60.dp).clip(RoundedCornerShape(14.dp)).background(Ui.panel2)
-                        .clickable { vm.sheet = Sheet.NONE; vm.engine.placeFloating(renderSticker(s, 600, vm.fg), s.label) },
+                        .clickable { vm.sheet = Sheet.NONE; vm.placeFloating(renderSticker(s, 600, vm.fg), s.label) },
                     contentAlignment = Alignment.Center,
                 ) { Image(bmp.asImageBitmap(), s.label, Modifier.size(36.dp)) }
             }
@@ -749,7 +749,7 @@ private fun InsertSheet(vm: EditorViewModel, files: FileActions) {
         }
         FlowRow(maxItemsInEachRow = 8, horizontalArrangement = Arrangement.SpaceBetween) {
             for (em in EMOJI) Box(
-                Modifier.size(44.dp).clip(RoundedCornerShape(10.dp)).clickable { vm.sheet = Sheet.NONE; vm.engine.placeFloating(renderText(em, 400f, Typeface.DEFAULT, android.graphics.Color.BLACK), "Emoji $em") },
+                Modifier.size(44.dp).clip(RoundedCornerShape(10.dp)).clickable { vm.sheet = Sheet.NONE; vm.placeFloating(renderText(em, 400f, Typeface.DEFAULT, android.graphics.Color.BLACK), "Emoji $em") },
                 contentAlignment = Alignment.Center,
             ) { Text(em, fontSize = 24.sp) }
         }
