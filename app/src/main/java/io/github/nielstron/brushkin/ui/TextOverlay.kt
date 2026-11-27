@@ -85,6 +85,7 @@ fun TextOverlay(vm: EditorViewModel, holder: CanvasHolder, viewVersion: Int) {
     val m = android.graphics.Matrix(spec.matrix()).apply { postConcat(view.viewMatrix) }
     val v = FloatArray(9); m.getValues(v)
     val scale = hypot(v[0], v[3])
+    val yDirection = if (v[0] * v[4] < v[1] * v[3]) -1f else 1f
     val angle = Math.toDegrees(atan2(v[3], v[0]).toDouble()).toFloat()
     val pad = spec.size * 0.15f * scale
     val fontSp = with(density) { (spec.size * scale).toSp() }
@@ -102,8 +103,11 @@ fun TextOverlay(vm: EditorViewModel, holder: CanvasHolder, viewVersion: Int) {
         val topLimit = with(density) { 96.dp.toPx() }
         LaunchedEffect(barTop, fieldH, te.layerId) {
             if (barTop == Float.MAX_VALUE || fieldH == 0) return@LaunchedEffect
-            val cos = kotlin.math.abs(kotlin.math.cos(Math.toRadians(angle.toDouble()))).toFloat().coerceAtLeast(0.3f)
-            val top = v[5]; val bottom = v[5] + fieldH * cos
+            val radians = Math.toRadians(angle.toDouble())
+            val dxY = fieldW * kotlin.math.sin(radians).toFloat()
+            val dyY = fieldH * yDirection * kotlin.math.cos(radians).toFloat()
+            val top = v[5] + minOf(0f, dxY) + minOf(0f, dyY)
+            val bottom = v[5] + maxOf(0f, dxY) + maxOf(0f, dyY)
             val margin = with(density) { 16.dp.toPx() }
             val dy = when {
                 bottom > barTop - margin && bottom - top < barTop - margin - topLimit -> (barTop - margin) - bottom
@@ -115,7 +119,7 @@ fun TextOverlay(vm: EditorViewModel, holder: CanvasHolder, viewVersion: Int) {
         Box(
             Modifier
                 .offset { IntOffset(v[2].roundToInt(), v[5].roundToInt()) }
-                .graphicsLayer { rotationZ = angle; transformOrigin = TransformOrigin(0f, 0f) }
+                .graphicsLayer { rotationZ = angle; scaleY = yDirection; transformOrigin = TransformOrigin(0f, 0f) }
                 .wrapContentSize(Alignment.TopStart, unbounded = true),
         ) {
             var fieldSize by remember { mutableStateOf(IntSize.Zero) }
@@ -181,7 +185,7 @@ fun TextOverlay(vm: EditorViewModel, holder: CanvasHolder, viewVersion: Int) {
         // Rotation handle above the text box (screen coordinates, so it can follow the finger).
         run {
             val cos = kotlin.math.cos(Math.toRadians(angle.toDouble())).toFloat(); val sin = kotlin.math.sin(Math.toRadians(angle.toDouble())).toFloat()
-            fun local(x: Float, y: Float) = Offset(v[2] + x * cos - y * sin, v[5] + x * sin + y * cos)
+            fun local(x: Float, y: Float) = Offset(v[2] + x * cos - yDirection * y * sin, v[5] + x * sin + yDirection * y * cos)
             val off = with(density) { 36.dp.toPx() }
             val fw = fieldW.toFloat(); val fh = fieldH.toFloat()
             val center = local(fw / 2, fh / 2)
@@ -200,7 +204,7 @@ fun TextOverlay(vm: EditorViewModel, holder: CanvasHolder, viewVersion: Int) {
                             val latest = vm.textEdit?.spec ?: return@detectDragGestures
                             // Finger in screen coordinates; the box turns so its top faces the finger.
                             val q = currentRoot + change.position; val c = currentCenter
-                            val target = Math.toDegrees(atan2((q.y - c.y).toDouble(), (q.x - c.x).toDouble())).toFloat() + 90f
+                            val target = Math.toDegrees(atan2((q.y - c.y).toDouble(), (q.x - c.x).toDouble())).toFloat() + yDirection * 90f
                             val vv = FloatArray(9); android.graphics.Matrix(latest.matrix()).apply { postConcat(view.viewMatrix) }.getValues(vv)
                             val now = Math.toDegrees(atan2(vv[3], vv[0]).toDouble()).toFloat()
                             val inv = android.graphics.Matrix(); view.viewMatrix.invert(inv)
@@ -261,7 +265,7 @@ fun TextOverlay(vm: EditorViewModel, holder: CanvasHolder, viewVersion: Int) {
                 if (spec.boxWidth != null) Chip("Auto width", false) { vm.updateTextEdit(spec.copy(boxWidth = null)) }
                 if (vm.path.anchors.size >= 2) Chip("Follow path", spec.path != null) {
                     vm.updateTextEdit(
-                        if (spec.path != null) spec.copy(path = null)
+                        if (spec.path != null) spec.copy(path = null, pathMatrix = null)
                         else spec.copy(path = vm.path.anchors.flatMap { a -> listOf(a.p.x, a.p.y, a.hin.x, a.hin.y, a.hout.x, a.hout.y) }.toFloatArray(), pathClosed = vm.path.closed)
                     )
                 }
