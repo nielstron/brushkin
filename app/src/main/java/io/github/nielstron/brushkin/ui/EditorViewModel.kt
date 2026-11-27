@@ -99,6 +99,8 @@ enum class Tool(val label: String, val group: ToolGroup, val paint: PaintTool? =
     MEME("Meme Text", ToolGroup.OTHER);
 
     val isSelect get() = group == ToolGroup.SELECT
+    /** Tools with a Pick chip to sample the foreground color instead of painting. */
+    val supportsPickMode get() = paint?.isEffect == false || this == BUCKET || this == GRADIENT
     /** Taps pick an object (MobileSAM). */
     val picksObjects get() = this == OBJECT_SELECT || this == REMOVE_OBJECT || this == STICKER
     /** One-shot commands listed with the tools: picking one runs it and keeps the current tool. */

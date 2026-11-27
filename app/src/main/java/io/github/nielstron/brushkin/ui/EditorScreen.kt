@@ -439,10 +439,11 @@ private fun ContextChips(vm: EditorViewModel, hasSelection: Boolean, holder: Can
                 Chip("Blur", !vm.altEffect) { vm.altEffect = false }
                 Chip("Sharpen", vm.altEffect) { vm.altEffect = true }
             }
-            t.paint != null -> {
-                Chip("Line", vm.lineMode, ToolIcons.line) { vm.lineMode = !vm.lineMode }
+            t.supportsPickMode -> {
+                if (t.paint != null) Chip("Line", vm.lineMode, ToolIcons.line) { vm.lineMode = !vm.lineMode }
                 Chip("Pick", vm.pickMode, ToolIcons.picker) { vm.pickMode = !vm.pickMode }
-                if (t != Tool.ERASER && t != Tool.SMUDGE) Chip("Erase", vm.eraseToggle, ToolIcons.eraser) { vm.eraseToggle = !vm.eraseToggle }
+                if (t.paint != null && t != Tool.ERASER && t != Tool.SMUDGE) Chip("Erase", vm.eraseToggle, ToolIcons.eraser) { vm.eraseToggle = !vm.eraseToggle }
+                if (t == Tool.BUCKET) Chip("Fill selection", vm.fillWholeSelection) { vm.fillWholeSelection = !vm.fillWholeSelection }
             }
             t == Tool.STICKER -> StickerChips(vm, hasSelection)
             t.isSelect -> {
@@ -461,10 +462,6 @@ private fun ContextChips(vm: EditorViewModel, hasSelection: Boolean, holder: Can
                 if (hasSelection) Chip("Remove", true) { vm.removeObject() }
                 ObjectChips(vm, holder, removeChip = false)
                 if (!hasSelection) Text("Tap the object to remove", color = Ui.muted, fontSize = 13.sp, modifier = Modifier.align(Alignment.CenterVertically).padding(horizontal = 4.dp))
-            }
-            t == Tool.BUCKET || t == Tool.GRADIENT -> {
-                Chip("Pick", vm.pickMode, ToolIcons.picker) { vm.pickMode = !vm.pickMode }
-                if (t == Tool.BUCKET) Chip("Fill selection", vm.fillWholeSelection) { vm.fillWholeSelection = !vm.fillWholeSelection }
             }
             t == Tool.PATHS -> {
                 @Suppress("UNUSED_EXPRESSION") vm.pathVersion
