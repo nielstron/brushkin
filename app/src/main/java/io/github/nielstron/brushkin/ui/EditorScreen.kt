@@ -500,7 +500,7 @@ private fun ContextChips(vm: EditorViewModel, hasSelection: Boolean, holder: Can
             }
             t == Tool.CROP -> {
                 TargetChips(vm.cropLayer) { vm.cropLayer = it }
-                if (hasSelection) Chip("Crop to selection", false, ToolIcons.crop) { vm.engine.cropToSelection() }
+                if (hasSelection) Chip("Crop to selection", false, ToolIcons.crop) { vm.engine.cropToSelection(layerOnly = vm.cropLayer) }
                 Text("Drag to choose the area to keep", color = Ui.muted, fontSize = 13.sp, modifier = Modifier.padding(8.dp))
             }
             t == Tool.MEME -> Text("Tap where the text should go", color = Ui.muted, fontSize = 13.sp, modifier = Modifier.padding(8.dp))
