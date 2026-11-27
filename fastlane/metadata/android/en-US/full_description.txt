@@ -1,4 +1,4 @@
-<p>A layered image editor for phones and tablets, inspired by GIMP and designed for fingers and styluses. The editor opens in Navigate. Tap the hand button to switch between navigating the canvas and your last editing tool.</p>
+<p>A layered image editor for phones and tablets, inspired by GIMP and designed for fingers and styluses.</p>
 
 <p><b>Insert:</b> photos, SVG, PDF and TIFF files, emojis, stickers and text.</p>
 
