@@ -155,6 +155,7 @@ class Engine {
     fun renameDocument(name: String) = post { docName = name; publish() }
 
     private fun replaceDocument(s: Stack, name: String) {
+        stroke?.cancel(); stroke = null
         history.clear()
         LayerBuffers.clear()
         floating = null; preview = null
@@ -340,7 +341,6 @@ class Engine {
         val c = if (onMask) (if (tool == PaintTool.ERASER) MASK_BLACK else maskGray(color)) else color
         stroke = StrokeOp(target, t, settings, c, layer.lockAlpha && !onMask, clipSelection(s, layer), cloneOffset, symmetry, perspective)
         strokeTarget = target; strokeBefore = s; strokeTool = tool
-        if (layer.text != null && !onMask) stack = dropText(s)
     }
 
     fun strokeAdd(points: List<StrokePoint>) = post {
@@ -354,8 +354,19 @@ class Engine {
         stroke = null
         st.catchUp()
         val changes = st.finish()
-        if (changes.isNotEmpty()) record(toolName(strokeTool), strokeBefore!!, listOf(TileDiff(strokeTarget!!, changes)))
-        else invalidate()
+        if (changes.isEmpty()) { invalidate(); return@post }
+        val before = strokeBefore!!
+        val target = strokeTarget!!
+        val layer = before.active!!
+        if (layer.text != null && target === layer.pixels) {
+            // A long press can turn painting into color sampling. Rasterize only when a
+            // committed stroke actually changes the text layer's rendered pixels.
+            if (changes.values.all { (old, new) -> old != null && new != null && old.sameAs(new) }) {
+                st.cancel(); invalidate(); return@post
+            }
+            stack = dropText(stack, stack.find(layer.id))
+        }
+        record(toolName(strokeTool), before, listOf(TileDiff(target, changes)))
     }
 
     fun strokeCancel() = post {
@@ -950,8 +961,7 @@ class Engine {
     /**
      * Runs [op] (e.g. a neural network, off this thread) on the active layer's pixels as a
      * canvas-sized bitmap with the selection mask (0…255 per pixel, null = everything) and a progress
-     * callback, and puts its result back as one undo step: within the selection when
-     * [clipToSelection], else as returned.
+     * callback. Changed pixels become one undo step, clipped to the selection when [clipToSelection].
      */
     fun processActive(name: String, clipToSelection: Boolean = true, op: suspend (Bitmap, ByteArray?, (Float) -> Unit) -> Bitmap) = post {
         val s = stack
@@ -961,12 +971,20 @@ class Engine {
         if (l.lockPixels) { onMessage?.invoke("The active layer's pixels are locked"); return@post }
         val w = s.width; val h = s.height
         busy(name, cancellable = true) {
-            val src = l.pixels.toBitmap()
+            val original = l.pixels.copy()
+            val src = original.toBitmap()
             val sel = clipSelection(s, l)?.let { Selection.maskBytes(it.mask, w, h) }
             val out = withContext(Dispatchers.Default) {
                 val res = op(src, sel) { p -> _progress.value = p }
                 val px = IntArray(w * h).also { res.getPixels(it, 0, w, 0, 0, w, h) }
-                if (clipToSelection && sel != null) maskBlend(IntArray(w * h).also { src.getPixels(it, 0, w, 0, 0, w, h) }, px, sel, w, h) else px
+                if (clipToSelection && sel != null) {
+                    val before = original.toPixels()
+                    maskBlend(before, px, sel, w, h).takeUnless { it.contentEquals(before) }
+                } else px.takeUnless(original::samePixels)
+            }
+            if (out == null) {
+                onMessage?.invoke("$name made no changes")
+                return@busy
             }
             if (l.text != null) stack = dropText(stack)
             replaceTiles(s, l.pixels, TiledBitmap.fromPixels(out, w, h, l.pixels.fill), name)
@@ -1430,9 +1448,8 @@ class Engine {
     private fun textName(spec: TextSpec) = spec.text.lineSequence().first().take(24).ifBlank { "Text" }
 
     /** Painting or filtering a text layer makes it a normal layer (GIMP asks; we just do it). */
-    private fun dropText(s: Stack): Stack {
-        val l = s.active ?: return s
-        if (l.text == null) return s
+    private fun dropText(s: Stack, l: Layer? = s.active): Stack {
+        if (l?.text == null) return s
         onMessage?.invoke("“${l.name}” is now a pixel layer")
         return s.replace(l.copy(text = null))
     }

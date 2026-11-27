@@ -41,6 +41,7 @@ class TabEdit(
     val cloneSource: android.graphics.PointF?, val cloneOffset: android.graphics.Point?,
     val perspPlane: FloatArray?, val perspOffset: android.graphics.PointF?,
     val pathAnchors: List<Anchor>, val pathClosed: Boolean, val view: CanvasView.SavedView?,
+    val lastLineEnd: android.graphics.PointF?,
 )
 
 /** A file name as tabs show it: the extension says little and takes up room. */
@@ -241,6 +242,7 @@ class DocumentTabs(
         if (unused) {
             val tab = active
             resident = false // What's showing is thrown away, not parked.
+            tab.edit = null
             show(tab, doc)
             tab.name = name; tab.blank = false; tab.savedVersion = NOT_SAVED
         } else {

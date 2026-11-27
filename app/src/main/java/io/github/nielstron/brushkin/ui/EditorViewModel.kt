@@ -2,7 +2,10 @@ package io.github.nielstron.brushkin.ui
 
 import android.app.Application
 import android.graphics.Color
+import android.graphics.Point
+import android.graphics.PointF
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.mutableStateMapOf
 import androidx.compose.runtime.mutableStateOf
@@ -134,11 +137,24 @@ class EditorViewModel(app: Application) : AndroidViewModel(app) {
     var exportStatus by mutableStateOf<String?>(null)
     var exportedImage by mutableStateOf<ExportedImage?>(null)
 
-    var tool by mutableStateOf(Tool.NAVIGATE)
+    private val toolPrefs = app.getSharedPreferences("brushkin-tools", 0)
+    private val slots = mutableStateListOf<Tool>().apply {
+        for ((index, default) in listOf(Tool.NAVIGATE, Tool.BRUSH).withIndex()) {
+            val saved = toolPrefs.getString("dock-tool-$index", null)
+            add(Tool.entries.firstOrNull { it.name == saved && !it.isAction } ?: default)
+        }
+    }
+    val dockTools: List<Tool> get() = slots
+    var activeToolSlot by mutableIntStateOf(toolPrefs.getInt("active-dock-slot", 0))
         private set
-    /** The tool to resume when the hand is toggled off. Its pending edits survive navigation. */
-    var editingTool by mutableStateOf(Tool.BRUSH)
+    val tool: Tool get() = slots[activeToolSlot]
+    var toolPickerSlot by mutableIntStateOf(activeToolSlot)
         private set
+    // Inserting while the hand is selected temporarily gives canvas gestures to the placed image.
+    private var placingFromHand by mutableStateOf(false)
+    val navigating get() = tool == Tool.NAVIGATE && !(placingFromHand && engine.floating != null)
+    /** Last editing tool, whose unfinished work can be resumed after navigating. */
+    private var editingTool = Tool.BRUSH
     private var needsToolSetup = true
     var lastPaintTool by mutableStateOf(Tool.BRUSH)
     var sheet by mutableStateOf(Sheet.NONE)
@@ -253,9 +269,22 @@ class EditorViewModel(app: Application) : AndroidViewModel(app) {
         return if (m.setPolyToPoly(p, 0, floatArrayOf(0f, 0f, 1000f, 0f, 1000f, 1000f, 0f, 1000f), 0, 4)) m else null
     }
 
+    /** Freehand, straight lines and paths share the alignment set by the first clone stroke. */
+    fun beginPaintStroke(start: PointF, paint: PaintTool, settings: BrushSettings, brush: Tool = tool) {
+        val src = cloneSource
+        val offset = when {
+            src == null -> null
+            brush == Tool.PERSPECTIVE_CLONE -> Point(0, 0) // The map supplies the actual offset.
+            paint == PaintTool.CLONE || paint == PaintTool.HEAL ->
+                cloneOffset ?: Point((src.x - start.x).toInt(), (src.y - start.y).toInt()).also { cloneOffset = it }
+            else -> null
+        }
+        val map = if (brush == Tool.PERSPECTIVE_CLONE) perspectiveMap(start) else null
+        engine.strokeBegin(paint, settings, fg, offset, symmetry(), map)
+    }
+
     /** Destination → source map for a perspective-clone stroke starting at [start]. */
-    fun perspectiveMap(start: android.graphics.PointF): android.graphics.Matrix? {
-        if (tool != Tool.PERSPECTIVE_CLONE) return null
+    private fun perspectiveMap(start: PointF): android.graphics.Matrix? {
         val h = planeMatrix() ?: return null
         val src = cloneSource ?: return null
         val off = perspOffset ?: run {
@@ -275,6 +304,7 @@ class EditorViewModel(app: Application) : AndroidViewModel(app) {
 
     // Modifier chips (GIMP's Shift/Ctrl/Alt).
     var lineMode by mutableStateOf(false)
+    var lastLineEnd: android.graphics.PointF? = null
     var pickMode by mutableStateOf(false)
     /** Pipette from the color sheet: the next touch on the image picks a color, then the sheet returns. */
     var pipette by mutableStateOf(false)
@@ -456,9 +486,11 @@ class EditorViewModel(app: Application) : AndroidViewModel(app) {
     fun strokePath() {
         val pts = path.sample()
         if (pts.size < 2) { messages.tryEmit("Add at least two points"); return }
-        val pt = (if (lastPaintTool.paint != null) lastPaintTool.paint else null) ?: io.github.nielstron.brushkin.engine.PaintTool.BRUSH
-        val s = brushSettings.value[lastPaintTool] ?: BrushSettings()
-        engine.strokeBegin(pt, s.copy(smoothing = 0f, pressureSize = false, pressureOpacity = false), fg, symmetry = symmetry())
+        val brush = lastPaintTool
+        val s = brushSettings.value[brush] ?: BrushSettings()
+        val first = pts.first()
+        beginPaintStroke(PointF(first.x, first.y), brush.paint ?: PaintTool.BRUSH,
+            s.copy(smoothing = 0f, pressureSize = false, pressureOpacity = false), brush)
         pts.chunked(256).forEach { engine.strokeAdd(it) }
         engine.strokeEnd()
     }
@@ -471,13 +503,16 @@ class EditorViewModel(app: Application) : AndroidViewModel(app) {
         override fun status(label: String?) { importStatus = label }
         override fun message(text: String) { messages.tryEmit(text) }
         override fun leaving(tab: DocumentTab?) {
+            placingFromHand = false
             finishText()
             // Like switching tools: an unapplied transform is discarded.
             if (editingTool.liftsLayer) engine.cancelFloating()
-            tab?.edit = TabEdit(cloneSource, cloneOffset, perspPlane, perspOffset, path.anchors.toList(), path.closed, canvas?.view?.saveView())
+            tab?.edit = TabEdit(cloneSource, cloneOffset, perspPlane, perspOffset, path.anchors.toList(), path.closed,
+                canvas?.view?.saveView(), lastLineEnd)
         }
         override fun arrived(tab: DocumentTab) {
             val e = tab.edit
+            lastLineEnd = e?.lastLineEnd
             cloneSource = e?.cloneSource; cloneOffset = e?.cloneOffset
             perspPlane = e?.perspPlane; perspOffset = e?.perspOffset; perspEditing = false
             path.anchors.clear(); e?.pathAnchors?.let { path.anchors.addAll(it) }
@@ -880,6 +915,7 @@ class EditorViewModel(app: Application) : AndroidViewModel(app) {
     fun restoreAtStartup() = viewModelScope.launch {
         try {
             tabs.restore()
+            if (needsToolSetup && tool != Tool.NAVIGATE) selectTool(tool)
         } finally {
             startupLoading = false
         }
@@ -896,7 +932,6 @@ class EditorViewModel(app: Application) : AndroidViewModel(app) {
     // is picked (the tool list shows the most used ones per section first). Both persist.
     val recentCommands = RecentCommands(app.getSharedPreferences("brushkin-recent-commands", 0))
 
-    private val toolPrefs = app.getSharedPreferences("brushkin-tools", 0)
     val favorites = mutableStateListOf<Tool>().apply {
         addAll(toolPrefs.getString("favorites", "")!!.split(',').mapNotNull { n -> Tool.entries.firstOrNull { it.name == n } })
     }
@@ -927,7 +962,8 @@ class EditorViewModel(app: Application) : AndroidViewModel(app) {
     var filterPoint by mutableStateOf<((Float, Float) -> Unit)?>(null)
 
     /** Picks [t] from the tool list: a tool becomes current, an action runs. */
-    fun pickTool(t: Tool) {
+    @JvmOverloads
+    fun pickTool(t: Tool, slot: Int = activeToolSlot) {
         toolUses[t] = toolUses(t) + 1
         toolPrefs.edit().putString("uses", toolUses.entries.joinToString(",") { "${it.key.name}:${it.value}" }).apply()
         when (t) {
@@ -935,7 +971,7 @@ class EditorViewModel(app: Application) : AndroidViewModel(app) {
             Tool.UPSCALE -> dialog = "upscale"
             Tool.DENOISE -> denoise()
             Tool.DEBLUR -> deblur()
-            else -> if (t.filter != null) dialog = "filter:${t.filter}" else selectTool(t)
+            else -> if (t.filter != null) dialog = "filter:${t.filter}" else useTool(t, slot)
         }
     }
 
@@ -954,18 +990,28 @@ class EditorViewModel(app: Application) : AndroidViewModel(app) {
         }
     }
 
-    fun toggleNavigation() {
-        selectTool(if (tool == Tool.NAVIGATE) editingTool else Tool.NAVIGATE)
+    fun openToolPicker(slot: Int = activeToolSlot) {
+        toolPickerSlot = slot
+        sheet = Sheet.TOOLS
     }
 
-    fun selectTool(t: Tool) {
+    fun activateToolSlot(slot: Int) = useTool(slots[slot], slot)
+
+    fun selectTool(t: Tool) = useTool(t, activeToolSlot)
+
+    private fun useTool(t: Tool, slot: Int) {
+        placingFromHand = false
         if (t == Tool.NAVIGATE) {
             finishText()
-        } else if (needsToolSetup || tool != Tool.NAVIGATE || t != editingTool) {
+        } else if (needsToolSetup || t != editingTool || (t.confirmTransform && engine.floating == null)) {
             prepareEditingTool(t)
             needsToolSetup = false
         }
-        tool = t
+        if (slots[slot] != t || activeToolSlot != slot) {
+            slots[slot] = t
+            activeToolSlot = slot
+            toolPrefs.edit().putString("dock-tool-$slot", t.name).putInt("active-dock-slot", slot).apply()
+        }
     }
 
     private fun prepareEditingTool(t: Tool) {
@@ -995,7 +1041,7 @@ class EditorViewModel(app: Application) : AndroidViewModel(app) {
 
     /** Inserting starts an interactive placement, including when opened from the hand tool. */
     fun placeFloating(bitmap: android.graphics.Bitmap, name: String, at: android.graphics.Point? = null, matrix: android.graphics.Matrix? = null) {
-        if (tool == Tool.NAVIGATE) toggleNavigation()
+        placingFromHand = tool == Tool.NAVIGATE
         engine.placeFloating(bitmap, name, at, matrix = matrix)
     }
 

@@ -132,6 +132,7 @@ private const val TOOLS_SHOWN = 8
 @Composable
 private fun ToolsSheet(vm: EditorViewModel) {
     val expanded = remember { mutableStateListOf<ToolGroup>() }
+    val assigned = vm.dockTools[vm.toolPickerSlot]
     Column(Modifier.verticalScroll(rememberScrollState()).padding(horizontal = 12.dp).padding(bottom = 16.dp)) {
         Text("Tools", color = Ui.text, fontSize = 20.sp, fontWeight = FontWeight.Bold, modifier = Modifier.padding(4.dp, 0.dp, 4.dp, 4.dp))
         Text(
@@ -148,7 +149,7 @@ private fun ToolsSheet(vm: EditorViewModel) {
             // The most used tools (and the current one), kept in their usual order.
             val shown = if (open) all else {
                 val top = all.sortedByDescending { vm.toolUses(it) }.take(TOOLS_SHOWN).toMutableSet()
-                if (vm.tool in all && vm.tool !in top) { top.remove(top.minBy { vm.toolUses(it) }); top.add(vm.tool) }
+                if (assigned in all && assigned !in top) { top.remove(top.minBy { vm.toolUses(it) }); top.add(assigned) }
                 all.filter { it in top }
             }
             Row(Modifier.fillMaxWidth().padding(start = 4.dp, top = 14.dp, bottom = 8.dp), verticalAlignment = Alignment.CenterVertically) {
@@ -168,10 +169,10 @@ private fun ToolsSheet(vm: EditorViewModel) {
 private fun ToolGrid(vm: EditorViewModel, tools: List<Tool>) {
     FlowRow(maxItemsInEachRow = 4, horizontalArrangement = Arrangement.spacedBy(6.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
         for (t in tools) {
-            val active = vm.tool == t
+            val active = vm.dockTools[vm.toolPickerSlot] == t
             Box(
                 Modifier.weight(1f).height(72.dp).clip(RoundedCornerShape(14.dp)).background(if (active) Ui.accent else Ui.panel2)
-                    .combinedClickable(onClick = { vm.sheet = Sheet.NONE; vm.pickTool(t) }, onLongClick = { vm.toggleFavorite(t) }),
+                    .combinedClickable(onClick = { vm.sheet = Sheet.NONE; vm.pickTool(t, vm.toolPickerSlot) }, onLongClick = { vm.toggleFavorite(t) }),
             ) {
                 Column(Modifier.align(Alignment.Center), horizontalAlignment = Alignment.CenterHorizontally) {
                     Icon(ToolIcons.of(t), null, tint = if (active) Ui.onAccent else Ui.text, modifier = Modifier.size(22.dp))

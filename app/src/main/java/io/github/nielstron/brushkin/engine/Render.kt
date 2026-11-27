@@ -25,7 +25,7 @@ class Floating(
     val bitmap: Bitmap,
     /** Maps bitmap pixels to doc coordinates. Mutated by the UI thread only. */
     val matrix: Matrix,
-    /** Layer the result goes back into; null = becomes a new layer. */
+    /** Layer the result goes back into when transforming a single layer. */
     val targetLayerId: Long?,
     val name: String,
     /** For Transform: the layer content outside the lifted selection. */
@@ -36,6 +36,9 @@ class Floating(
     val wholeImage: Boolean = false,
     val liftedMask: LiftedMask? = null,
 ) {
+    /** Transform tools supply the handles for lifted content. Inserts and pastes use placement handles. */
+    val isTransform get() = targetLayerId != null || wholeImage
+
     /** The placement when lifted, so Move can apply an offset to it. */
     val initial = Matrix(matrix)
     fun corners(): FloatArray {
@@ -82,7 +85,8 @@ object Compositor {
         val tp = tilePaint.get()!!
         tp.isFilterBitmap = filter
         tp.isAntiAlias = false
-        drawList(canvas, stack, stack.layers, visible, filter, preview, floating, pixelSize, tp, hiddenId)
+        if (floating?.wholeImage != true)
+            drawList(canvas, stack, stack.layers, visible, filter, preview, floating, pixelSize, tp, hiddenId)
         if (floating != null && floating.targetLayerId == null) drawFloating(canvas, floating, filter)
     }
 

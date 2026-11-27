@@ -51,14 +51,11 @@ class CanvasView(context: Context, private val vm: EditorViewModel) : View(conte
         set(value) {
             if (field == value) return
             field = value
-            fit()
+            // Tool controls can move while the user is drawing. Keep the current view
+            // and use the latest available area the next time the document needs fitting.
+            invalidate()
         }
     var adSpaceDp = 0
-        set(value) {
-            if (field == value) return
-            field = value
-            fit()
-        }
 
     private val checker: Paint = Paint().apply {
         val s = (8 * density).toInt().coerceAtLeast(4)
@@ -93,12 +90,13 @@ class CanvasView(context: Context, private val vm: EditorViewModel) : View(conte
 
     override fun onSizeChanged(w: Int, h: Int, oldw: Int, oldh: Int) {
         super.onSizeChanged(w, h, oldw, oldh)
-        if (oldw > 0 && oldh > 0 && (w != oldw || h != oldh)) fit()
+        fittedFor = 0L // Wait for layout to supply the bounds for the new window.
     }
 
     fun fit() {
+        fittedFor = 0L
         val s = engine.stack
-        if (width == 0 || s.width <= 1) return
+        if (width == 0 || height == 0 || s.width <= 0 || s.height <= 0) return
         val bounds = contentBounds ?: return // The editor supplies its bounds after layout.
         val avW = bounds.width(); val avH = bounds.height()
         if (avW <= 0 || avH <= 0) return
@@ -107,6 +105,7 @@ class CanvasView(context: Context, private val vm: EditorViewModel) : View(conte
         viewMatrix.postScale(sc, sc)
         viewMatrix.postTranslate(bounds.left + (avW - s.width * sc) / 2f, bounds.top + (avH - s.height * sc) / 2f)
         flipped = false
+        fittedFor = (s.width.toLong() shl 32) or s.height.toLong()
         changed()
     }
 
@@ -162,7 +161,7 @@ class CanvasView(context: Context, private val vm: EditorViewModel) : View(conte
     override fun onDraw(canvas: Canvas) {
         val s = engine.stack
         val key = (s.width.toLong() shl 32) or s.height.toLong()
-        if (key != fittedFor && width > 0 && s.width > 1) { fittedFor = key; fit() }
+        if (key != fittedFor) fit()
         val g = gl
         if (g != null) {
             // The GL view underneath renders the document in linear light; this view only adds overlays.
@@ -561,7 +560,7 @@ class CanvasView(context: Context, private val vm: EditorViewModel) : View(conte
             canvas.drawPath(outside, dim)
             canvas.drawPath(vr, accent)
         }
-        if (vm.tool != Tool.NAVIGATE) engine.floating?.let { drawFloatingHandles(canvas, it) }
+        if (!vm.navigating) engine.floating?.let { drawFloatingHandles(canvas, it) }
         if (engine.floating != null || !vm.tool.directTransform) updateGestureExclusion()
         // Move/Rotate while idle: the outline of what moves, and the rotation handle.
         if (vm.tool.directTransform && engine.floating == null) moveQuad()?.let { pts ->
@@ -640,7 +639,7 @@ class CanvasView(context: Context, private val vm: EditorViewModel) : View(conte
     private var exclusionKey = 0
     private fun updateGestureExclusion() {
         val pts = when {
-            vm.tool == Tool.NAVIGATE -> null
+            vm.navigating -> null
             engine.floating != null -> engine.floating!!.corners().also { viewMatrix.mapPoints(it) }
             vm.tool.directTransform -> moveQuad()
             else -> null
@@ -660,7 +659,7 @@ class CanvasView(context: Context, private val vm: EditorViewModel) : View(conte
         val path = Path().apply { moveTo(pts[0], pts[1]); lineTo(pts[2], pts[3]); lineTo(pts[4], pts[5]); lineTo(pts[6], pts[7]); close() }
         canvas.drawPath(path, guideDark); canvas.drawPath(path, accent)
         val hr = 7 * density
-        if (f.targetLayerId != null) when (vm.tool) {
+        if (f.isTransform) when (vm.tool) {
             Tool.MOVE -> {
                 val cx = (pts[0] + pts[4]) / 2; val cy = (pts[1] + pts[5]) / 2; val r = 10 * density
                 for (p in listOf(guideDark, accent)) { canvas.drawLine(cx - r, cy, cx + r, cy, p); canvas.drawLine(cx, cy - r, cx, cy + r, p) }
@@ -734,7 +733,6 @@ class CanvasView(context: Context, private val vm: EditorViewModel) : View(conte
     private var maxPointers = 0
     private var moved = false
     private val pointerStarts = SparseArray<PointF>()
-    private var lastLineEnd: PointF? = null
     private val longPress = Runnable { onLongPress() }
 
     // Multi-touch view gesture state.
@@ -784,7 +782,7 @@ class CanvasView(context: Context, private val vm: EditorViewModel) : View(conte
         when (e.actionMasked) {
             MotionEvent.ACTION_DOWN -> {
                 effectGesture = vm.dialog?.startsWith("filter:") == true
-                val hand = vm.tool == Tool.NAVIGATE && !vm.pipette && !vm.dofOpen
+                val hand = vm.navigating && !vm.pipette && !vm.dofOpen
                 navigationOnly = (hand || effectGesture) && vm.filterPicking == null && vm.filterPoint == null
                 maxPointers = 1; moved = false
                 downTime = e.eventTime
@@ -961,13 +959,13 @@ class CanvasView(context: Context, private val vm: EditorViewModel) : View(conte
         if (st.paint != null && pt != null) {
             if (vm.lineMode) {
                 mode = Mode.SHAPE
-                val from = lastLineEnd ?: downDoc
+                val from = vm.lastLineEnd ?: downDoc
                 preview = Path().apply { moveTo(from.x, from.y); lineTo(downDoc.x, downDoc.y) }
                 return
             }
             mode = Mode.STROKE
             strokePoints = 1
-            engine.strokeBegin(pt, vm.settings, vm.fg, cloneOffsetFor(downDoc), vm.symmetry(), vm.perspectiveMap(downDoc))
+            vm.beginPaintStroke(downDoc, pt, vm.settings)
             engine.strokeAdd(listOf(StrokePoint(downDoc.x, downDoc.y, pressure(e), axis(e, MotionEvent.AXIS_TILT, -1), orientation(e, -1), e.eventTime)))
             cursor = PointF(e.x, e.y)
             if (e.getToolType(0) != MotionEvent.TOOL_TYPE_STYLUS) postDelayed(longPress, 450)
@@ -1013,7 +1011,7 @@ class CanvasView(context: Context, private val vm: EditorViewModel) : View(conte
             Mode.SHAPE -> when {
                 lasso != null -> { lasso!!.lineTo(d.x, d.y); loop.add(d) }
                 vm.strokeTool.paint != null && vm.lineMode -> {
-                    val from = lastLineEnd ?: downDoc
+                    val from = vm.lastLineEnd ?: downDoc
                     preview = Path().apply { moveTo(from.x, from.y); lineTo(d.x, d.y) }
                 }
                 vm.tool == Tool.GRADIENT -> preview = Path().apply { moveTo(downDoc.x, downDoc.y); lineTo(d.x, d.y) }
@@ -1067,16 +1065,16 @@ class CanvasView(context: Context, private val vm: EditorViewModel) : View(conte
                 }
                 guideDrag = null
             }
-            Mode.STROKE -> { engine.strokeEnd(); lastLineEnd = d }
+            Mode.STROKE -> { engine.strokeEnd(); vm.lastLineEnd = d }
             Mode.SHAPE -> {
                 val st = vm.strokeTool
                 when {
                     st.paint != null && vm.lineMode -> {
-                        val from = lastLineEnd ?: downDoc
-                        engine.strokeBegin(vm.paintTool ?: st.paint, vm.settings.copy(smoothing = 0f), vm.fg, cloneOffsetFor(from), vm.symmetry(), vm.perspectiveMap(from))
+                        val from = vm.lastLineEnd ?: downDoc
+                        vm.beginPaintStroke(from, vm.paintTool ?: st.paint, vm.settings.copy(smoothing = 0f))
                         engine.strokeAdd(listOf(StrokePoint(from.x, from.y, 1f), StrokePoint(d.x, d.y, 1f)))
                         engine.strokeEnd()
-                        lastLineEnd = d
+                        vm.lastLineEnd = d
                     }
                     vm.tool == Tool.RECT_SELECT || vm.tool == Tool.ELLIPSE_SELECT ->
                         if (isTap) engine.selectNone()
@@ -1144,15 +1142,6 @@ class CanvasView(context: Context, private val vm: EditorViewModel) : View(conte
             }
             else -> {}
         }
-    }
-
-    /** Aligned clone: the offset is fixed by the first stroke after choosing a source. */
-    private fun cloneOffsetFor(start: PointF): android.graphics.Point? {
-        if (vm.tool != Tool.CLONE && vm.tool != Tool.HEAL && vm.tool != Tool.PERSPECTIVE_CLONE) return null
-        val src = vm.cloneSource ?: return null
-        if (vm.tool == Tool.PERSPECTIVE_CLONE) return android.graphics.Point(0, 0)
-        val o = vm.cloneOffset ?: android.graphics.Point((src.x - start.x).toInt(), (src.y - start.y).toInt()).also { vm.cloneOffset = it }
-        return o
     }
 
     // ------------------------------------------------------------------ paths tool
@@ -1252,7 +1241,7 @@ class CanvasView(context: Context, private val vm: EditorViewModel) : View(conte
         val hit = 24 * density
         fStart.set(f.matrix)
         val centerDoc = toDoc((pts[0] + pts[4]) / 2, (pts[1] + pts[5]) / 2)
-        if (f.targetLayerId != null) when (vm.tool) {
+        if (f.isTransform) when (vm.tool) {
             Tool.SHEAR -> { mode = Mode.FLOAT_SHEAR; fPivotDoc = centerDoc; return }
             Tool.TRANSFORM_3D -> { mode = Mode.FLOAT_3D; fPivotDoc = centerDoc; return }
             Tool.PERSPECTIVE -> {

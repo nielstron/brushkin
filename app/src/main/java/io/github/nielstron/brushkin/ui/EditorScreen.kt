@@ -53,7 +53,6 @@ import androidx.compose.material.icons.rounded.Remove
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.Icon
-import androidx.compose.material3.IconToggleButton
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
@@ -77,6 +76,8 @@ import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.selected
 import androidx.compose.ui.semantics.progressBarRangeInfo
 import androidx.compose.ui.semantics.ProgressBarRangeInfo
 import androidx.compose.ui.semantics.semantics
@@ -194,7 +195,7 @@ fun EditorScreen(vm: EditorViewModel, files: FileActions, store: StoreIntegratio
             modifier = Modifier.fillMaxSize(),
             update = { frame ->
                 holder.view?.adSpaceDp = adSpace
-                holder.view?.contentBounds = contentBounds
+                holder.view?.contentBounds = if (bottomBarHeight > 0) contentBounds else null
                 // Clip the drawing surface, without changing document or overlay coordinates.
                 val inset = if (adSpace > 0) ((76 + adSpace) * frame.resources.displayMetrics.density).toInt() +
                     (androidx.core.view.ViewCompat.getRootWindowInsets(frame)?.getInsets(androidx.core.view.WindowInsetsCompat.Type.statusBars())?.top ?: 0) else 0
@@ -298,7 +299,7 @@ fun EditorScreen(vm: EditorViewModel, files: FileActions, store: StoreIntegratio
         }
 
         val actions: @Composable () -> Unit = {
-            if (info.floating && !vm.tool.directTransform && vm.tool != Tool.NAVIGATE) {
+            if (info.floating && !vm.tool.directTransform && !vm.navigating) {
                 val lifted = vm.tool.confirmTransform
                 if (lifted) Row(Modifier.padding(bottom = 8.dp).horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     if (vm.tool != Tool.WARP && vm.tool != Tool.CAGE) TargetChips(!vm.transformWhole) { vm.changeTransformTarget(!it) }
@@ -422,6 +423,7 @@ private fun ContextChips(vm: EditorViewModel, hasSelection: Boolean, holder: Can
                 contentAlignment = Alignment.Center,
             ) { Icon(Icons.Rounded.Close, "Cancel", tint = Ui.text, modifier = Modifier.size(20.dp)) }
         } else when {
+            vm.navigating -> Chip("Reset view", false) { holder?.view?.fit() }
             t == Tool.PERSPECTIVE_CLONE -> {
                 Chip("Modify plane", vm.perspEditing) { vm.perspEditing = true; holder?.view?.invalidate() }
                 Chip("Clone", !vm.perspEditing) { vm.perspEditing = false; holder?.view?.invalidate() }
@@ -508,6 +510,7 @@ private fun ContextChips(vm: EditorViewModel, hasSelection: Boolean, holder: Can
     }
 }
 
+@OptIn(androidx.compose.foundation.ExperimentalFoundationApi::class)
 @Composable
 private fun Dock(vm: EditorViewModel, layerCount: Int) {
     Row(
@@ -515,15 +518,23 @@ private fun Dock(vm: EditorViewModel, layerCount: Int) {
         horizontalArrangement = Arrangement.SpaceAround, verticalAlignment = Alignment.CenterVertically,
     ) {
         val slot = Modifier.weight(1f, fill = false)
-        val navigating = vm.tool == Tool.NAVIGATE
-        IconToggleButton(
-            checked = navigating, onCheckedChange = { vm.toggleNavigation() },
-            modifier = slot.size(52.dp).clip(RoundedCornerShape(16.dp)).background(if (navigating) Ui.accent else Color.Transparent),
-        ) {
-            Icon(ToolIcons.of(Tool.NAVIGATE), if (navigating) "Return to ${vm.editingTool.label}" else "Navigate canvas",
-                tint = if (navigating) Ui.onAccent else Ui.text)
+        for ((index, tool) in vm.dockTools.withIndex()) {
+            val active = vm.activeToolSlot == index
+            Box(
+                slot.size(52.dp).clip(RoundedCornerShape(16.dp)).background(if (active) Ui.accent else Color.Transparent)
+                    .semantics { selected = active }
+                    .combinedClickable(
+                        role = Role.Tab,
+                        onClickLabel = if (active) "Choose tool" else "Switch to ${tool.label}",
+                        onLongClickLabel = "Choose tool",
+                        onClick = { if (active) vm.openToolPicker(index) else vm.activateToolSlot(index) },
+                        onLongClick = { vm.openToolPicker(index) },
+                    ),
+                contentAlignment = Alignment.Center,
+            ) {
+                Icon(ToolIcons.of(tool), "Tool slot ${index + 1}: ${tool.label}", tint = if (active) Ui.onAccent else Ui.text)
+            }
         }
-        DockButton(ToolIcons.of(vm.editingTool), "Tools (${vm.editingTool.label})", slot, active = !navigating) { vm.sheet = Sheet.TOOLS }
         DockButton(ToolIcons.sliders, "Options", slot) { vm.sheet = Sheet.OPTIONS }
         Box(slot.size(52.dp).clip(CircleShape).background(Ui.text).clickable { vm.sheet = Sheet.INSERT }, contentAlignment = Alignment.Center) {
             Icon(Icons.Rounded.Add, "Insert image, text, sticker or emoji", tint = Ui.ground, modifier = Modifier.size(28.dp))
@@ -548,12 +559,12 @@ private fun Dock(vm: EditorViewModel, layerCount: Int) {
 }
 
 @Composable
-private fun DockButton(icon: ImageVector, label: String, modifier: Modifier = Modifier, active: Boolean = false, onClick: () -> Unit) {
+private fun DockButton(icon: ImageVector, label: String, modifier: Modifier = Modifier, onClick: () -> Unit) {
     Box(
-        modifier.size(52.dp).clip(RoundedCornerShape(16.dp)).background(if (active) Ui.accent else Color.Transparent).clickable(onClick = onClick),
+        modifier.size(52.dp).clip(RoundedCornerShape(16.dp)).clickable(onClick = onClick),
         contentAlignment = Alignment.Center,
     ) {
-        Icon(icon, label, tint = if (active) Ui.onAccent else Ui.text.copy(alpha = 0.85f), modifier = Modifier.size(24.dp))
+        Icon(icon, label, tint = Ui.text.copy(alpha = 0.85f), modifier = Modifier.size(24.dp))
     }
 }
 
@@ -703,7 +714,7 @@ private fun FavoriteBar(vm: EditorViewModel) {
             Box(
                 Modifier.size(44.dp).clip(RoundedCornerShape(14.dp)).background(if (active) Ui.accent else Ui.panel)
                     .border(1.dp, Ui.border, RoundedCornerShape(14.dp))
-                    .combinedClickable(onClickLabel = t.label, onClick = { vm.pickTool(t) }, onLongClick = { vm.sheet = Sheet.TOOLS }),
+                    .combinedClickable(onClickLabel = t.label, onClick = { vm.pickTool(t) }, onLongClick = { vm.openToolPicker() }),
                 contentAlignment = Alignment.Center,
             ) { Icon(ToolIcons.of(t), t.label, tint = if (active) Ui.onAccent else Ui.text, modifier = Modifier.size(22.dp)) }
         }

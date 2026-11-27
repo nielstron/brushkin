@@ -76,6 +76,26 @@ class TiledBitmap(val width: Int, val height: Int, /** Color of a missing tile: 
         return px
     }
 
+    /** Compare visible pixels without expanding the original tiles into a second full image. */
+    internal fun samePixels(pixels: IntArray): Boolean {
+        if (pixels.size != width * height) return false
+        val buffer = IntArray(TILE * TILE)
+        for (i in tiles.indices) {
+            val x = tileX(i); val y = tileY(i)
+            val w = minOf(TILE, width - x); val h = minOf(TILE, height - y)
+            val tile = tiles[i]
+            tile?.getPixels(buffer, 0, w, 0, 0, w, h)
+            for (row in 0 until h) {
+                val offset = (y + row) * width + x
+                for (col in 0 until w) {
+                    val original = if (tile == null) fill else buffer[row * w + col]
+                    if (original != pixels[offset + col]) return false
+                }
+            }
+        }
+        return true
+    }
+
     fun isEmpty() = tiles.all { it == null }
 
     /** Tight bounds of non-transparent pixels, or null if the layer is empty. */
