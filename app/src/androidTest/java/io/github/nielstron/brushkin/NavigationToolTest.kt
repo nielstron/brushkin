@@ -42,6 +42,20 @@ class NavigationToolTest {
             val after = matrix()
             assertEquals(before[Matrix.MTRANS_X] + 32f, after[Matrix.MTRANS_X], 0.1f)
             assertEquals(before[Matrix.MTRANS_Y] + 20f, after[Matrix.MTRANS_Y], 0.1f)
+            val scale = ui.runOnIdle { vm.canvas!!.view!!.scale }
+            ui.onRoot().performTouchInput {
+                down(0, center - Offset(20f, 0f))
+                down(1, center + Offset(20f, 0f))
+                updatePointerTo(0, center - Offset(0f, 40f))
+                updatePointerTo(1, center + Offset(0f, 40f))
+                move()
+                up(1)
+                up(0)
+            }
+            ui.runOnIdle {
+                assertEquals(scale * 2, vm.canvas!!.view!!.scale, 0.01f)
+                assertEquals(90f, vm.canvas!!.view!!.viewRotation, 0.01f)
+            }
             assertEquals(version, vm.engine.info.value.version)
 
             hand("Return to Paintbrush").performClick()
