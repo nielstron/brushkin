@@ -12,6 +12,7 @@ import android.os.Environment
 import android.provider.MediaStore
 import android.provider.OpenableColumns
 import androidx.activity.ComponentActivity
+import androidx.activity.SystemBarStyle
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.activity.result.PickVisualMediaRequest
@@ -51,7 +52,7 @@ class MainActivity : ComponentActivity(), FileActions {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        enableEdgeToEdge()
+        enableEdgeToEdge(statusBarStyle = SystemBarStyle.dark(getColor(R.color.ground)))
         store = StoreIntegration(this)
         store.start()
         setContent { BrushkinTheme { EditorScreen(vm, this, store) } }
