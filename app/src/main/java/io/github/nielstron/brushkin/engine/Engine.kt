@@ -631,12 +631,13 @@ class Engine {
     }
 
     /** Layer ▸ Layer Boundary Size: clip the layer to [r] (image coordinates). */
-    fun setLayerBoundary(r: Rect) = post {
-        val s = stack
-        val l = s.active ?: return@post
-        if (l.isGroup) return@post
+    fun setLayerBoundary(r: Rect) = post { setLayerBoundary(stack, r) }
+
+    private fun setLayerBoundary(s: Stack, r: Rect) {
+        val l = s.active ?: return
+        if (l.isGroup) return
         val canvas = Rect(0, 0, s.width, s.height)
-        val b = Rect(r).takeIf { !it.isEmpty } ?: return@post
+        val b = Rect(r).takeIf { !it.isEmpty } ?: return
         val full = b == canvas
         val outside = l.outside.filter { (k, _) -> Rect.intersects(b, Rect(LayerExtent.cx(k) * TILE, LayerExtent.cy(k) * TILE, LayerExtent.cx(k) * TILE + TILE, LayerExtent.cy(k) * TILE + TILE)) }
         stack = s.replace(l.copy(bounds = if (full) null else b, outside = outside))
@@ -1076,10 +1077,10 @@ class Engine {
         }
     }
 
-    fun cropToSelection() = post {
+    fun cropToSelection(layerOnly: Boolean = false) = post {
         val s = stack
         val b = s.selection?.bounds ?: run { onMessage?.invoke("Make a selection first"); return@post }
-        busy("Cropping") {
+        if (layerOnly) setLayerBoundary(s, b) else busy("Cropping") {
             transformAll("Crop to Selection", b.width(), b.height(), Matrix().apply { setTranslate(-b.left.toFloat(), -b.top.toFloat()) }, cropSelection = false)
         }
     }
