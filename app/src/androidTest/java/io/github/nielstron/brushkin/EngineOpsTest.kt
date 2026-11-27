@@ -1,11 +1,13 @@
 package io.github.nielstron.brushkin
 
+import android.graphics.Bitmap
 import android.graphics.Color
 import android.graphics.Matrix
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import io.github.nielstron.brushkin.engine.Engine
 import kotlinx.coroutines.runBlocking
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -14,6 +16,29 @@ import org.junit.runner.RunWith
 /** Document-level operations through the engine thread. */
 @RunWith(AndroidJUnit4::class)
 class EngineOpsTest {
+    @Test fun alignRespectsLayerPositionLock() = runBlocking {
+        val e = Engine()
+        try {
+            val image = Bitmap.createBitmap(12, 10, Bitmap.Config.ARGB_8888)
+            image.setPixel(4, 3, Color.RED)
+            e.openImage(image, "Mark").join()
+            val id = e.snapshot().activeId
+            e.setLayerFlags(id, lockPosition = true).join()
+
+            e.alignLayer(0, -1).join()
+            assertEquals(Color.RED, e.flattened().getPixel(4, 3))
+            assertFalse(e.info.value.canUndo)
+
+            e.setLayerFlags(id, lockPosition = false).join()
+            e.alignLayer(0, -1).join()
+            assertEquals(Color.RED, e.flattened().getPixel(0, 3))
+            e.undo().join()
+            assertEquals(Color.RED, e.flattened().getPixel(4, 3))
+        } finally {
+            e.shutdown()
+        }
+    }
+
     @Test fun transformWholeImage() = runBlocking {
         val e = Engine()
         e.newDocument(200, 100, Color.WHITE).join()
