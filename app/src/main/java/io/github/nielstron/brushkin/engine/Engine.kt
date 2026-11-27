@@ -857,9 +857,11 @@ class Engine {
         if (idx <= 0) { onMessage?.invoke("There is no layer below to merge into"); return@post }
         val top = list[idx]; val bottom = list[idx - 1]
         busy("Merging") {
-            val sub = Stack(s.width, s.height, listOf(bottom.copy(opacity = 1f, mode = LayerMode.NORMAL, visible = true), top), top.id)
+            // Bake each layer's opacity into its own contribution before compositing the pair.
+            val sub = Stack(s.width, s.height, listOf(bottom.copy(mode = LayerMode.NORMAL, visible = true), top), top.id)
             val bmp = Compositor.flatten(sub)
-            val merged = Layer(name = bottom.name, pixels = TiledBitmap.fromBitmap(bmp), opacity = bottom.opacity, mode = bottom.mode, visible = bottom.visible)
+            val merged = Layer(name = bottom.name, pixels = TiledBitmap.fromBitmap(bmp), mode = bottom.mode, visible = bottom.visible)
+            bmp.recycle()
             stack = s.withSiblings(parent, list.toMutableList().apply { removeAt(idx); set(idx - 1, merged) }).copy(activeId = merged.id)
             record("Merge Down", s, extraBytes = s.width.toLong() * s.height * 4)
         }
