@@ -1000,6 +1000,8 @@ class EditorViewModel(app: Application) : AndroidViewModel(app) {
     fun selectTool(t: Tool) = useTool(t, activeToolSlot)
 
     private fun useTool(t: Tool, slot: Int) {
+        // Choosing another tool places an inserted image, sticker or text still waiting for Place.
+        if (t != tool) placePending()
         placingFromHand = false
         if (t == Tool.NAVIGATE) {
             finishText()
@@ -1037,6 +1039,16 @@ class EditorViewModel(app: Application) : AndroidViewModel(app) {
             perspPlane = floatArrayOf(w * 0.25f, h * 0.3f, w * 0.75f, h * 0.3f, w * 0.9f, h * 0.7f, w * 0.1f, h * 0.7f)
             perspEditing = true
         }
+    }
+
+    /**
+     * Places an inserted object that hasn't been placed yet, as Place does. A layer lifted by a
+     * transform tool (it has a target layer, or is the whole image) is left to that tool.
+     */
+    private fun placePending() {
+        val f = engine.floating ?: return
+        if (f.targetLayerId != null || f.wholeImage) return
+        engine.commitFloating(android.graphics.Matrix(f.matrix), tool.label)
     }
 
     /** Inserting starts an interactive placement, including when opened from the hand tool. */
