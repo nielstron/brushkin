@@ -1,0 +1,1 @@
+An inserted sticker, emoji or image that hasn't been placed yet is now placed when you choose another tool, instead of staying in placement mode.
